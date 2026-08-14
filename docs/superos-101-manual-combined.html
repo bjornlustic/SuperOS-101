@@ -1,0 +1,524 @@
+<div class="man-doc">
+
+  <!-- ── Cover ──────────────────────────────────────────────────── -->
+  <header class="man-cover">
+    <div class="man-brand">
+      <span class="man-brand-note">Firmware Documentation</span>
+    </div>
+    <div class="man-wordmark">
+      <img src="/images/superos101-logo-white.svg" alt="superOS-101">
+    </div>
+    <h1 class="man-cover-title">Owner's Manual</h1>
+    <div class="man-cover-meta">
+      <p class="man-cover-sub">Combined Edition v0.1-alpha &middot; Custom firmware for the Roland SH-101<br>Drop-in CPU replacement</p>
+    </div>
+  </header>
+
+  <!-- ── Contents ───────────────────────────────────────────────── -->
+  <nav class="man-contents" aria-label="Contents">
+    <h2 class="man-contents-title">Contents</h2>
+
+    <span class="man-toc-part">Introduction</span>
+    <ol class="man-toc-list">
+      <li><a class="docs-toc-link" href="#about"><span class="man-toc-num">1</span>About superOS-101<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#how-to-use"><span class="man-toc-num">2</span>How to Use This Manual<span class="man-toc-leader"></span></a></li>
+    </ol>
+
+    <span class="man-toc-part">Playing</span>
+    <ol class="man-toc-list">
+      <li><a class="docs-toc-link" href="#keyboard"><span class="man-toc-num">1</span>The Keyboard<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#switches"><span class="man-toc-num">2</span>Panel Switches<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#arpeggiator"><span class="man-toc-num">3</span>The Arpeggiator<span class="man-toc-leader"></span></a></li>
+    </ol>
+
+    <span class="man-toc-part">The Sequencer</span>
+    <ol class="man-toc-list">
+      <li><a class="docs-toc-link" href="#seq-record"><span class="man-toc-num">1</span>Recording a Sequence<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#seq-play"><span class="man-toc-num">2</span>Playing a Sequence<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#seq-storage"><span class="man-toc-num">3</span>Sequence Storage<span class="man-toc-leader"></span></a></li>
+    </ol>
+
+    <span class="man-toc-part">MIDI</span>
+    <ol class="man-toc-list">
+      <li><a class="docs-toc-link" href="#midi-sync"><span class="man-toc-num">1</span>MIDI Clock Sync<span class="man-toc-leader"></span></a></li>
+    </ol>
+
+    <span class="man-toc-part">Combined Edition</span>
+    <ol class="man-toc-list">
+      <li><a class="docs-toc-link" href="#dual-firmware"><span class="man-toc-num">1</span>Two Firmwares in One Chip<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#config-menu"><span class="man-toc-num">2</span>The Config Menu<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#emu-mode"><span class="man-toc-num">3</span>80C49 Mode<span class="man-toc-leader"></span></a></li>
+    </ol>
+
+    <span class="man-toc-part">Reference</span>
+    <ol class="man-toc-list">
+      <li><a class="docs-toc-link" href="#installing"><span class="man-toc-num">1</span>Installing &amp; Updating<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#status"><span class="man-toc-num">2</span>Development Status<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#quick-reference"><span class="man-toc-num">3</span>Quick Reference<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#specifications"><span class="man-toc-num">4</span>Specifications<span class="man-toc-leader"></span></a></li>
+    </ol>
+
+    <div class="docs-warning man-precautions">
+      <strong>Precautions</strong>
+      Firmware installation and any modification of your instrument are performed entirely at your
+      own risk. superOS-101 is alpha firmware for a CPU board that is still in bring-up. We are not
+      responsible for damage to your instrument, loss of data, or any reduction in the value of
+      vintage hardware resulting from installation, modification, or use of this firmware.
+    </div>
+  </nav>
+
+  <!-- ══ INTRODUCTION ═══════════════════════════════════════════ -->
+  <div class="man-part">Introduction</div>
+
+  <section id="about" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">1</span>
+      <h2 class="docs-sec-title">About superOS-101</h2>
+    </div>
+    <p class="docs-body">
+      superOS-101 is custom firmware for a drop-in replacement of the Roland SH-101's original
+      CPU, a Toshiba TMP80C49. Unlike the TB-303, TR-606, and TR-808, which share the NEC
+      &micro;PD650 and therefore share one replacement board, the SH-101 needs its own CPU board
+      and its own firmware, designed from a clean sheet.
+    </p>
+    <p class="docs-body">
+      The firmware reproduces the original CPU's electrical behavior exactly: the DAC and
+      multiplexer protocol that generates every control voltage in the synth, the keyboard and
+      panel scan, and the gate, clock-reset, and portamento signals. On top of that foundation it
+      re-implements the SH-101's musical features, keyboard, arpeggiator, and 100-step sequencer,
+      against the fully disassembled original ROM as reference.
+    </p>
+    <p class="docs-body">
+      The <strong>Combined Edition</strong> holds two complete operating systems in one chip:
+      superOS-101 and <strong>80C49 mode</strong>, an emulation of the original SH-101 CPU running
+      the genuine Roland mask ROM. You can switch between them from the panel at any time. See the
+      Combined Edition chapter.
+    </p>
+  </section>
+
+  <section id="how-to-use" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">2</span>
+      <h2 class="docs-sec-title">How to Use This Manual</h2>
+    </div>
+    <h3 class="man-sub">Panel Names</h3>
+    <p class="docs-body">
+      Controls are written as they appear on the panel: the function buttons
+      <kbd class="docs-key">LOAD</kbd> <kbd class="docs-key">PLAY</kbd>
+      <kbd class="docs-key">DOWN</kbd> <kbd class="docs-key">UP&amp;DOWN</kbd>
+      <kbd class="docs-key">UP</kbd> <kbd class="docs-key">HOLD</kbd>
+      <kbd class="docs-key">KEY TRANSPOSE</kbd>, the <strong>RANGE</strong> switch
+      (16&prime; / 8&prime; / 4&prime; / 2&prime;), the <strong>TRANSPOSE</strong> switch
+      (octave down / middle / up), and the envelope <strong>TRIG</strong> switch
+      (GATE / GATE+TRIG / LFO). The keyboard has 32 keys, F to high C.
+    </p>
+    <p class="docs-body">
+      A combination such as <kbd class="docs-key">HOLD</kbd> +
+      <kbd class="docs-key">KEY TRANSPOSE</kbd> means: hold both controls at the same time.
+    </p>
+    <div class="man-note">
+      <strong>Note</strong>
+      All sequencer and arpeggiator clocking comes from the LFO or the EXT CLK jack, exactly as on
+      the original instrument. Where this manual says "each clock pulse," that is the source it
+      means.
+    </div>
+  </section>
+
+  <!-- ══ PLAYING ════════════════════════════════════════════════ -->
+  <div class="man-part">Playing</div>
+
+  <section id="keyboard" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">1</span>
+      <h2 class="docs-sec-title">The Keyboard</h2>
+    </div>
+    <p class="docs-body">
+      The keyboard plays monophonically over its 32-key range, with the pitch CV following the
+      original's confirmed 1&nbsp;V/octave numeric model, so tuning and scaling match a stock
+      SH-101 exactly.
+    </p>
+    <h3 class="man-sub">Note Priority</h3>
+    <p class="docs-body">
+      When more than one key is held, the envelope TRIG switch selects which note sounds, as on
+      the original:
+    </p>
+    <ul class="docs-list">
+      <li><strong>GATE</strong> or <strong>LFO</strong>: lowest-note priority. The lowest held key sounds.</li>
+      <li><strong>GATE+TRIG</strong>: last-note priority. The most recently pressed key sounds; releasing
+        it falls back to the lowest key still held.</li>
+    </ul>
+    <p class="docs-body">
+      In the <strong>LFO</strong> position the LFO is restarted on each new key press, so an
+      LFO-triggered envelope always starts its cycle in step with your playing.
+    </p>
+  </section>
+
+  <section id="switches" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">2</span>
+      <h2 class="docs-sec-title">Panel Switches</h2>
+    </div>
+    <table class="docs-table man-t-combo">
+      <thead><tr><th>Switch</th><th>Function</th></tr></thead>
+      <tbody>
+        <tr><td><strong>RANGE</strong> 16&prime; / 8&prime; / 4&prime; / 2&prime;</td>
+            <td>VCO octave. Sets the range CV in exact 1-octave steps, matching the original's
+            values to the bit.</td></tr>
+        <tr><td><strong>TRANSPOSE</strong> down / middle / up</td>
+            <td>Shifts the whole keyboard one octave down or up.</td></tr>
+        <tr><td><strong>TRIG</strong> GATE / GATE+TRIG / LFO</td>
+            <td>Envelope trigger mode; also selects note priority (see The Keyboard) and, in LFO,
+            restarts the LFO on new keys.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="arpeggiator" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">3</span>
+      <h2 class="docs-sec-title">The Arpeggiator</h2>
+    </div>
+    <p class="docs-body">
+      Press <kbd class="docs-key">UP</kbd>, <kbd class="docs-key">DOWN</kbd>, or
+      <kbd class="docs-key">UP&amp;DOWN</kbd> to turn the arpeggiator on in that direction; press
+      the same button again to return to normal keyboard play. Hold any group of keys and the
+      arpeggiator steps through them, one note per clock pulse, at the rate set by the LFO (or the
+      EXT CLK input).
+    </p>
+    <ul class="docs-list">
+      <li><strong>UP</strong>: lowest to highest, then wraps to the lowest.</li>
+      <li><strong>DOWN</strong>: highest to lowest, then wraps to the highest.</li>
+      <li><strong>UP&amp;DOWN</strong>: bounces between the lowest and highest held keys.</li>
+    </ul>
+    <p class="docs-body">
+      Keys can be added or released while running; the pattern follows the currently held set. The
+      gate closes when all keys are released.
+    </p>
+  </section>
+
+  <!-- ══ THE SEQUENCER ══════════════════════════════════════════ -->
+  <div class="man-part">The Sequencer</div>
+
+  <section id="seq-record" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">1</span>
+      <h2 class="docs-sec-title">Recording a Sequence</h2>
+    </div>
+    <p class="docs-body">
+      Press <kbd class="docs-key">LOAD</kbd> to start recording. The previous sequence is cleared
+      and every key you press is appended as the next step, up to 100 steps. The keyboard sounds
+      while you record, so you hear each note as you enter it.
+    </p>
+    <table class="docs-table man-t-combo">
+      <thead><tr><th>Control</th><th>Writes</th></tr></thead>
+      <tbody>
+        <tr><td>Keyboard key</td><td>A note step at that pitch (TRANSPOSE applies as played).</td></tr>
+        <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>A rest step.</td></tr>
+        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + key</td><td>A tie: the previous note is held through this step without retriggering.</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> again</td><td>Ends recording and saves the sequence to permanent memory.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="seq-play" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">2</span>
+      <h2 class="docs-sec-title">Playing a Sequence</h2>
+    </div>
+    <p class="docs-body">
+      Press <kbd class="docs-key">PLAY</kbd> to start the sequencer; press it again to stop and
+      return to keyboard play. Steps advance one per clock pulse: note steps retrigger the gate at
+      their pitch, rest steps close the gate, and tie steps hold the previous note through without
+      retriggering. At the end of the sequence playback wraps to the first step.
+    </p>
+  </section>
+
+  <section id="seq-storage" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">3</span>
+      <h2 class="docs-sec-title">Sequence Storage</h2>
+    </div>
+    <p class="docs-body">
+      The sequence is stored in the CPU's permanent on-chip memory when you finish recording. It
+      survives power-off with no battery, an upgrade over the original's battery-backed RAM: no
+      battery to replace and nothing to lose when it runs down.
+    </p>
+  </section>
+
+  <!-- ══ MIDI ═══════════════════════════════════════════════════ -->
+  <div class="man-part">MIDI</div>
+
+  <section id="midi-sync" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">1</span>
+      <h2 class="docs-sec-title">MIDI Clock Sync</h2>
+    </div>
+    <p class="docs-body">
+      With MIDI clock sync on, incoming MIDI clock replaces the LFO / EXT CLK as the
+      instrument's musical clock, divided to a rhythm you choose. Three things lock to the beat:
+    </p>
+    <ul class="docs-list">
+      <li><strong>The arpeggiator and sequencer</strong> advance one step per division, exactly in
+        time with your DAW. MIDI Start (and Stop) are honored: Start rewinds the sequence and the
+        arpeggio to the downbeat, Stop freezes them.</li>
+      <li><strong>The LFO triangle and square</strong> are hard-synced: the LFO restarts on every
+        division boundary. The RATE knob still sets the slope between restarts, so set it near the
+        division rate for a clean locked wobble, or far off it for truncated hard-sync shapes.</li>
+      <li><strong>The random (S&amp;H) waveform</strong> steps to a new value once per division
+        instead of free-running.</li>
+    </ul>
+    <h3 class="man-sub">Divisions</h3>
+    <p class="docs-body">
+      Ten divisions, all exact at MIDI's 24 pulses per quarter (no drift):
+      1/4, 1/4 dotted, 1/4 triplet, 1/8, 1/8 dotted, 1/8 triplet, 1/16, 1/16 dotted,
+      1/16 triplet, 1/32. They are selected in the Config Menu (see Combined Edition):
+      <kbd class="docs-key">UP&amp;DOWN</kbd> toggles sync, <kbd class="docs-key">UP</kbd> /
+      <kbd class="docs-key">DOWN</kbd> cycle the division, and the ten lowest keyboard keys select
+      it directly, lowest key = 1/4 rising chromatically to 1/32. Both settings are remembered
+      across power-off.
+    </p>
+    <div class="man-note">
+      <strong>Note</strong>
+      MIDI arrives through the panel MIDI breakout. While sync is on and the transport is stopped
+      (or no clock is arriving), the arpeggiator and sequencer wait; turn sync off to clock from
+      the LFO again. The noise LFO waveform is analog and cannot be synced. MIDI note input/output
+      is not yet implemented.
+    </div>
+  </section>
+
+  <!-- ══ COMBINED EDITION ═══════════════════════════════════════ -->
+  <div class="man-part">Combined Edition</div>
+
+  <section id="dual-firmware" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">1</span>
+      <h2 class="docs-sec-title">Two Firmwares in One Chip</h2>
+    </div>
+    <p class="docs-body">
+      Like the superOS-303 Combined Edition, one image carries two complete firmwares, with one
+      active per boot:
+    </p>
+    <ul class="docs-list">
+      <li><strong>superOS-101</strong>: the firmware described in this manual.</li>
+      <li><strong>80C49 mode</strong>: an emulation of the original SH-101 CPU running the genuine
+        Roland mask ROM, for a bone-stock instrument.</li>
+    </ul>
+    <p class="docs-body">
+      The selection is remembered across power-off; the unit always boots into whichever firmware
+      you last chose. Switching is done from the Config Menu and takes effect through an immediate
+      reboot, about as fast as flipping the power switch.
+    </p>
+  </section>
+
+  <section id="config-menu" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">2</span>
+      <h2 class="docs-sec-title">The Config Menu</h2>
+    </div>
+    <p class="docs-body">
+      Hold <kbd class="docs-key">HOLD</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> for 2
+      seconds, in either firmware, while playing or idle. You can also hold the combination while
+      switching the power on. In the menu the HOLD LED lights, the gate is forced off, and the
+      function LED shows which firmware is currently running: <kbd class="docs-key">LOAD</kbd> lit
+      = 80C49 mode, <kbd class="docs-key">PLAY</kbd> lit = superOS-101.
+    </p>
+    <table class="docs-table man-t-combo">
+      <thead><tr><th>Control</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd class="docs-key">LOAD</kbd></td><td>Reboot into 80C49 mode (the original ROM).</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Reboot into superOS-101.</td></tr>
+        <tr><td><kbd class="docs-key">UP&amp;DOWN</kbd></td><td>MIDI clock sync on / off. KEY TRANSPOSE LED lit = on.</td></tr>
+        <tr><td><kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Next / previous clock division.</td></tr>
+        <tr><td>10 lowest keys</td><td>Clock division direct: 1/4, 1/4d, 1/4t, 1/8, 1/8d, 1/8t, 1/16, 1/16d, 1/16t, 1/32.</td></tr>
+        <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>Exit the menu and resume.</td></tr>
+      </tbody>
+    </table>
+    <div class="man-note">
+      <strong>Note</strong>
+      If no mask ROM is installed in the build, <kbd class="docs-key">LOAD</kbd> does nothing and
+      the unit always boots superOS-101. See 80C49 Mode below.
+    </div>
+  </section>
+
+  <section id="emu-mode" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">3</span>
+      <h2 class="docs-sec-title">80C49 Mode</h2>
+    </div>
+    <p class="docs-body">
+      In 80C49 mode the unit runs the original SH-101 program, byte for byte. The emulated CPU's
+      ports are wired straight through to the synth, so the original's own scan patterns, DAC
+      writes, and timing loops drive the analog board unchanged: every behavior of a 1982 unit is
+      reproduced, including its quirks. For the workflow in this mode, the original Roland SH-101
+      owner's manual is the manual.
+    </p>
+    <ul class="docs-list">
+      <li>The keyboard, arpeggiator, sequencer, hold, and key transpose all behave exactly as stock.</li>
+      <li>The original service <strong>Test Mode</strong> works: hold <kbd class="docs-key">LOAD</kbd> +
+        <kbd class="docs-key">KEY TRANSPOSE</kbd> while switching the power on (see the Roland
+        service manual for the test procedures).</li>
+      <li>The superOS Config Menu combo (<kbd class="docs-key">HOLD</kbd> +
+        <kbd class="docs-key">KEY TRANSPOSE</kbd>, 2&nbsp;s) still works, so you can always switch
+        back.</li>
+      <li>MIDI clock sync works here too: with sync on, the divided MIDI clock is fed to the
+        original program in place of the LFO / EXT CLK, so even the stock arpeggiator and
+        sequencer run DAW-locked at the chosen division.</li>
+    </ul>
+    <h3 class="man-sub">Sequence Memory in 80C49 Mode</h3>
+    <p class="docs-body">
+      The original CPU kept its sequence in battery-backed internal RAM. The emulated RAM is
+      volatile in this release: sequences written in 80C49 mode are lost at power-off. Persistent
+      emulated RAM is planned. superOS-101's own sequence storage is separate and unaffected.
+    </p>
+    <h3 class="man-sub">The Mask ROM</h3>
+    <p class="docs-body">
+      The original ROM is Roland's copyrighted code and is <strong>never distributed</strong> with
+      superOS-101. It is embedded at build time from your own dump of an SH-101's 2&nbsp;KB ROM.
+      A build made without a dump still works fully as superOS-101; only 80C49 mode is
+      unavailable.
+    </p>
+    <div class="man-note">
+      <strong>Note</strong>
+      The emulator is paced to the original's 6&nbsp;MHz clock. On the current CPU board the
+      emulated program may run somewhat below full speed; pitch CVs and clock-driven tempo are
+      unaffected (the arpeggiator and sequencer follow the LFO / EXT CLK), but key-scan response
+      can be slightly slower than a stock unit. This is being measured during board bring-up.
+    </div>
+  </section>
+
+  <!-- ══ REFERENCE ══════════════════════════════════════════════ -->
+  <div class="man-part">Reference</div>
+
+  <section id="installing" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">1</span>
+      <h2 class="docs-sec-title">Installing &amp; Updating</h2>
+    </div>
+    <p class="docs-body">
+      During bring-up the firmware is flashed over USB with the Teensy loader (the CPU carries the
+      HalfKay bootloader), or over the board's ISP header. A MIDI SysEx updater like the
+      superOS-303's, so the firmware can be updated with no tools through the MIDI breakout, is
+      planned for the production release.
+    </p>
+    <div class="docs-warning">
+      <strong>Warning</strong>
+      Do not disconnect power while a firmware update is in progress unless the update has failed.
+    </div>
+  </section>
+
+  <section id="status" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">2</span>
+      <h2 class="docs-sec-title">Development Status</h2>
+    </div>
+    <p class="docs-body">
+      v0.1-alpha is bring-up firmware: the CV/gate core, panel decode, keyboard, arpeggiator,
+      sequencer, Config Menu, and 80C49 mode are implemented and verified against a pin-level
+      simulation of the synth. Not yet implemented:
+    </p>
+    <ul class="docs-list">
+      <li><kbd class="docs-key">KEY TRANSPOSE</kbd> in superOS-101 (works in 80C49 mode).</li>
+      <li><kbd class="docs-key">HOLD</kbd> latch of keys and arpeggios in superOS-101 (the button
+        currently writes ties while recording; hold works fully in 80C49 mode).</li>
+      <li>The function-LED display during normal superOS play (the LEDs work in the Config Menu).</li>
+      <li>Exact portamento and clock-reset timing fidelity.</li>
+      <li>MIDI notes in/out (MIDI clock sync is implemented; note handling is next).</li>
+    </ul>
+  </section>
+
+  <section id="quick-reference" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">3</span>
+      <h2 class="docs-sec-title">Quick Reference</h2>
+    </div>
+
+    <p class="docs-label">Playing</p>
+    <table class="docs-table man-t-combo">
+      <tbody>
+        <tr><td><kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> / <kbd class="docs-key">UP&amp;DOWN</kbd></td><td>Arpeggiator on in that direction / off</td></tr>
+        <tr><td>TRIG switch <strong>GATE+TRIG</strong></td><td>Last-note priority (else lowest-note)</td></tr>
+        <tr><td>TRIG switch <strong>LFO</strong></td><td>LFO restarts on each new key</td></tr>
+      </tbody>
+    </table>
+
+    <p class="docs-label">Sequencer</p>
+    <table class="docs-table man-t-combo">
+      <tbody>
+        <tr><td><kbd class="docs-key">LOAD</kbd></td><td>Start recording (clears old sequence)</td></tr>
+        <tr><td>Key / <kbd class="docs-key">KEY TRANSPOSE</kbd> / <kbd class="docs-key">HOLD</kbd> + key</td><td>Write note / rest / tie</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> (recording)</td><td>Save and exit</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Sequencer start / stop</td></tr>
+      </tbody>
+    </table>
+
+    <p class="docs-label">Config Menu &amp; Combined Edition</p>
+    <table class="docs-table man-t-combo">
+      <tbody>
+        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> 2&nbsp;s (or at power-on)</td><td>Config Menu</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">LOAD</kbd> / <kbd class="docs-key">PLAY</kbd></td><td>Boot 80C49 mode / superOS-101</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">UP&amp;DOWN</kbd></td><td>MIDI clock sync on / off (KEY TRANSPOSE LED = on)</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> or 10 lowest keys</td><td>MIDI clock division (1/4 &hellip; 1/32)</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>Exit menu</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> at power-on (80C49 mode)</td><td>Original Test Mode</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="specifications" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">4</span>
+      <h2 class="docs-sec-title">Specifications</h2>
+    </div>
+    <ul class="man-spec">
+      <li>
+        <span class="man-spec-name">CPU</span>
+        AT90USB1286 (16&nbsp;MHz) on a drop-in board for the SH-101's 40-pin 80C49 socket. USB
+        for firmware flashing; MIDI via the panel breakout (hardware present, firmware planned).
+      </li>
+      <li>
+        <span class="man-spec-name">CV engine</span>
+        Bit-faithful reproduction of the original DAC/multiplexer protocol: 6-bit pitch, range,
+        and random CVs into the original sample/holds, with the original's scan-safety guarantees.
+        Confirmed 1&nbsp;V/octave numeric model.
+      </li>
+      <li>
+        <span class="man-spec-name">Keyboard</span>
+        32 keys, monophonic, lowest- or last-note priority (TRIG-switch selected), octave
+        TRANSPOSE, RANGE 16&prime;&ndash;2&prime;.
+      </li>
+      <li>
+        <span class="man-spec-name">Arpeggiator</span>
+        Up, down, up&amp;down over held keys; clocked by LFO or EXT CLK.
+      </li>
+      <li>
+        <span class="man-spec-name">Sequencer</span>
+        100 steps of note / rest / tie, clocked by LFO, EXT CLK, or divided MIDI clock, saved to
+        permanent on-chip memory (no battery).
+      </li>
+      <li>
+        <span class="man-spec-name">MIDI clock sync</span>
+        24-ppqn realtime clock with Start / Stop / Continue; ten drift-free divisions
+        (1/4 &hellip; 1/32 with dotted and triplet); clocks the arp/sequencer, hard-syncs the
+        analog LFO via CLOCK RESET, and steps the random S&amp;H; works in both firmwares
+        (injected on the emulated T1 in 80C49 mode). Settings retained across power-off.
+      </li>
+      <li>
+        <span class="man-spec-name">80C49 mode</span>
+        Full-ISA MCS-48 emulation of the original CPU running the genuine mask ROM (user-supplied,
+        never distributed), ports passed 1:1 to the synth, paced to the original 6&nbsp;MHz clock.
+      </li>
+      <li>
+        <span class="man-spec-name">Firmware select</span>
+        Panel Config Menu (HOLD + KEY TRANSPOSE, 2&nbsp;s or at power-on); choice retained across
+        power-off.
+      </li>
+    </ul>
+  </section>
+
+  <!-- ── Footer ─────────────────────────────────────────────────── -->
+  <footer class="man-footer">
+    <p>superOS-101 Firmware Owner's Manual &middot; Combined Edition v0.1-alpha.</p>
+    <p>Roland and SH-101 are trademarks of Roland Corporation, used solely to identify compatibility. This project and site are not affiliated with, endorsed, or sponsored by Roland Corporation.</p>
+  </footer>
+
+</div>

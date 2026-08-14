@@ -1,0 +1,103 @@
+// SuperOS-101 — config menu (firmware select), modeled on the 303's FUNCTION+
+// CLEAR menu but driven by the SH-101's own panel.
+//
+// Entry: hold HOLD + KEY-TRANSPOSE for 2 s while running (either firmware), or
+// at power-on. (The original ROM's Test Mode combo is LOAD + KEY-TRANSPOSE at
+// power-on; ours is chosen not to collide with it, and both buttons are inert
+// in normal SuperOS play.)
+//
+// In the menu (gate forced off, HOLD LED lit as the menu marker; the function
+// LED shows the running firmware — LOAD lit = emulator, PLAY lit = SuperOS;
+// KEY-TRANSP LED lit = MIDI clock sync on):
+//   LOAD          -> reboot into the 80C49 emulator (original mask ROM)
+//   PLAY          -> reboot into SuperOS
+//   UP&DOWN       -> toggle MIDI clock sync
+//   UP / DOWN     -> next / previous MIDI clock division
+//   keys 1-10     -> MIDI clock division direct: 1/4 1/4d 1/4t 1/8 1/8d 1/8t
+//                    1/16 1/16d 1/16t 1/32 (lowest key = 1/4)
+//   KEY-TRANSPOSE -> exit, resume the running firmware
+#pragma once
+#include <Arduino.h>
+#include "pins.h"
+#include "hw.h"
+#include "controls.h"
+#include "combined.h"
+#include "emu101.h"
+#include "midiclock.h"
+
+namespace menu {
+
+static const uint32_t COMBO_MS = 2000;
+
+struct State {
+  bool active = false;
+  uint8_t prev = 0xFF;
+  uint32_t prevKeys = 0xFFFFFFFF;   // all-set so entry-held keys don't edge
+  uint32_t comboStart = 0;
+};
+inline State& S() { static State s; return s; }
+
+inline bool Active() { return S().active; }
+inline void Exit()   { S().active = false; S().comboStart = 0; }
+inline void Enter()  {
+  S().active = true; S().prev = 0xFF; S().prevKeys = 0xFFFFFFFF;
+  S().comboStart = 0;
+}
+
+// Called every pass by whichever firmware runs, with buttons in 1=pressed form.
+inline void NotifyButtons(uint8_t buttons, uint32_t nowMs) {
+  const uint8_t combo = (uint8_t)((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
+  if ((buttons & combo) == combo) {
+    if (!S().comboStart) S().comboStart = nowMs ? nowMs : 1;
+    else if (!S().active && nowMs - S().comboStart >= COMBO_MS) Enter();
+  } else {
+    S().comboStart = 0;
+  }
+}
+
+inline bool PowerOnComboHeld() {
+  uint8_t b = hw::ScanRead(COL_BUTTONS);
+  return (b & ((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS)))
+         ==   ((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
+}
+
+// One menu pass; call instead of the firmware loop while Active().
+inline void Poll() {
+  // Scan without disturbing whatever the paused firmware left on the BUS.
+  uint8_t savedBus = BUS_PORT;
+  uint8_t now = hw::ScanRead(COL_BUTTONS);
+  uint32_t keysNow = 0;
+  for (uint8_t bank = 0; bank < 4; ++bank)
+    keysNow |= (uint32_t)hw::ScanRead((ScanCol)(COL_KBD_BANK0 + bank)) << (bank * 8);
+  BUS_PORT = savedBus;
+  uint8_t  rise    = (uint8_t)(now & ~S().prev);
+  uint32_t keyRise = keysNow & ~S().prevKeys;
+  S().prev = now;
+  S().prevKeys = keysNow;
+
+  // Gate off, portamento off; HOLD LED on (P25=0 -> TR16 off -> D41 lit);
+  // function LED one-hot: 1 = LOAD (emulator running), 2 = PLAY (SuperOS);
+  // KEY-TRANSP LED (P26=1 -> lit) = MIDI clock sync on.
+  uint8_t p2 = (uint8_t)((1u << P2_GATE) | (1u << P2_PORTA_OFF));
+  p2 |= (combined_current_fw() == FW_EMU) ? 1 : 2;
+  if (midiclk::SyncOn()) p2 |= (uint8_t)(1u << P2_LED_KTRANS);
+  hw::P2Write(p2);
+
+  // MIDI clock sync: UP&DOWN toggles; UP/DOWN cycle the division; the 10
+  // lowest keys select it directly (table in midiclock.h).
+  if (rise & (1u << controls::BTN_UD)) midiclk::SetSync(!midiclk::SyncOn());
+  if (rise & (1u << controls::BTN_UP))
+    midiclk::SetDiv((uint8_t)((midiclk::DivIdx() + 1) % midiclk::DIV_COUNT));
+  if (rise & (1u << controls::BTN_DOWN))
+    midiclk::SetDiv((uint8_t)((midiclk::DivIdx() + midiclk::DIV_COUNT - 1) % midiclk::DIV_COUNT));
+  for (uint8_t k = 0; k < midiclk::DIV_COUNT; ++k)
+    if (keyRise & (1UL << k)) midiclk::SetDiv(k);
+
+  if (rise & (1u << controls::BTN_LOAD)) {
+    if (emu101::available()) RebootTo(FW_EMU);   // no ROM embedded -> ignore
+  }
+  if (rise & (1u << controls::BTN_PLAY))     RebootTo(FW_SUPEROS);
+  if (rise & (1u << controls::BTN_KEYTRANS)) Exit();
+}
+
+} // namespace menu

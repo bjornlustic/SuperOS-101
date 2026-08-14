@@ -1,0 +1,12 @@
+.pio/
+*.syx
+*.hex
+.DS_Store
+# local reference clone of joebritt/SH101_Disassembled (kept out of our history)
+SH101-reference/
+# generated from the mask-ROM dump (tools/mkrom.py) -- NEVER distribute
+src/rom101_data.h
+# host emulator build outputs
+sim/superos101-sim
+sim/sim-eeprom.bin
+sim/sim-selftest-eeprom.bin
