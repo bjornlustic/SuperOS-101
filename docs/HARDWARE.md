@@ -279,11 +279,15 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
       so any sag is a pitch shift (about 57 mV per semitone, lower VCC = higher
       pitch). Measured at the AVR with the SysEx 0x3E bench window (2026-08-15):
       core 16 MHz + USB engine 4.49-4.65 V (out of regulation, C4 played ~G4);
-      core 16 MHz, USB engine off 4.98 V; core 8 MHz + USB engine 4.96 V; core
-      8 MHz + USB + idle-sleep settle waits 4.98 V. The firmware therefore runs the
-      core at 8 MHz (platformio.ini [env:app]) and sleeps through the S/H settle
-      dwells (hw.h IdleWaitUs); with that the pitch with USB running is within
-      5 cents of USB-off in both firmwares. Earlier evidence of the same limit:
+      core 16 MHz, USB engine off 4.98 V; core 8 MHz + USB engine 4.96 V in the
+      CPU-bound emulator (regulator knee, ~5 cents of load-dependent wobble) and
+      4.98 V in SuperOS with idle-sleep settle waits; core 4 MHz + USB engine
+      4.98 V in both firmwares. The firmware therefore runs the core at 4 MHz
+      (platformio.ini [env:app]) and sleeps through the S/H settle dwells (hw.h
+      IdleWaitUs); with that the pitch with USB running is indistinguishable from
+      USB-off in both firmwares (within the VCO's own 2-3 cent noise). The cost is
+      emulator speed: the 80C49 interpreter runs ~6.9x slower than the real chip
+      (scan/arp latency, not pitch). Earlier evidence of the same limit:
       with the BOD fuse at 4.3 V (efuse 0xF8) every SPM flash write and the USB
       PLL start reset the chip (BORF via SysEx 0x3B); at 3.5 V (efuse 0xF9, now
       the standard) it is clean. Hardware headroom (a later board rev) would come

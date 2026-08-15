@@ -23,11 +23,12 @@
 // unplugged. The synth's +5 V regulator (VR-1, "D/A WIDTH") is the R-2R DAC's
 // reference and has almost no current headroom with this board: with the
 // core at 16 MHz the USB engine's current alone dropped VCC 4.98 -> 4.5-4.6 V
-// and moved the pitch ~7 semitones (2026-08-15). The cure is the 8 MHz core
+// and moved the pitch ~7 semitones (2026-08-15). The cure is the 4 MHz core
 // clock plus idle-sleep settle waits (platformio.ini [env:app], hw.h): with
-// those the rail holds 4.96-4.98 V with the engine running (5 cents from
-// engine-off). Keeping the engine clocked whether or not a cable is in makes
-// even that residual constant, so plugging a cable never moves the tuning.
+// those the rail holds 4.98 V with the engine running, in both firmwares,
+// same as engine-off. Keeping the engine clocked whether or not a cable is
+// in keeps the load constant on top of that, so plugging a cable never moves
+// the tuning.
 #pragma once
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
 #include <Arduino.h>

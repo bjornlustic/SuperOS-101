@@ -77,14 +77,16 @@ were the 4.3 V brown-out fuse (see Flashing), not the port.
 **Tuning and the +5 V rail.** The SH-101's +5 V regulator is also the DAC reference,
 and it cannot supply the AVR at 16 MHz plus the USB engine: with both, VCC at the
 chip sagged to 4.5-4.6 V and every note played about 7 semitones off, moving with the
-load. The firmware therefore runs the core at 8 MHz (`platformio.ini`) and sleeps
+load. The firmware therefore runs the core at 4 MHz (`platformio.ini`) and sleeps
 through the S/H settle waits (`hw.h`); measured on the first unit the rail then holds
-4.96-4.98 V with USB-MIDI running and the pitch is within 5 cents of USB-off, in
-both firmwares. The USB engine keeps its clock when unplugged so plugging a cable
-in never moves the tuning (details in `docs/HARDWARE.md`, "Current budget"). The
-side effect is on the 80C49 emulator: its interpreter runs about 4.7x slower than
-the real 6 MHz chip (about 3.7x before, at 16 MHz), which stretches the ROM's scan
-loop and delay loops (key/arp latency of ~10-20 ms), not the pitch CVs.
+4.98 V with USB-MIDI running, in both firmwares, and the pitch is the same as with
+the USB engine off (8 MHz was enough for SuperOS but left the CPU-bound emulator
+~5 cents load-sensitive). The USB engine keeps its clock when unplugged so plugging
+a cable in never moves the tuning (details in `docs/HARDWARE.md`, "Current
+budget"). The side effect is on the 80C49 emulator: its interpreter runs about
+6.9x slower than the real 6 MHz chip (about 3.7x at 16 MHz), which stretches the
+ROM's scan loop and delay loops (key/arp latency of ~10-25 ms), not the pitch CVs.
+The SuperOS loop pass is ~0.9 ms (the original ROM's was 1.5-3.5 ms).
 
 ## Pattern storage (flash arena)
 

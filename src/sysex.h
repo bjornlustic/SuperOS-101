@@ -48,7 +48,8 @@ inline uint16_t MeasureVccMv() {
 #ifdef __AVR__
   uint8_t prr = PRR0; PRR0 &= (uint8_t)~(1 << PRADC);
   ADMUX  = (1 << REFS0) | 0x1E;                       // AVCC ref, 1.1 V bandgap in
-  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+  // ADC clock 50-200 kHz: /128 at 8-16 MHz, /64 below
+  ADCSRA = (uint8_t)((1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (F_CPU >= 8000000UL ? (1 << ADPS0) : 0));
   delayMicroseconds(400);                             // bandgap settle
   uint32_t acc = 0;
   for (uint8_t i = 0; i < 9; ++i) {                   // discard first, average 8
