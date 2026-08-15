@@ -114,11 +114,14 @@ static uint32_t g_ramQuietMs = 0;              // last time the region changed
 static bool     g_ramDirty   = false;
 
 static void RamLoad() {
+  // The shadow is what EEPROM really holds (0xFF where never written), so
+  // the first save after a blank EEPROM writes every byte, zeros included:
+  // the ROM's LOAD clears the region to 0 and expects 0, not 0xFF, after
+  // the last step.
+  for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i) g_ramShadow[i] = eeprom_read_byte(EE_EMU_RAM + i);
   if (eeprom_read_byte(EE_EMU_MAGIC) == EE_EMU_MAGIC_VAL)
-    for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i)
-      g_cpu.ram[EMU_RAM_FIRST + i] = eeprom_read_byte(EE_EMU_RAM + i);
-  memcpy(g_ramShadow, g_cpu.ram + EMU_RAM_FIRST, EMU_RAM_COUNT);
-  memcpy(g_ramSeen,   g_cpu.ram + EMU_RAM_FIRST, EMU_RAM_COUNT);
+    memcpy(g_cpu.ram + EMU_RAM_FIRST, g_ramShadow, EMU_RAM_COUNT);
+  memcpy(g_ramSeen, g_cpu.ram + EMU_RAM_FIRST, EMU_RAM_COUNT);
 }
 // Called every pass: note changes; once quiet for 1 s, write one changed
 // byte per pass (each write costs ~3.4 ms of blocking).

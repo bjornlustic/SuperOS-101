@@ -583,6 +583,7 @@ static int SelfTest() {
       bool magic = eeprom_read_byte(EE_EMU_MAGIC) == EE_EMU_MAGIC_VAL;
       int nz = 0; for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i) if (eeprom_read_byte(EE_EMU_RAM + i)) ++nz;
       CHECK(magic && nz > 0, "ROM sequence persisted to EEPROM (magic + data)");
+      CHECK(eeprom_read_byte(EE_EMU_RAM + 10) == 0, "EEPROM image carries the ROM's zeros after the last step (not 0xFF)");
     }
 
     // Menu works from the emulator side too: PLAY -> back to SuperOS.
