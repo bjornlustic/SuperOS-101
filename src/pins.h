@@ -77,6 +77,13 @@ enum P2Bit : uint8_t {
   P2_GATE = 7,       // P27  GATE  (INVERTED: bit=0 -> gate ON, bit=1 -> gate OFF)
 };
 
+// Idle P2 image, matching the original ROM's resting value (0xB7 with LED
+// select 7; select 0 is the same "all off" per the 4556 truth table):
+//   GATE off (P27=1), KT LED off (P26=0), HOLD LED off (P25=1),
+//   CLOCK RESET idle HIGH (P24=1, the reset pulse is active-LOW),
+//   PORTAMENTO OFF idle low (P23=0), function-LED select 0 = none lit.
+#define P2_IDLE ((uint8_t)((1u << P2_GATE) | (1u << P2_LED_HOLD) | (1u << P2_CLOCK_RST)))
+
 // ---------------------------------------------------------------------------
 // PORTD = T1 (clock), T0 (HOLD), MIDI
 // ---------------------------------------------------------------------------

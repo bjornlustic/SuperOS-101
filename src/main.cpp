@@ -45,6 +45,11 @@ static uint8_t ClockAndRandom(bool &edge) {
 void superos_setup() {
   hw::Init();
   g_engine.begin();
+  // Prime the button edge detector with the current state so a button that
+  // is still held from a firmware switch / power-on does not register as a
+  // fresh press (which would toggle PLAY/LOAD/arp modes at boot).
+  g_buttons.Scan();
+  g_buttons.Scan();
 #ifdef USB_SERIAL
   Serial.begin(115200);
 #endif
@@ -110,11 +115,13 @@ void superos_loop() {
   // polarities — HOLD is lit by P25=0, KEY-TRANSPOSE by P26=1 (extra
   // inverter TR10). Function-LED select 0 = all off, 1-5 = exactly one of
   // LOAD/PLAY/DOWN/U&D/UP. Idle = everything off: select 0, P25=1, P26=0.
-  uint8_t p2 = (uint8_t)(1u << P2_LED_HOLD);
+  // CLOCK RESET is ACTIVE-LOW (the ROM idles P24 high and pulses it low;
+  // holding it low freezes the LFO: no LFO/CLK LED blink, no modulation).
+  uint8_t p2 = P2_IDLE;
   if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
-  if (!out.gate)       p2 |= (uint8_t)(1u << P2_GATE);      // bit=1 -> gate OFF
+  if (out.gate)        p2 &= (uint8_t)~(1u << P2_GATE);      // bit=0 -> gate ON
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
-    p2 |= (uint8_t)(1u << P2_CLOCK_RST);
+    p2 &= (uint8_t)~(1u << P2_CLOCK_RST);                    // pulse LOW
   // TODO: arp/seq mode on the function-LED select (1-5), KT LED (P26=1) when
   // KEY-TRANSPOSE lands.
   hw::P2Write(p2);

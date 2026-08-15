@@ -33,11 +33,10 @@ inline void Init() {
   P1_DDR  = 0x00;
   P1_PORT = 0xFF;
 
-  // P2 (P20–7) output; idle = GATE off (bit7=1) + HOLD LED off (P25=1 — it
-  // lights on 0, and the first loop pass can be seconds away when the USB
-  // core waits for enumeration). KT LED off = P26=0 (opposite polarity).
+  // P2 (P20–7) output; idle image (pins.h P2_IDLE): GATE off, LEDs off,
+  // CLOCK RESET released (idle HIGH; holding it low freezes the LFO).
   P2_DDR  = 0xFF;
-  P2_PORT = (uint8_t)((1u << P2_GATE) | (1u << P2_LED_HOLD));
+  P2_PORT = P2_IDLE;
 
   // T1 (clock) / T0 (HOLD) inputs, WITH internal pull-ups: both are
   // active-low/driven lines on a fully wired board, but an unwired pedal

@@ -76,13 +76,12 @@ inline void Poll() {
   S().prev = now;
   S().prevKeys = keysNow;
 
-  // Gate off, portamento off; HOLD LED on (P25=0 -> TR16 off -> D41 lit);
+  // Gate off, clock reset released; HOLD LED on (P25=0 -> TR16 off -> D41 lit);
   // function LED one-hot: 1 = LOAD (emulator running), 2 = PLAY (SuperOS);
   // KEY-TRANSP LED (P26=1 -> lit, via inverter TR10; HOLD is the opposite
   // polarity, P25=1 -> off) = MIDI clock sync on. Function LED 1 (LOAD) =
   // emulator selected, 2 (PLAY) = SuperOS.
-  uint8_t p2 = (uint8_t)((1u << P2_GATE) | (1u << P2_PORTA_OFF) |
-                         (1u << P2_LED_HOLD));
+  uint8_t p2 = (uint8_t)(P2_IDLE & ~(1u << P2_LED_HOLD));   // HOLD LED lit
   p2 |= (combined_current_fw() == FW_EMU) ? 1 : 2;
   if (midiclk::SyncOn()) p2 |= (uint8_t)(1u << P2_LED_KTRANS);
   hw::P2Write(p2);

@@ -54,7 +54,38 @@ void EnterBootloader() {
 void RebootTo(uint8_t fw) {
   eeprom_update_byte(EE_FW_SELECT, fw);
   menu::Exit();
+
+  // Everything off during the switch: gate off, portamento off, no LED lit
+  // (HOLD LED off = P25 high, KT LED off = P26 low, function select 0), so
+  // nothing stale shows while the other firmware comes up.
+  hw::P2Write(P2_IDLE);
+  BUS_PORT = 0xFF;
+
+  // Input lockout (same as SuperOS-303): the finger that pressed LOAD/PLAY is
+  // still on the button when the reset lands, and the other firmware would
+  // boot with it held (the ROM enters step-LOAD mode, SuperOS toggles into
+  // sequencer PLAY). Wait until every button and key has read released for
+  // 250 ms straight; hard 4 s timeout so a stuck line cannot block the
+  // switch (a floating P1 reads all-pressed).
+  {
+    const uint32_t t0 = millis();
+    uint32_t idleSince = millis();
+    for (;;) {
+      bool any = hw::ScanRead(COL_BUTTONS) != 0;
+      for (uint8_t bank = 0; bank < 4 && !any; ++bank)
+        any = hw::ScanRead((ScanCol)(COL_KBD_BANK0 + bank)) != 0;
+      BUS_PORT = 0xFF;
+      const uint32_t now = millis();
+      if (any) idleSince = now;
+      else if (now - idleSince >= 250) break;
+      if (now - t0 >= 4000) break;
+      delayMicroseconds(2000);
+    }
+  }
 #ifdef __AVR__
+  // Hardware reset via watchdog: the bootloader wdt_disable()s on entry and
+  // falls straight through to the app, which reads the new select byte.
+  cli();
   wdt_enable(WDTO_15MS);
   for (;;) {}
 #else

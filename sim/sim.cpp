@@ -173,13 +173,13 @@ static void ClockTick() {
 }
 
 static bool GateOn()     { return !(sim_portf & 0x80); }
-static bool ClockReset() { return  (sim_portf & 0x10) != 0; }
+static bool ClockReset() { return  (sim_portf & 0x10) == 0; }   // active-LOW pulse
 
 static void PrintState() {
-  printf("[%s] cv=%2u  gate=%s  vco-range=%2u  random=%2u  clkrst=%d  keys=%08X  virt=%lluus\n",
+  printf("[%s] cv=%2u  gate=%s  vco-range=%2u  random=%2u  clkrst=%d  p2=%02X  keys=%08X  virt=%lluus\n",
          combined_current_fw() == SIM_FW_EMU ? "emu" : "sos",
          sim::g_sh[0], GateOn() ? "ON " : "off", sim::g_sh[1], sim::g_sh[2],
-         ClockReset() ? 1 : 0, sim::g_keys, (unsigned long long)sim::g_virtualUs);
+         ClockReset() ? 1 : 0, sim_portf, sim::g_keys, (unsigned long long)sim::g_virtualUs);
 }
 
 // ---------------------------------------------------------------------------
