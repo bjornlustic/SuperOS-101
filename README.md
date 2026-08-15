@@ -111,6 +111,10 @@ two firmwares; internal-EEPROM byte 0x000 selects which runs at boot (map in
   the original scan patterns, active-low DAC writes, and settle loops hit the analog
   board unchanged. Paced to the original 6 MHz resonator (400 k machine cycles/s).
   The original's power-on Test Mode (LOAD + KEY-TRANSPOSE) works in this mode.
+  MIDI notes 53..84 are pressed into the emulated key matrix (the ROM sees keys), the
+  ROM's CV/GATE is echoed on MIDI OUT, and the ROM's battery RAM (0x1C..0x7F, the
+  100 sequencer steps) is mirrored to internal EEPROM (`combined.h` map, `emu101.cpp`):
+  restored before the ROM runs, written back a second after the last change.
 
 **Config menu**: hold **HOLD + KEY-TRANSPOSE for 2 s** (while running, either mode)
 or at power-on. In the menu the HOLD LED lights, the gate is forced off, and the

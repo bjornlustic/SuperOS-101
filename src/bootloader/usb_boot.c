@@ -79,22 +79,30 @@ static const uint8_t PROGMEM cin_len[16] =
 
 void usb_boot_init(void) {
   usb_cfg = 0;
-  usb_active = 1;
+  usb_active = 0;
   UDCON = (1 << DETACH); /* clean start even if the app left USB attached */
   USBCON = 0;
   UHWCON = (1 << UIMOD) | (1 << UVREGE);
   USBCON = (1 << USBE) | (1 << FRZCLK);
-  PLLCSR = 0x16; /* 16 MHz crystal -> 48 MHz USB clock */
-  /* Bounded lock wait (lock takes ~100 us): the bootloader has no watchdog,
-   * so an unbounded spin on a PLL that misses lock (seen on the 303 after a
-   * hot reset) would strand a unit that could still update over DIN. No lock
-   * within ~10 ms -> run without USB. */
-  for (uint16_t i = 0; i < 10000 && !(PLLCSR & (1 << PLOCK)); i++)
-    _delay_us(1);
-  if (!(PLLCSR & (1 << PLOCK))) {
-    PLLCSR = 0;
+  /* PLL: 16 MHz crystal -> 48 MHz USB clock. Bounded lock wait (lock takes
+   * ~100 us): the bootloader has no watchdog, so an unbounded spin on a PLL
+   * that misses lock would strand a unit that could still update over DIN.
+   * The AVR PLL does miss lock now and then when restarted right after being
+   * stopped (bench 2026-08-15), so try a few times, PLL off in between; if
+   * it still fails, run DIN-only and let usb_boot_task() retry later. */
+  for (uint8_t attempt = 0; attempt < 5 && !usb_active; attempt++) {
+    PLLCSR = 0x16;
+    for (uint16_t i = 0; i < 10000 && !(PLLCSR & (1 << PLOCK)); i++)
+      _delay_us(1);
+    if (PLLCSR & (1 << PLOCK)) {
+      usb_active = 1;
+    } else {
+      PLLCSR = 0;
+      _delay_ms(20);
+    }
+  }
+  if (!usb_active) {
     USBCON = 0;
-    usb_active = 0;
     return;
   }
   USBCON = (1 << USBE) | (1 << OTGPADE);
@@ -114,14 +122,27 @@ void usb_boot_detach(void) {
 /* control-IN data stage from PROGMEM, honouring wLength, ZLP included.
  * Far pointer + ELPM throughout: this code links above 64 KB, so plain
  * pgm_read_byte (16-bit LPM) would read app-region flash instead. */
+/* Bounded wait for a control-endpoint flag: ~65k spins is tens of ms, far
+ * beyond any legitimate EP0 turnaround. Without a bound, a bus reset in the
+ * middle of a control transfer (the host still tearing down the previous
+ * device when the bootloader re-attaches; seen on the bench 2026-08-15)
+ * left the bootloader spinning forever, USB dead, no watchdog to save it. */
+static uint8_t ep0_wait(uint8_t mask) {
+  uint16_t t = 0;
+  while (!(UEINTX & mask))
+    if (++t == 0)
+      return 0;
+  return 1;
+}
+
 static void ep0_send(uint_farptr_t p, uint8_t len, uint16_t wLength) {
   uint16_t n = (wLength < len) ? wLength : len;
   uint8_t chunk;
   do {
     uint8_t x;
-    do {
-      x = UEINTX;
-    } while (!(x & ((1 << TXINI) | (1 << RXOUTI))));
+    if (!ep0_wait((1 << TXINI) | (1 << RXOUTI)))
+      return; /* bus went away mid-transfer */
+    x = UEINTX;
     if (x & (1 << RXOUTI))
       return; /* host aborted the transfer */
     chunk = (n > EP0_SIZE) ? EP0_SIZE : (uint8_t)n;
@@ -133,8 +154,15 @@ static void ep0_send(uint_farptr_t p, uint8_t len, uint16_t wLength) {
 }
 
 void usb_boot_task(void) {
-  if (!usb_active)
+  if (!usb_active) {
+    /* USB never came up (PLL): a few more attempts spread over the first
+     * second or so of loop time (each attempt blocks the UART for up to
+     * 150 ms, so not forever: a DIN update must still get through). */
+    static uint8_t  retries = 3;
+    static uint16_t tick = 0;
+    if (retries && ++tick == 0) { retries--; usb_boot_init(); }
     return;
+  }
   if (UDINT & (1 << EORSTI)) { /* bus reset: (re)arm EP0 */
     UDINT = (uint8_t)~(1 << EORSTI);
     UENUM = 0;
@@ -184,8 +212,8 @@ void usb_boot_task(void) {
     }
     if (bReq == 5 && bmReq == 0) { /* SET_ADDRESS */
       UEINTX = (uint8_t)~(1 << TXINI);
-      while (!(UEINTX & (1 << TXINI)))
-        ; /* address applies only after the status stage */
+      if (!ep0_wait(1 << TXINI)) /* address applies only after the status stage */
+        return;
       UDADDR = wVal_l | (1 << ADDEN);
       return;
     }
@@ -206,15 +234,15 @@ void usb_boot_task(void) {
       return;
     }
     if (bReq == 8 && bmReq == 0x80) { /* GET_CONFIGURATION */
-      while (!(UEINTX & (1 << TXINI)))
-        ;
+      if (!ep0_wait(1 << TXINI))
+        return;
       UEDATX = usb_cfg;
       UEINTX = (uint8_t)~(1 << TXINI);
       return;
     }
     if (bReq == 0 && (bmReq & 0x80)) { /* GET_STATUS */
-      while (!(UEINTX & (1 << TXINI)))
-        ;
+      if (!ep0_wait(1 << TXINI))
+        return;
       UEDATX = (bmReq == 0x80) ? 1 : 0; /* device: self-powered */
       UEDATX = 0;
       UEINTX = (uint8_t)~(1 << TXINI);

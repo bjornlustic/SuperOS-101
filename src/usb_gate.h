@@ -93,6 +93,9 @@ static inline void usb_gate_detach() {
   UDCON |= _BV(DETACH);
   _delay_ms(30);
   USBCON = 0;
-  PLLCSR = 0;
+  // The PLL is left running: the AVR's PLL can miss lock when it is stopped
+  // and restarted within milliseconds (bench 2026-08-15: bootloader entry
+  // from the emulator came up without USB), and the next stage (bootloader,
+  // or the core's usb_init after a watchdog reset) rewrites PLLCSR anyway.
 }
 #endif

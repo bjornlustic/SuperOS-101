@@ -1025,12 +1025,18 @@ body{margin:0;background:#fff;}
       <li>MIDI clock sync works here too: with sync on, the divided MIDI clock is fed to the
         original program in place of the LFO / EXT CLK, so even the stock arpeggiator and
         sequencer run DAW-locked at the chosen division.</li>
+      <li>MIDI notes work here too: notes 53&#8230;84 (F3&#8230;C6, the SH-101's own keys) are
+        pressed into the emulated key matrix, so the original program sees them as keys and they
+        arpeggiate, record and transpose like keys. Notes outside that range have no key and are
+        ignored. Whatever the original program plays is echoed on MIDI OUT.</li>
     </ul>
     <h3 class="man-sub">Sequence Memory in 80C49 Mode</h3>
     <p class="docs-body">
-      The original CPU kept its sequence in battery-backed internal RAM. The emulated RAM is
-      volatile in this release: sequences written in 80C49 mode are lost at power-off. Persistent
-      emulated RAM is planned. superOS-101's own sequence storage is separate and unaffected.
+      The original CPU kept its sequence in battery-backed internal RAM. In 80C49 mode that RAM
+      region (the 100 sequencer steps) is mirrored to the CPU's permanent memory: about a second
+      after you finish recording it is saved, and it is restored before the original program
+      starts, so the sequence survives power-off with no battery, exactly as a healthy stock unit
+      would keep it. superOS-101's own eight patterns are separate and unaffected.
     </p>
     <h3 class="man-sub">The Mask ROM</h3>
     <p class="docs-body">

@@ -28,7 +28,7 @@
 // Combined-build hooks (src/combined.h / boot.cpp / emu101.h / midiclock.h)
 uint8_t combined_current_fw();
 void RebootTo(uint8_t fw);
-namespace emu101 { bool available(); }
+namespace emu101 { bool available(); const uint8_t* ram(); }
 #include "midiclock.h"   // inline; resolved via -I ../src
 #include "midi.h"
 #include "usbmidi_codec.h"
@@ -556,6 +556,34 @@ static int SelfTest() {
     CHECK(cvA != cvB && (cvA == 17 || cvA == 21) && (cvB == 17 || cvB == 21),
           "ROM + MIDI sync: arp alternates keys 0/4 on divisions");
     sim::g_keys = 0; midiclk::SetSync(false); RunLoops(30);
+    // arp off again (tap DOWN), keyboard mode for the MIDI test
+    sim::g_buttons = 1u << 2; RunLoops(30); sim::g_buttons = 0; RunLoops(30);
+
+    // MIDI notes into the emulated key matrix: note 53 = key 0 -> the ROM
+    // plays CV 17 with the gate on, and echoes it on MIDI OUT.
+    g_midiOut.clear();
+    g_midiQ.push_back(0x90); g_midiQ.push_back(53); g_midiQ.push_back(100);
+    RunLoops(40);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "ROM + MIDI note 53 -> key 0, gate on, CV 17");
+    CHECK(g_midiOut.size() >= 3 && g_midiOut[0] == 0x90 && g_midiOut[1] == 53,
+          "ROM output echoed on MIDI OUT (note on 53)");
+    g_midiQ.push_back(0x80); g_midiQ.push_back(53); g_midiQ.push_back(0);
+    RunLoops(40);
+    CHECK(!GateOn(), "ROM + MIDI note off -> gate off");
+
+    // Battery RAM: record a 2-step sequence with the ROM (LOAD, keys, LOAD),
+    // then the changed RAM 0x1C..0x7F lands in EEPROM after 1 s of quiet.
+    {
+      auto tap = [&](uint8_t bit) { sim::g_buttons = 1u << bit; RunLoops(40); sim::g_buttons = 0; RunLoops(40); };
+      tap(0);                                                   // LOAD
+      sim::g_keys = 1UL << 0; RunLoops(40); sim::g_keys = 0; RunLoops(40);
+      sim::g_keys = 1UL << 4; RunLoops(40); sim::g_keys = 0; RunLoops(40);
+      tap(0);                                                   // LOAD: done
+      RunLoops(3000);                                           // 1.5 s quiet + writes
+      bool magic = eeprom_read_byte(EE_EMU_MAGIC) == EE_EMU_MAGIC_VAL;
+      int nz = 0; for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i) if (eeprom_read_byte(EE_EMU_RAM + i)) ++nz;
+      CHECK(magic && nz > 0, "ROM sequence persisted to EEPROM (magic + data)");
+    }
 
     // Menu works from the emulator side too: PLAY -> back to SuperOS.
     if (!setjmp(g_rebootJmp)) {

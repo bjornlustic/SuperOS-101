@@ -10,10 +10,19 @@
 //   0x002        settings flags: bit0 = MIDI clock sync on
 //   0x003        MIDI clock division index (midiclock.h table)
 //   0x004        MIDI channel 0..15 (sysex.h)
-//   0x010..      free (patterns live in the flash arena, flash_persist.h;
-//                future: emulator battery-RAM persistence, user ROM store)
+//   0x010..      free (SuperOS patterns live in the flash arena, flash_persist.h)
+//   0x100        emulator RAM-image magic (EE_EMU_MAGIC_VAL when valid)
+//   0x101..0x164 emulator "battery RAM": the 80C49's RAM 0x1C..0x7F (the 100
+//                sequencer steps the original kept alive on its battery; the
+//                ROM's START clears 0x02..0x1B itself). emu101.cpp.
 #pragma once
 #include <stdint.h>
+
+#define EE_EMU_MAGIC ((uint8_t*)0x100)
+#define EE_EMU_RAM   ((uint8_t*)0x101)
+static const uint8_t EE_EMU_MAGIC_VAL = 0x49;   // '8049'
+static const uint8_t EMU_RAM_FIRST    = 0x1C;   // first persisted 80C49 RAM byte
+static const uint8_t EMU_RAM_COUNT    = 0x80 - 0x1C;   // 100 bytes
 
 #define EE_FW_SELECT ((uint8_t*)0x000)
 #define EE_CFG_MAGIC ((uint8_t*)0x001)
