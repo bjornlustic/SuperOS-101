@@ -14,6 +14,7 @@
 #include <CoreMIDI/CoreMIDI.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -81,20 +82,41 @@ int main(int argc, char **argv) {
   fclose(f);
 
   printf("sending %ld bytes to \"%s\"...\n", len, name);
-  MIDISysexSendRequest req = {
-    .destination = dest,
-    .data = buf,
-    .bytesToSend = (UInt32)len,
-    .complete = false,
-    .completionProc = sysex_done,
-    .completionRefCon = NULL,
-  };
-  if (MIDISendSysex(&req) != noErr) {
-    fprintf(stderr, "sendsyx: MIDISendSysex failed\n");
-    return 1;
+  /* Send one F0..F7 message at a time with a gap between messages: the SysEx
+   * bootloader spends ~10 ms in SPM after each page with the UART unread, so a
+   * back-to-back stream (as MIDISendSysex would produce for a whole file) loses
+   * the head of the next page. Files without F0 (raw channel bytes) go as one
+   * chunk. */
+  long pos = 0;
+  int nmsg = 0;
+  while (pos < len) {
+    long end = pos;
+    if (buf[pos] == 0xF0) {
+      while (end < len && buf[end] != 0xF7) end++;
+      if (end < len) end++;            /* include F7 */
+    } else {
+      end = len;
+    }
+    g_done = 0;
+    MIDISysexSendRequest req = {
+      .destination = dest,
+      .data = buf + pos,
+      .bytesToSend = (UInt32)(end - pos),
+      .complete = false,
+      .completionProc = sysex_done,
+      .completionRefCon = NULL,
+    };
+    if (MIDISendSysex(&req) != noErr) {
+      fprintf(stderr, "sendsyx: MIDISendSysex failed\n");
+      return 1;
+    }
+    while (!g_done)
+      CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
+    if (req.bytesToSend) { fprintf(stderr, "sendsyx: %u bytes unsent\n", (unsigned)req.bytesToSend); return 1; }
+    nmsg++;
+    pos = end;
+    if (pos < len) usleep(60000);   /* 60 ms gap */
   }
-  while (!g_done)
-    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
-  printf("done (%u bytes unsent)\n", (unsigned)req.bytesToSend);
-  return req.bytesToSend ? 1 : 0;
+  printf("done (%d message%s)\n", nmsg, nmsg == 1 ? "" : "s");
+  return 0;
 }

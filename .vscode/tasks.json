@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Serve web-editor",
+      "type": "shell",
+      "command": "python3 -m http.server 3101 --bind 127.0.0.1",
+      "options": { "cwd": "${workspaceFolder}/tools/web-editor" },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "web-editor",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Serving HTTP"
+        }
+      },
+      "presentation": { "reveal": "silent", "panel": "dedicated", "showReuseMessage": false }
+    },
+    {
+      "label": "Flash app + bootloader (Atmel-ICE)",
+      "type": "shell",
+      "command": "tools/flash.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Sim self-test",
+      "type": "shell",
+      "command": "make test",
+      "options": { "cwd": "${workspaceFolder}/sim" },
+      "problemMatcher": []
+    }
+  ]
+}

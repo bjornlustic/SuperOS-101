@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SuperOS-101 Pattern Editor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --black:#000; --white:#fff; --gray-1:#f2f2f2; --gray-2:#e0e0e0; --gray-3:#b0b0b0; --gray-4:#606060;
+    --red:#cc0000; --rule:2px solid #000; --rule-sm:1px solid #000;
+    --font:"Helvetica Neue",Helvetica,Arial,sans-serif; --pad:clamp(10px,2.5vw,16px);
+  }
+  html { background:var(--white); color:var(--black); font-family:var(--font); font-size:14px; -webkit-font-smoothing:antialiased; }
+  body { min-height:100vh; overflow-x:hidden; }
+  .app { padding:var(--pad) var(--pad) clamp(16px,3vw,48px); max-width:1400px; margin:0 auto; min-width:0; }
+  .header { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 20px;
+            padding-bottom:10px; border-bottom:var(--rule); margin-bottom:clamp(12px,2vw,24px); }
+  .logo { font-size:clamp(20px,4.5vw,30px); font-weight:900; letter-spacing:-0.04em; text-transform:uppercase; line-height:1; }
+  .logo-sub { font-size:11px; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; color:var(--gray-4); }
+  .banner { display:none; padding:8px var(--pad); border:var(--rule); margin-bottom:6px; font-size:10px; font-weight:700;
+            letter-spacing:0.04em; text-transform:uppercase; background:var(--black); color:var(--white); }
+  .banner.visible { display:block; }
+  .strip { display:flex; flex-wrap:wrap; align-items:stretch; border:var(--rule); margin-bottom:6px; min-width:0; }
+  .group { display:flex; align-items:center; padding:0 var(--pad); border-bottom:var(--rule-sm); min-width:0; flex:1 1 100%; }
+  .group:last-child { border-bottom:none; }
+  .group-inner { display:flex; align-items:center; gap:6px; padding:5px 0; flex-wrap:wrap; min-width:0; flex:1; }
+  .lbl { font-size:8px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); white-space:nowrap;
+         padding-right:8px; border-right:var(--rule-sm); margin-right:8px; align-self:stretch; display:flex; align-items:center; flex-shrink:0; }
+  @media (min-width:640px) {
+    .group { flex:0 1 auto; border-bottom:none; border-right:var(--rule-sm); }
+    .group:last-child { border-right:none; }
+    .group--grow { flex:1 1 220px; }
+  }
+  select, input[type="number"] { height:30px; padding:0 8px; background:var(--white); border:var(--rule-sm); color:var(--black);
+    font-family:var(--font); font-size:13px; font-weight:600; outline:none; border-radius:0; appearance:none; }
+  select:focus { background:var(--black); color:var(--white); }
+  select { cursor:pointer; padding-right:8px; max-width:100%; }
+  .btn { height:28px; padding:0 10px; background:var(--white); border:var(--rule-sm); color:var(--black); font-family:var(--font);
+         font-size:10px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; white-space:nowrap; border-radius:0; }
+  .btn:hover:not(:disabled) { background:var(--black); color:var(--white); }
+  .btn:disabled { opacity:0.25; cursor:default; }
+  .btn-primary { background:var(--black); color:var(--white); border-color:var(--black); font-weight:900; }
+  .btn-primary:hover:not(:disabled) { background:var(--gray-4); border-color:var(--gray-4); }
+  .btn-ghost { height:28px; padding:0 10px; background:var(--white); border:var(--rule-sm); font-family:var(--font); font-size:9px;
+               font-weight:900; letter-spacing:0.18em; text-transform:uppercase; cursor:pointer; border-radius:0; }
+  .btn-ghost:hover, .btn-ghost.is-connected { background:var(--black); color:var(--white); }
+  .btn.is-on { background:var(--black); color:var(--white); }
+  .btn-red { background:var(--red); color:var(--white); border-color:var(--red); }
+  #midiStatus, .status { font-size:11px; font-weight:600; color:var(--gray-3); padding-left:8px; }
+  #midiStatus.is-ok, .status.is-ok { color:var(--black); }
+  /* pattern pills */
+  .pat-bar { display:flex; align-items:stretch; border:var(--rule); margin-bottom:6px; overflow-x:auto; }
+  .bank-label { font-size:9px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); padding:0 10px;
+                display:flex; align-items:center; border-right:var(--rule-sm); white-space:nowrap; }
+  .pat-pill { flex:0 0 auto; width:44px; height:38px; border-right:var(--rule-sm); background:var(--white); color:var(--gray-3);
+              font-size:11px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; user-select:none; position:relative; }
+  .pat-pill:hover:not(.is-active) { background:var(--gray-1); color:var(--black); }
+  .pat-pill.is-active { background:var(--black); color:var(--white); }
+  .pat-pill.is-dirty:not(.is-active) { box-shadow:inset 0 -3px 0 0 var(--red); color:var(--black); }
+  .pat-pill.is-dirty.is-active { box-shadow:inset 0 -3px 0 0 var(--red); }
+  .pat-pill.is-playing { animation:pill-blink 0.5s steps(1) infinite; }
+  .pat-pill.is-playing.is-active { animation:pill-blink-inv 0.5s steps(1) infinite; }
+  @keyframes pill-blink { 0%,100%{background:var(--white)} 50%{background:var(--gray-2)} }
+  @keyframes pill-blink-inv { 0%,100%{background:var(--black)} 50%{background:var(--gray-4)} }
+  .pat-bar .spacer { flex:1; }
+  /* sequencer */
+  .seq-panel { border:var(--rule); margin-bottom:6px; }
+  .seq-toolbar { display:flex; align-items:center; padding:8px var(--pad); border-bottom:var(--rule); flex-wrap:wrap; gap:8px 12px; }
+  .seq-toolbar .lbl { border-right:none; margin-right:0; padding-right:0; }
+  .steps { display:grid; grid-template-columns:repeat(auto-fill, minmax(56px,1fr)); gap:0; padding:0; }
+  .step { height:52px; border-right:var(--rule-sm); border-bottom:var(--rule-sm); display:flex; flex-direction:column; align-items:center;
+          justify-content:center; cursor:pointer; user-select:none; position:relative; background:var(--white); }
+  .step .n { font-size:13px; font-weight:900; letter-spacing:-0.02em; }
+  .step .t { font-size:7px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); margin-top:2px; }
+  .step .i { position:absolute; top:2px; left:4px; font-size:7px; font-weight:700; color:var(--gray-3); }
+  .step.rest { background:var(--gray-1); } .step.rest .n { color:var(--gray-3); }
+  .step.tie .n::before { content:"\2192\00a0"; font-weight:400; color:var(--gray-4); }
+  .step.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
+  .step.is-play { background:var(--black); color:var(--white); } .step.is-play .t, .step.is-play .n, .step.is-play .i { color:var(--white); }
+  .step.add { color:var(--gray-3); font-size:20px; font-weight:300; }
+  .step.add:hover { background:var(--gray-1); color:var(--black); }
+  .empty { grid-column:1 / -1; padding:18px var(--pad); font-size:11px; color:var(--gray-4); border-bottom:var(--rule-sm); }
+  /* keyboard */
+  .kbd { display:flex; border:var(--rule); margin-bottom:6px; overflow-x:auto; height:70px; }
+  .key { flex:0 0 26px; border-right:var(--rule-sm); display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px; font-size:8px;
+         font-weight:700; color:var(--gray-4); cursor:pointer; user-select:none; background:var(--white); }
+  .key.black { background:var(--black); color:var(--gray-3); flex-basis:20px; height:44px; }
+  .key:hover, .key.down { background:var(--red); color:var(--white); }
+  .key.inrange { border-bottom:4px solid var(--black); }
+  /* log */
+  .log { border:var(--rule); padding:6px var(--pad); height:150px; overflow:auto; font-family:Menlo,Consolas,monospace; font-size:10px; line-height:1.5; }
+  .log .err { color:var(--red); font-weight:700; } .log .ok { font-weight:700; }
+  .foot { font-size:9px; color:var(--gray-4); margin-top:8px; letter-spacing:0.04em; }
+  kbd { border:var(--rule-sm); padding:0 4px; font-family:inherit; font-size:9px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="logo">SuperOS&#x2011;101</div>
+    <div class="logo-sub">Pattern Editor</div>
+  </header>
+
+  <div class="banner" id="httpBanner">&#9632;&nbsp; Web MIDI needs Chrome/Edge over http(s) or localhost. Serve this folder: python3 -m http.server 3101 --directory tools/web-editor</div>
+  <div class="banner" id="emuBanner">&#9632;&nbsp; The unit is running the 80C49 emulator (original ROM). Pattern editing is unavailable. Use "Switch firmware" or the panel menu (HOLD + KEY-TRANSPOSE 2 s, then PLAY).</div>
+
+  <!-- MIDI -->
+  <div class="strip">
+    <div class="group"><div class="group-inner">
+      <button class="btn-ghost" id="btnMidi">Connect MIDI</button>
+      <span id="midiStatus">Not connected</span>
+    </div></div>
+    <div class="group"><span class="lbl">Out &#8594; 101</span><div class="group-inner"><select id="selOut" disabled></select></div></div>
+    <div class="group"><span class="lbl">101 &#8594; In</span><div class="group-inner"><select id="selIn" disabled></select></div></div>
+    <div class="group"><div class="group-inner">
+      <button class="btn" id="btnFwSwitch" disabled>Switch firmware</button>
+      <button class="btn" id="btnUpdate" disabled title="Pick an app-nousb-update.syx: the unit reboots into the SysEx bootloader and the editor sends the pages">Update OS&#8230;</button>
+      <input type="file" id="fileSyx" accept=".syx" style="display:none" />
+      <span class="status" id="fwStatus">Firmware: unknown</span>
+    </div></div>
+  </div>
+
+  <!-- Config -->
+  <div class="strip" id="cfgStrip">
+    <div class="group"><span class="lbl">MIDI ch</span><div class="group-inner"><select id="selChan"></select></div></div>
+    <div class="group"><span class="lbl">Clock sync</span><div class="group-inner">
+      <button class="btn" id="btnSync">Off</button>
+      <select id="selDiv"></select>
+    </div></div>
+    <div class="group"><div class="group-inner">
+      <button class="btn btn-primary" id="btnCfgApply" disabled>Apply config</button>
+      <span class="status" id="cfgStatus"></span>
+    </div></div>
+  </div>
+
+  <!-- Patterns -->
+  <div class="pat-bar" id="patBar">
+    <div class="bank-label">Pattern</div>
+    <div id="pills" style="display:flex"></div>
+    <div class="spacer"></div>
+    <div class="group-inner" style="padding:0 var(--pad); flex:0 0 auto; gap:6px">
+      <button class="btn" id="btnPlay" disabled>&#9654; Play</button>
+      <button class="btn" id="btnReadAll" disabled>&#8595; Read all</button>
+      <button class="btn btn-primary" id="btnWrite" disabled>&#8593; Write pattern</button>
+      <button class="btn" id="btnSave">Save file</button>
+      <button class="btn" id="btnLoad">Load file</button>
+      <input type="file" id="fileJson" accept=".json" style="display:none" />
+    </div>
+  </div>
+
+  <!-- Sequencer -->
+  <div class="seq-panel">
+    <div class="seq-toolbar">
+      <span class="lbl" id="seqTitle">Pattern 1</span>
+      <span class="status is-ok" id="seqLen">0 steps</span>
+      <span style="flex:1"></span>
+      <span class="lbl">Step</span>
+      <select id="selNote" title="Note of the selected step"></select>
+      <button class="btn" id="btnNote">Note</button>
+      <button class="btn" id="btnRest">Rest</button>
+      <button class="btn" id="btnTie">Tie</button>
+      <button class="btn" id="btnIns" title="Insert a step before the selected one">Insert</button>
+      <button class="btn" id="btnDel" title="Delete the selected step">Delete</button>
+      <button class="btn" id="btnClear">Clear pattern</button>
+    </div>
+    <div class="steps" id="steps"></div>
+    <div class="foot" style="padding:6px var(--pad)">Click a step to select, click again to cycle note / rest / tie. <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> note, <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = not yet written to the unit.</div>
+  </div>
+
+  <!-- On-screen keyboard -->
+  <div class="kbd" id="kbd" title="Click to play the unit over MIDI (notes with the black bar map onto the SH-101's own keys F3..C6)"></div>
+
+  <div class="log" id="log"></div>
+  <div class="foot">SysEx F0 7D &lt;cmd&gt; ... F7. Patterns are stored in the unit's flash arena; a written pattern is flushed about half a second after the last change.</div>
+</div>
+
+<script>
+'use strict';
+// ---------------------------------------------------------------------------
+// Data model: 8 patterns, each an array of steps {cv:0..63, type:0 note/1 rest/2 tie}
+// mirrors the firmware's one-byte-per-step model (cv | type<<6).
+// ---------------------------------------------------------------------------
+const NUM_PATTERNS = 8, MAX_STEPS = 100, MIDI_CV_OFFSET = 36;
+const DIVS = ['1/4','1/4d','1/4t','1/8','1/8d','1/8t','1/16','1/16d','1/16t','1/32'];
+const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const patterns = Array.from({length: NUM_PATTERNS}, () => []);
+const dirty = new Array(NUM_PATTERNS).fill(false);
+let curPat = 0, selStep = -1, playing = false, playPos = -1, devPat = 0;
+let deviceMode = 'unknown';   // 'superos' | 'emu' | 'unknown'
+let cfg = {chan: 0, sync: 0, div: 6, flash: 1, version: ''};
+
+function noteName(cv) { const n = cv + MIDI_CV_OFFSET; return NAMES[n % 12] + (Math.floor(n / 12) - 1); }
+function log(msg, cls) {
+  const el = document.getElementById('log');
+  const d = document.createElement('div'); if (cls) d.className = cls;
+  d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+  el.appendChild(d); el.scrollTop = el.scrollHeight;
+  while (el.children.length > 400) el.removeChild(el.firstChild);
+}
+const $ = id => document.getElementById(id);
+
+// ---------------------------------------------------------------------------
+// MIDI
+// ---------------------------------------------------------------------------
+let midiAccess = null, midiOut = null, midiIn = null;
+let probeTimer = null, probeTries = 0;
+
+function pack7(src) {
+  const out = [];
+  for (let i = 0; i < src.length; i += 7) {
+    const chunk = src.slice(i, i + 7); let msb = 0;
+    chunk.forEach((b, k) => { if (b & 0x80) msb |= 1 << k; });
+    out.push(msb); chunk.forEach(b => out.push(b & 0x7F));
+  }
+  return out;
+}
+function unpack7(src) {
+  const out = []; let i = 0;
+  while (i < src.length) { const msb = src[i++]; for (let k = 0; k < 7 && i < src.length; ++k) out.push(src[i++] | ((msb >> k) & 1 ? 0x80 : 0)); }
+  return out;
+}
+function sendSysex(body) {
+  if (!midiOut) { log('no MIDI out', 'err'); return false; }
+  midiOut.send(new Uint8Array([0xF0, 0x7D, ...body.map(b => b & 0x7F), 0xF7]));
+  return true;
+}
+function sendRaw(bytes) { if (midiOut) midiOut.send(new Uint8Array(bytes)); }
+
+async function connect() {
+  if (!navigator.requestMIDIAccess) { log('Web MIDI unavailable (use Chrome/Edge over http/localhost)', 'err'); $('httpBanner').classList.add('visible'); return; }
+  try { midiAccess = await navigator.requestMIDIAccess({sysex: true}); }
+  catch (e) { log('MIDI access denied: ' + e, 'err'); return; }
+  $('btnMidi').classList.add('is-connected'); $('btnMidi').textContent = 'MIDI on';
+  midiAccess.onstatechange = fillPorts;
+  fillPorts();
+}
+function fillPorts() {
+  const so = $('selOut'), si = $('selIn');
+  const outs = [...midiAccess.outputs.values()], ins = [...midiAccess.inputs.values()];
+  const prevO = so.value, prevI = si.value;
+  so.innerHTML = ''; si.innerHTML = '';
+  outs.forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; so.appendChild(o); });
+  ins.forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; si.appendChild(o); });
+  so.disabled = !outs.length; si.disabled = !ins.length;
+  const pick = (sel, list, prev) => {
+    if (prev && list.find(p => p.id === prev)) sel.value = prev;
+    else { const ux = list.find(p => /UX16|SH-?101|SuperOS/i.test(p.name)); if (ux) sel.value = ux.id; }
+  };
+  pick(so, outs, prevO); pick(si, ins, prevI);
+  selectPorts();
+}
+function selectPorts() {
+  const o = midiAccess.outputs.get($('selOut').value), i = midiAccess.inputs.get($('selIn').value);
+  if (midiIn && midiIn !== i) midiIn.onmidimessage = null;
+  midiOut = o || null; midiIn = i || null;
+  if (midiIn) midiIn.onmidimessage = onMidi;
+  const ok = midiOut && midiIn;
+  $('midiStatus').textContent = ok ? ('OUT ' + midiOut.name + '  /  IN ' + midiIn.name) : 'select ports';
+  $('midiStatus').className = ok ? 'is-ok' : '';
+  ['btnReadAll','btnWrite','btnPlay','btnCfgApply','btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !ok);
+  if (ok) probe();
+}
+$('selOut').onchange = selectPorts; $('selIn').onchange = selectPorts;
+$('btnMidi').onclick = connect;
+
+// Probe: 0x20 (SuperOS answers 0x21) + 0x40 (emulator answers 0x41)
+function probe(tries) {
+  probeTries = tries || 3;
+  clearInterval(probeTimer);
+  const once = () => {
+    if (!midiOut) return;
+    sendSysex([0x20]); sendSysex([0x40]);
+    if (--probeTries <= 0) clearInterval(probeTimer);
+  };
+  once(); probeTimer = setInterval(once, 1500);
+}
+function setMode(m) {
+  deviceMode = m;
+  clearInterval(probeTimer);
+  $('emuBanner').classList.toggle('visible', m === 'emu');
+  $('fwStatus').textContent = m === 'superos' ? ('Firmware: SuperOS ' + cfg.version) : m === 'emu' ? ('Firmware: 80C49 emulator ' + cfg.version) : 'Firmware: unknown';
+  $('fwStatus').className = 'status is-ok';
+  $('btnFwSwitch').textContent = m === 'emu' ? 'Switch to SuperOS' : 'Switch to emulator';
+  const ed = m === 'superos';
+  ['btnReadAll','btnWrite','btnPlay','btnCfgApply'].forEach(id => $(id).disabled = !ed);
+}
+
+// Inbound
+let sxBuf = null;
+function onMidi(e) {
+  const d = e.data;
+  // Chrome delivers complete SysEx messages in one event
+  if (d[0] === 0xF0) { if (d[1] === 0x7D) handleSysex(Array.from(d.slice(2, d.length - 1))); return; }
+  const st = d[0] & 0xF0;
+  if (st === 0x90 || st === 0x80) log('101 -> ' + (st === 0x90 && d[2] ? 'note on ' : 'note off ') + noteName(d[1] - MIDI_CV_OFFSET) + ' (' + d[1] + ')');
+}
+function handleSysex(b) {
+  const cmd = b[0];
+  switch (cmd) {
+    case 0x21: {   // config
+      cfg = {chan: b[2], sync: b[3], div: b[4], flash: b[6], version: String.fromCharCode(...b.slice(7))};
+      devPat = b[5];
+      $('selChan').value = cfg.chan; $('selDiv').value = cfg.div;
+      $('btnSync').textContent = cfg.sync ? 'On' : 'Off'; $('btnSync').classList.toggle('is-on', !!cfg.sync);
+      $('cfgStatus').textContent = cfg.flash ? 'flash store OK' : 'FLASH STORE MISSING (reflash bootloader)';
+      setMode('superos');
+      if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; }
+      log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) + ', v' + cfg.version, 'ok');
+      renderAll();
+      if (!readAllOnce) { readAllOnce = true; readAll(); }
+      break;
+    }
+    case 0x41: cfg.version = String.fromCharCode(...b.slice(2)); setMode('emu'); log('emulator firmware v' + cfg.version, 'ok'); break;
+    case 0x11: {   // pattern data
+      const p = b[1], raw = unpack7(b.slice(4));
+      let x = 0; raw.forEach(v => x ^= v);
+      if ((x & 0x7F) !== b[2] || ((x >> 7) & 1) !== b[3]) { log('pattern ' + (p + 1) + ': checksum mismatch', 'err'); break; }
+      const len = raw[0]; if (len > MAX_STEPS || raw.length < len + 1) { log('pattern ' + (p + 1) + ': bad length', 'err'); break; }
+      patterns[p] = raw.slice(1, 1 + len).map(s => ({cv: s & 0x3F, type: Math.min(2, s >> 6)}));
+      dirty[p] = false;
+      log('read pattern ' + (p + 1) + ' (' + len + ' steps)');
+      renderAll();
+      break;
+    }
+    case 0x14: {
+      const codes = ['written', 'REJECTED: bad checksum', 'REJECTED: bad pattern/length'];
+      log('101: ' + (codes[b[1]] || ('ack ' + b[1])), b[1] ? 'err' : 'ok');
+      if (b[1] === 0 && pendingWrite >= 0) { dirty[pendingWrite] = false; pendingWrite = -1; renderPills(); }
+      break;
+    }
+    case 0x15: playPos = b[2]; if (b[1] !== devPat) { devPat = b[1]; renderPills(); } renderPlayhead(); break;
+    default: log('101: unknown SysEx cmd 0x' + cmd.toString(16));
+  }
+}
+let readAllOnce = false, pendingWrite = -1;
+
+// ---------------------------------------------------------------------------
+// Device actions
+// ---------------------------------------------------------------------------
+function readAll() { sendSysex([0x13]); log('reading all patterns...'); }
+function writePattern(p) {
+  const raw = [patterns[p].length, ...patterns[p].map(s => (s.cv & 0x3F) | (s.type << 6))];
+  let x = 0; raw.forEach(v => x ^= v);
+  pendingWrite = p;
+  sendSysex([0x12, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
+  log('writing pattern ' + (p + 1) + ' (' + patterns[p].length + ' steps)...');
+}
+function selectDevicePattern(p) { sendSysex([0x1D, p]); }
+$('btnReadAll').onclick = readAll;
+$('btnWrite').onclick = () => writePattern(curPat);
+$('btnPlay').onclick = () => { playing = !playing; sendSysex([0x1E, playing ? 1 : 0]); $('btnPlay').textContent = playing ? '■ Stop' : '▶ Play'; $('btnPlay').classList.toggle('is-on', playing); if (!playing) { playPos = -1; renderPlayhead(); } };
+$('btnCfgApply').onclick = () => { sendSysex([0x22, +$('selChan').value, $('btnSync').classList.contains('is-on') ? 1 : 0, +$('selDiv').value]); log('config sent'); };
+$('btnSync').onclick = () => { const on = !$('btnSync').classList.contains('is-on'); $('btnSync').classList.toggle('is-on', on); $('btnSync').textContent = on ? 'On' : 'Off'; };
+$('btnFwSwitch').onclick = () => {
+  sendSysex([deviceMode === 'emu' ? 0x4D : 0x2F]);
+  log('firmware switch requested; unit reboots (release all buttons on the panel)');
+  setTimeout(() => probe(10), 1500);
+};
+for (let c = 0; c < 16; ++c) { const o = document.createElement('option'); o.value = c; o.textContent = c + 1; $('selChan').appendChild(o); }
+DIVS.forEach((d, i) => { const o = document.createElement('option'); o.value = i; o.textContent = d; $('selDiv').appendChild(o); });
+$('selDiv').value = 6;
+
+// ---------------------------------------------------------------------------
+// Firmware update over SysEx (bootloader protocol: F0 7D 01 <page> ... F7, F0 7D 02 F7)
+// ---------------------------------------------------------------------------
+$('btnUpdate').onclick = () => $('fileSyx').click();
+$('fileSyx').onchange = async ev => {
+  const f = ev.target.files[0]; if (!f) return; ev.target.value = '';
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  const msgs = []; let cur = null;
+  for (const b of bytes) { if (b === 0xF0) cur = [b]; else if (cur) { cur.push(b); if (b === 0xF7) { msgs.push(cur); cur = null; } } }
+  const pages = msgs.filter(m => m[1] === 0x7D && m[2] === 0x01);
+  if (!pages.length) { log('not a SuperOS-101 update file (no page messages)', 'err'); return; }
+  for (const m of pages) {
+    const page = (m[3] << 7) | m[4];
+    if (page >= 0x1F0) { log('REFUSED: file writes the bootloader region (page 0x' + page.toString(16) + ')', 'err'); return; }
+    if (page >= 0x160) { log('REFUSED: file writes into the pattern arena (page 0x' + page.toString(16) + ')', 'err'); return; }
+  }
+  if (!confirm('Update the unit with ' + f.name + ' (' + pages.length + ' pages)? The unit reboots into the bootloader; do not power off.')) return;
+  log('entering bootloader...'); sendSysex([0x4A]);
+  await new Promise(r => setTimeout(r, 1500));
+  let n = 0;
+  for (const m of msgs) {
+    sendRaw(m);
+    // DIN: 300-byte page = ~96 ms of wire time; the bootloader spends ~10 ms in
+    // SPM after each page with the UART unread, so leave a gap.
+    await new Promise(r => setTimeout(r, m.length > 16 ? 140 : 60));
+    if (m[2] === 0x01) log('page ' + (++n) + '/' + pages.length);
+  }
+  log('update sent; the unit restarts the app', 'ok');
+  setTimeout(() => probe(10), 2000);
+};
+
+// ---------------------------------------------------------------------------
+// Editing
+// ---------------------------------------------------------------------------
+function markDirty() { dirty[curPat] = true; renderPills(); }
+function cycleType(s) { s.type = (s.type + 1) % 3; }
+function renderPills() {
+  const el = $('pills'); el.innerHTML = '';
+  for (let p = 0; p < NUM_PATTERNS; ++p) {
+    const d = document.createElement('div');
+    d.className = 'pat-pill' + (p === curPat ? ' is-active' : '') + (dirty[p] ? ' is-dirty' : '') + (playing && p === devPat ? ' is-playing' : '');
+    d.textContent = p + 1; d.title = 'Pattern ' + (p + 1) + (p === devPat ? ' (selected on the unit)' : '');
+    d.onclick = () => { curPat = p; selStep = -1; selectDevicePattern(p); renderAll(); };
+    el.appendChild(d);
+  }
+}
+function renderSteps() {
+  const el = $('steps'); el.innerHTML = '';
+  const pat = patterns[curPat];
+  $('seqTitle').textContent = 'Pattern ' + (curPat + 1);
+  $('seqLen').textContent = pat.length + ' step' + (pat.length === 1 ? '' : 's');
+  pat.forEach((s, i) => {
+    const d = document.createElement('div');
+    d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' tie' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && playing ? ' is-play' : '');
+    d.dataset.i = i;
+    d.innerHTML = '<span class="i">' + (i + 1) + '</span><span class="n">' + (s.type === 1 ? '—' : noteName(s.cv)) + '</span><span class="t">' + ['note','rest','tie'][s.type] + '</span>';
+    d.onclick = () => { if (selStep === i) { cycleType(s); markDirty(); } else selStep = i; renderSteps(); syncInspector(); };
+    el.appendChild(d);
+  });
+  if (pat.length < MAX_STEPS) {
+    const a = document.createElement('div'); a.className = 'step add'; a.textContent = '+'; a.title = 'Append a step';
+    a.onclick = () => { appendStep(); };
+    el.appendChild(a);
+  }
+  if (!pat.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Empty pattern. Click + to add steps, or record on the unit (LOAD, keys, LOAD).'; el.appendChild(e); }
+  syncInspector();
+}
+function renderPlayhead() {
+  document.querySelectorAll('#steps .step').forEach(d => d.classList.toggle('is-play', playing && +d.dataset.i === playPos));
+}
+function renderAll() { renderPills(); renderSteps(); }
+function appendStep() {
+  const pat = patterns[curPat]; if (pat.length >= MAX_STEPS) return;
+  const last = pat.length ? pat[pat.length - 1] : null;
+  pat.push({cv: last ? last.cv : 17, type: 0}); selStep = pat.length - 1; markDirty(); renderSteps();
+}
+function syncInspector() {
+  const pat = patterns[curPat], s = pat[selStep];
+  ['selNote','btnNote','btnRest','btnTie','btnIns','btnDel'].forEach(id => $(id).disabled = !s);
+  if (s) $('selNote').value = s.cv;
+}
+for (let cv = 63; cv >= 0; --cv) { const o = document.createElement('option'); o.value = cv; o.textContent = noteName(cv) + '  (' + (cv + MIDI_CV_OFFSET) + ')'; $('selNote').appendChild(o); }
+$('selNote').onchange = () => { const s = patterns[curPat][selStep]; if (s) { s.cv = +$('selNote').value; markDirty(); renderSteps(); } };
+$('btnNote').onclick = () => setType(0); $('btnRest').onclick = () => setType(1); $('btnTie').onclick = () => setType(2);
+function setType(t) { const s = patterns[curPat][selStep]; if (s) { s.type = t; markDirty(); renderSteps(); } }
+$('btnIns').onclick = () => { const pat = patterns[curPat]; if (selStep < 0 || pat.length >= MAX_STEPS) return; pat.splice(selStep, 0, {cv: pat[selStep].cv, type: 0}); markDirty(); renderSteps(); };
+$('btnDel').onclick = () => { const pat = patterns[curPat]; if (selStep < 0) return; pat.splice(selStep, 1); if (selStep >= pat.length) selStep = pat.length - 1; markDirty(); renderSteps(); };
+$('btnClear').onclick = () => { if (!patterns[curPat].length || confirm('Clear pattern ' + (curPat + 1) + '?')) { patterns[curPat] = []; selStep = -1; markDirty(); renderSteps(); } };
+document.addEventListener('keydown', ev => {
+  if (['SELECT','INPUT'].includes(document.activeElement.tagName)) return;
+  const pat = patterns[curPat], s = pat[selStep];
+  const k = ev.key;
+  if (k === 'Enter') { appendStep(); ev.preventDefault(); return; }
+  if (k === 'ArrowLeft')  { if (pat.length) { selStep = Math.max(0, selStep - 1); renderSteps(); } ev.preventDefault(); return; }
+  if (k === 'ArrowRight') { if (pat.length) { selStep = Math.min(pat.length - 1, selStep + 1); renderSteps(); } ev.preventDefault(); return; }
+  if (!s) return;
+  if (k === 'ArrowUp')   { s.cv = Math.min(63, s.cv + (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
+  if (k === 'ArrowDown') { s.cv = Math.max(0,  s.cv - (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
+  if (k === 'n' || k === 'N') setType(0);
+  if (k === 'r' || k === 'R') setType(1);
+  if (k === 't' || k === 'T') setType(2);
+  if (k === 'Delete' || k === 'Backspace') { $('btnDel').onclick(); ev.preventDefault(); }
+});
+
+// Save / load all patterns as JSON
+$('btnSave').onclick = () => {
+  const blob = new Blob([JSON.stringify({format: 'superos-101-patterns-v1', patterns}, null, 1)], {type: 'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'superos-101-patterns.json'; a.click();
+};
+$('btnLoad').onclick = () => $('fileJson').click();
+$('fileJson').onchange = async ev => {
+  const f = ev.target.files[0]; if (!f) return; ev.target.value = '';
+  try {
+    const j = JSON.parse(await f.text());
+    if (!Array.isArray(j.patterns)) throw new Error('no patterns array');
+    j.patterns.slice(0, NUM_PATTERNS).forEach((p, i) => { patterns[i] = p.slice(0, MAX_STEPS).map(s => ({cv: Math.min(63, Math.max(0, s.cv | 0)), type: Math.min(2, Math.max(0, s.type | 0))})); dirty[i] = true; });
+    log('loaded ' + f.name + ' (write each pattern to the unit)', 'ok'); renderAll();
+  } catch (e) { log('bad file: ' + e.message, 'err'); }
+};
+
+// ---------------------------------------------------------------------------
+// On-screen keyboard: MIDI 36..99 (the DAC range), keys 53..84 are the SH-101's own keys
+// ---------------------------------------------------------------------------
+(function buildKbd() {
+  const el = $('kbd');
+  for (let n = 36; n <= 99; ++n) {
+    const d = document.createElement('div');
+    const black = [1,3,6,8,10].includes(n % 12);
+    d.className = 'key' + (black ? ' black' : '') + (n >= 53 && n <= 84 ? ' inrange' : '');
+    d.textContent = black ? '' : NAMES[n % 12] + (Math.floor(n / 12) - 1);
+    const on = () => { d.classList.add('down'); sendRaw([0x90 | cfg.chan, n, 100]); };
+    const off = () => { if (d.classList.contains('down')) { d.classList.remove('down'); sendRaw([0x80 | cfg.chan, n, 0]); } };
+    d.onmousedown = on; d.onmouseup = off; d.onmouseleave = off;
+    d.ontouchstart = e => { e.preventDefault(); on(); }; d.ontouchend = e => { e.preventDefault(); off(); };
+    el.appendChild(d);
+  }
+})();
+
+renderAll();
+if (location.protocol === 'file:') $('httpBanner').classList.add('visible');
+log('SuperOS-101 editor ready. Connect MIDI, pick the UX16 (or the unit) on both ports.');
+</script>
+</body>
+</html>

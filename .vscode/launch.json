@@ -1,0 +1,16 @@
+{
+  // Web MIDI (SysEx) needs http:// or localhost, not file://. The prelaunch task
+  // serves tools/web-editor on port 3101 with python3, then Chrome opens it.
+  // Works in Cursor and VS Code (built-in JavaScript debugger).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "SuperOS-101 Web Editor (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3101/index.html",
+      "webRoot": "${workspaceFolder}/tools/web-editor",
+      "preLaunchTask": "Serve web-editor"
+    }
+  ]
+}
