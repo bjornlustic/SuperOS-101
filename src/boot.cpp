@@ -50,6 +50,10 @@ static void UsbDetach() {
 }
 
 static uint8_t g_fw = FW_SUPEROS;
+#if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
+uint32_t g_usbHoldUntil = 0;   // usb_gate.h bench hold-off
+#endif
+uint16_t g_vccParkedMv = 0;    // sysex.h probe: VCC seen while USB was parked
 
 #ifdef __AVR__
 // Boot counter that survives watchdog/brown-out resets (RAM is not cleared by
@@ -67,10 +71,20 @@ static uint8_t  g_prevStage __attribute__((section(".noinit")));
 uint8_t combined_boot_count() { return g_bootCount; }
 uint8_t combined_prev_stage() { return g_prevStage; }
 static inline void Stage(uint8_t s) { g_stage = s; }
+// Loop pass time (us): last pass, and the longest since the probe last read
+// it. The S/H caps are refreshed once per pass, so pass length is pitch
+// stability; the probe (SysEx 0x3B) reports both and clears the max.
+static uint16_t g_passLastUs, g_passMaxUs;
+static uint32_t g_passT0;
+uint16_t combined_pass_us(bool clearMax) {
+  uint16_t m = g_passMaxUs; if (clearMax) g_passMaxUs = 0;
+  return clearMax ? m : g_passLastUs;
+}
 #else
 uint8_t combined_boot_count() { return 0; }
 uint8_t combined_prev_stage() { return 0; }
 static inline void Stage(uint8_t) {}
+uint16_t combined_pass_us(bool) { return 0; }
 #endif
 
 #ifdef __AVR__
@@ -186,6 +200,13 @@ void setup() {
   // (usb_gate.h) bring it up only with a cable in.
   usb_gate_begin();
 #endif
+#ifdef __AVR__
+  // Every unused peripheral off: the SH-101's +5 V regulator is the DAC
+  // reference and runs at its limit with this board, so each mA counts.
+  // Timer0 stays (millis), USART1 stays (DIN MIDI), USB stays.
+  PRR0 = (1 << PRTWI) | (1 << PRTIM2) | (1 << PRTIM1) | (1 << PRSPI) | (1 << PRADC);
+  PRR1 = (1 << PRTIM3);
+#endif
   hw::Init();
   midi::Begin(sysex::LoadChannel());   // UART1 rings + ISRs (both firmwares)
   midiclk::Begin();                    // saved sync/division settings
@@ -200,9 +221,18 @@ void loop() {
 #ifdef __AVR__
   wdt_reset();       // pet the freeze-recovery watchdog (see setup)
   Stage(millis() > 1000 ? 4 : 3);
+  {
+    uint32_t now = micros();
+    uint32_t d = now - g_passT0; g_passT0 = now;
+    g_passLastUs = d > 0xFFFF ? 0xFFFF : (uint16_t)d;
+    if (g_passLastUs > g_passMaxUs) g_passMaxUs = g_passLastUs;
+  }
 #endif
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
   usb_vbus_gate();   // USB engine runs only while a cable is present
+  if (g_usbHoldUntil && (int32_t)(millis() - (g_usbHoldUntil - 1000)) > 0 &&
+      (int32_t)(millis() - g_usbHoldUntil) < 0)
+    g_vccParkedMv = sysex::MeasureVccMv();   // last second of a hold-off
 #endif
   if (menu::Active()) { menu::Poll(); return; }
   if (g_fw == FW_EMU) emu101::loop(); else superos_loop();

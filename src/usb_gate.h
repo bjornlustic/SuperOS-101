@@ -10,15 +10,22 @@
 // waiting for bank room. SOF = 1 ms cadence when the bus is alive; 5 ms of
 // stillness = USB is down, drop the byte instead of risking the spin.
 //
-// usb_vbus_gate(): the USB engine runs exactly when a cable is present. VBUS
-// high -> PLL up, unfreeze, attach; VBUS low -> detach + freeze + PLL off.
-// The unplugged branch is ENFORCED every pass, never edge-triggered, with the
-// USB device interrupts masked: with the cable out, the floating D+/D- lines
-// fake wake-up events and the core's WAKEUPI handler restarts the PLL and
-// clears FRZCLK behind the gate's back (606 field bug, 2026-08-01). UDIEN=0
-// silences that ISR and the per-pass re-assert closes any window. The plugged
-// branch only intervenes when WE parked the port (DETACH set); a legitimate
-// host suspend stays the core's business. Called once per loop() pass.
+// usb_vbus_gate(): attach exactly when a cable is present. VBUS high ->
+// attach (PLL/engine clock brought up if needed); VBUS low -> detach with the
+// USB device interrupts masked. The unplugged branch is ENFORCED every pass,
+// never edge-triggered: with the cable out, the floating D+/D- lines fake
+// wake-up events and the core's WAKEUPI handler would otherwise re-attach
+// behind the gate's back (606 field bug, 2026-08-01). The plugged branch only
+// intervenes when WE parked the port (DETACH set); a legitimate host suspend
+// stays the core's business. Called once per loop() pass.
+//
+// SH-101 specific: the PLL and the engine clock are NOT stopped when
+// unplugged. The synth's +5 V regulator (VR-1, "D/A WIDTH") is the R-2R DAC's
+// reference and is loaded to its limit by this board: the USB engine's
+// current alone moved VCC 4.98 -> 4.58 V and the pitch by ~7 semitones
+// (measured 2026-08-15). Keeping the engine clocked whether or not a cable
+// is in keeps the load, and therefore the tuning, constant; VR-1 is trimmed
+// once with this board installed (README, Tuning).
 #pragma once
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
 #include <Arduino.h>
@@ -33,13 +40,21 @@ static inline bool usb_sof_alive() {
   return (uint32_t)(now - last_adv_ms) < 5;
 }
 
+// Bench hold-off (SysEx 0x3D <s>): treat the port as unplugged until this
+// time, so the effect of the running USB engine on the analog side can be
+// heard without touching the cable. 0 = no hold-off.
+extern uint32_t g_usbHoldUntil;   // defined in boot.cpp
+static inline void usb_gate_holdoff(uint16_t seconds) { g_usbHoldUntil = millis() + (uint32_t)seconds * 1000; }
+
 static inline void usb_vbus_gate() {
   // Boot settle: stay parked for the first 400 ms even with a cable in, so
   // setup()-time scans and init run with the engine off, and, after a
   // firmware switch or bootloader round trip, the host has finished tearing
   // down the previous device before this one re-attaches (re-attaching into
   // that teardown left the host resetting the bus mid-enumeration).
-  if ((USBSTA & _BV(VBUS)) && millis() >= 400) {
+  const bool held = g_usbHoldUntil && (int32_t)(millis() - g_usbHoldUntil) < 0;
+  if (!held) g_usbHoldUntil = 0;
+  if ((USBSTA & _BV(VBUS)) && millis() >= 400 && !held) {
     if (UDCON & _BV(DETACH)) {                // parked by us: bring USB up
       if (!(PLLCSR & _BV(PLOCK))) {
         PLLCSR = 0x16;                        // core's PLL_CONFIG() for the
@@ -57,8 +72,9 @@ static inline void usb_vbus_gate() {
   } else {
     UDIEN   = 0;                              // no wake/suspend ISR ping-pong
     UDCON  |= _BV(DETACH);
-    USBCON |= _BV(FRZCLK);
-    PLLCSR  = 0;
+    // engine clock and PLL stay running: constant rail load (see header)
+    if (!(PLLCSR & _BV(PLOCK))) { PLLCSR = 0x16; }
+    else USBCON &= (uint8_t)~_BV(FRZCLK);
   }
 }
 
@@ -67,9 +83,7 @@ static inline void usb_vbus_gate() {
 // it (after the 150 ms boot settle) if a cable is in. Call first in setup().
 static inline void usb_gate_begin() {
   UDIEN   = 0;
-  UDCON  |= _BV(DETACH);
-  USBCON |= _BV(FRZCLK);
-  PLLCSR  = 0;
+  UDCON  |= _BV(DETACH);       // engine clock keeps running (constant load)
 }
 
 // Drop off the bus before a reset / bootloader jump so the host registers

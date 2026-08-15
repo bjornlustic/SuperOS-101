@@ -35,7 +35,7 @@
     <ol class="man-toc-list">
       <li><a class="docs-toc-link" href="#seq-record"><span class="man-toc-num">1</span>Recording a Sequence<span class="man-toc-leader"></span></a></li>
       <li><a class="docs-toc-link" href="#seq-play"><span class="man-toc-num">2</span>Playing a Sequence<span class="man-toc-leader"></span></a></li>
-      <li><a class="docs-toc-link" href="#seq-storage"><span class="man-toc-num">3</span>Sequence Storage<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#seq-storage"><span class="man-toc-num">3</span>Patterns: Selecting, Loading and Saving<span class="man-toc-leader"></span></a></li>
     </ol>
 
     <span class="man-toc-part">MIDI</span>
@@ -205,17 +205,18 @@
       <h2 class="docs-sec-title">Recording a Sequence</h2>
     </div>
     <p class="docs-body">
-      Press <kbd class="docs-key">LOAD</kbd> to start recording. The previous sequence is cleared
-      and every key you press is appended as the next step, up to 100 steps. The keyboard sounds
-      while you record, so you hear each note as you enter it.
+      Press <kbd class="docs-key">LOAD</kbd> to start recording into the current pattern slot
+      (the LOAD LED lights). The slot is cleared and every key you press is appended as the next
+      step, up to 128 steps. The keyboard sounds while you record, so you hear each note as you
+      enter it. Notes arriving over MIDI record too.
     </p>
     <table class="docs-table man-t-combo">
       <thead><tr><th>Control</th><th>Writes</th></tr></thead>
       <tbody>
         <tr><td>Keyboard key</td><td>A note step at that pitch (TRANSPOSE applies as played).</td></tr>
         <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>A rest step.</td></tr>
-        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + key</td><td>A tie: the previous note is held through this step without retriggering.</td></tr>
-        <tr><td><kbd class="docs-key">LOAD</kbd> again</td><td>Ends recording and saves the sequence to permanent memory.</td></tr>
+        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + key</td><td>A legato step: this note starts without the gate dropping, so the envelope does not retrigger and, with PORTAMENTO on AUTO, it glides.</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> again</td><td>Ends recording; the pattern is saved to permanent memory automatically.</td></tr>
       </tbody>
     </table>
   </section>
@@ -227,21 +228,39 @@
     </div>
     <p class="docs-body">
       Press <kbd class="docs-key">PLAY</kbd> to start the sequencer; press it again to stop and
-      return to keyboard play. Steps advance one per clock pulse: note steps retrigger the gate at
-      their pitch, rest steps close the gate, and tie steps hold the previous note through without
-      retriggering. At the end of the sequence playback wraps to the first step.
+      return to keyboard play. Steps advance one per clock pulse (the LFO/EXT CLK, or MIDI clock
+      when sync is on): note steps retrigger the gate at their pitch, rest steps close the gate,
+      and legato steps change pitch with the gate held. At the end of the pattern playback wraps
+      to the first step.
     </p>
   </section>
 
   <section id="seq-storage" class="docs-section">
     <div class="docs-sec-head">
       <span class="docs-sec-num">3</span>
-      <h2 class="docs-sec-title">Sequence Storage</h2>
+      <h2 class="docs-sec-title">Patterns: Selecting, Loading and Saving</h2>
     </div>
     <p class="docs-body">
-      The sequence is stored in the CPU's permanent on-chip memory when you finish recording. It
-      survives power-off with no battery, an upgrade over the original's battery-backed RAM: no
-      battery to replace and nothing to lose when it runs down.
+      There are eight pattern slots, and saving is automatic. To choose a slot, hold
+      <kbd class="docs-key">PLAY</kbd> and press one of the eight lowest keys: F3 selects pattern
+      1, F&#9839;3 pattern 2, and so on up to C4 for pattern 8. The new pattern becomes the current
+      one, for playing and for recording, and the sequencer keeps running if it was running.
+    </p>
+    <table class="docs-table man-t-combo">
+      <thead><tr><th>To</th><th>Do</th></tr></thead>
+      <tbody>
+        <tr><td>Load (select) pattern 1&#8230;8</td><td>Hold <kbd class="docs-key">PLAY</kbd>, press key F3&#8230;C4 (the eight lowest keys). Also MIDI Program Change 0&#8230;7, or the web editor.</td></tr>
+        <tr><td>Record into the current slot</td><td><kbd class="docs-key">LOAD</kbd>, play the steps, <kbd class="docs-key">LOAD</kbd> again (see Recording a Sequence).</td></tr>
+        <tr><td>Save</td><td>Nothing to press: about half a second after you finish an edit, the pattern is written to the CPU's permanent flash memory.</td></tr>
+        <tr><td>Move a pattern to another slot</td><td>Select the target slot, then record it there, or copy it in the web editor (read, choose the slot, write).</td></tr>
+        <tr><td>Keep patterns off the unit</td><td>The web editor (over USB-C or DIN MIDI) reads and writes all eight slots and saves them as a JSON file.</td></tr>
+      </tbody>
+    </table>
+    <p class="docs-body">
+      Patterns survive power-off with no battery, an upgrade over the original's battery-backed
+      RAM: no battery to replace and nothing to lose when it runs down. Slot selection is ignored
+      while recording, so finish with <kbd class="docs-key">LOAD</kbd> first, then move to another
+      slot. Firmware updates over MIDI never touch the pattern memory.
     </p>
   </section>
 
@@ -445,9 +464,10 @@
     <table class="docs-table man-t-combo">
       <tbody>
         <tr><td><kbd class="docs-key">LOAD</kbd></td><td>Start recording (clears old sequence)</td></tr>
-        <tr><td>Key / <kbd class="docs-key">KEY TRANSPOSE</kbd> / <kbd class="docs-key">HOLD</kbd> + key</td><td>Write note / rest / tie</td></tr>
-        <tr><td><kbd class="docs-key">LOAD</kbd> (recording)</td><td>Save and exit</td></tr>
+        <tr><td>Key / <kbd class="docs-key">KEY TRANSPOSE</kbd> / <kbd class="docs-key">HOLD</kbd> + key</td><td>Write note / rest / legato</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> (recording)</td><td>Finish (auto-saved)</td></tr>
         <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Sequencer start / stop</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd> + key F3&#8230;C4</td><td>Select pattern 1&#8230;8</td></tr>
       </tbody>
     </table>
 
@@ -492,8 +512,8 @@
       </li>
       <li>
         <span class="man-spec-name">Sequencer</span>
-        100 steps of note / rest / tie, clocked by LFO, EXT CLK, or divided MIDI clock, saved to
-        permanent on-chip memory (no battery).
+        8 patterns of up to 128 steps of note / rest / legato, clocked by LFO, EXT CLK, or divided
+        MIDI clock, saved automatically to permanent on-chip memory (no battery).
       </li>
       <li>
         <span class="man-spec-name">MIDI clock sync</span>

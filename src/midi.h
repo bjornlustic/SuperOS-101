@@ -40,6 +40,7 @@
 //   0x2F                  switch to the 80C49 emulator (reboots)
 //   0x3B                  bench probe                 -> 0x3C (sysex.h: reset
 //                         cause, USB regs, boot count, previous boot stage)
+//   0x3D <s>              bench: park the USB engine for s seconds
 //   0x40                  emulator status request     -> 0x41 (emulator only)
 //   0x41 <1> <version ascii...>
 //   0x4D                  switch to SuperOS (reboots)

@@ -38,12 +38,14 @@ inline void Init() {
   P2_DDR  = 0xFF;
   P2_PORT = P2_IDLE;
 
-  // T1 (clock) / T0 (HOLD) inputs, WITH internal pull-ups: both are
-  // active-low/driven lines on a fully wired board, but an unwired pedal
-  // jack or clock line must read inactive, not float low (a floating T0
-  // latched HOLD permanently during bring-up).
+  // T1 (clock) / T0 (HOLD) inputs. T0 gets the internal pull-up: an unwired
+  // pedal jack must read inactive, not float low (a floating T0 latched HOLD
+  // permanently during bring-up). T1 is left high-Z like the 80C49's T1: it
+  // is driven by TR11 on the synth board (LFO / EXT CLK inverter), and a
+  // pull-up there would load that node for nothing.
   DDRD  &= (uint8_t)~((1u << T1_CLOCK_BIT) | (1u << T0_HOLD_BIT));
-  PORTD |= (uint8_t)((1u << T1_CLOCK_BIT) | (1u << T0_HOLD_BIT));
+  PORTD |= (uint8_t)(1u << T0_HOLD_BIT);
+  PORTD &= (uint8_t)~(1u << T1_CLOCK_BIT);
 }
 
 // --- DAC + 4052 mux ---------------------------------------------------------

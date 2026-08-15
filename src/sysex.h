@@ -8,6 +8,7 @@
 #include "combined.h"
 #include "midi.h"
 #include "emu101.h"
+#include "usb_gate.h"
 
 #ifndef SUPEROS_VERSION
 #define SUPEROS_VERSION "dev"
@@ -40,10 +41,39 @@ inline void SendEmuStatus() {
 //   [6] usb_configuration (SUPEROS_USB_MIDI builds, else 0)
 //   [7] boot counter since power-on (boot.cpp, survives resets)
 //   [8] stage the previous boot last reached (boot.cpp)
+//   [9..10] last loop pass us (hi, lo)  [11..12] max pass us since last probe
+//   [13..14] VCC in mV (hi, lo): internal 1.1 V bandgap read against AVCC.
+//            The R-2R DAC's reference is this rail, so it is the pitch scale.
+inline uint16_t MeasureVccMv() {
+#ifdef __AVR__
+  uint8_t prr = PRR0; PRR0 &= (uint8_t)~(1 << PRADC);
+  ADMUX  = (1 << REFS0) | 0x1E;                       // AVCC ref, 1.1 V bandgap in
+  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+  delayMicroseconds(400);                             // bandgap settle
+  uint32_t acc = 0;
+  for (uint8_t i = 0; i < 9; ++i) {                   // discard first, average 8
+    ADCSRA |= (1 << ADSC); while (ADCSRA & (1 << ADSC)) {}
+    if (i) acc += ADC;
+  }
+  ADCSRA = 0; PRR0 = prr;
+  uint16_t adc = (uint16_t)(acc / 8);
+  return adc ? (uint16_t)((1100UL * 1024UL) / adc) : 0;
+#else
+  return 0;
+#endif
+}
+//   [15..16] VCC in mV sampled while the USB engine was parked (0x3D hold-off)
+}  // namespace sysex
+extern uint16_t g_vccParkedMv;   // boot.cpp
+namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[9] = {0};
+  uint8_t raw[17] = {0};
+  uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
+  raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
   raw[8] = combined_prev_stage();
+  uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
+  raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;
 #ifdef __AVR__
   raw[0] = GPIOR1; raw[1] = USBCON; raw[2] = UDCON; raw[3] = UDIEN;
   raw[4] = USBSTA; raw[5] = UDFNUML;
@@ -62,6 +92,11 @@ inline bool HandleCommon(const uint8_t* body, uint8_t len) {
   if (len < 1) return true;
   switch (body[0]) {
     case 0x3B: SendProbe(); return true;
+    case 0x3D:   // bench: park the USB engine for body[1] seconds (usb_gate.h)
+#if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
+      if (len >= 2) usb_gate_holdoff(body[1]);
+#endif
+      return true;
     case 0x2F: if (emu101::available()) RebootTo(FW_EMU); return true;   // does not return
     case 0x4D: RebootTo(FW_SUPEROS); return true;
     case 0x4A: EnterBootloader(); return true;
