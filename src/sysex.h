@@ -65,6 +65,8 @@ inline uint16_t MeasureVccMv() {
 //   [15..16] VCC in mV sampled while the USB engine was parked (0x3D hold-off)
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
+extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
+extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
   uint8_t raw[17] = {0};
@@ -95,6 +97,11 @@ inline bool HandleCommon(const uint8_t* body, uint8_t len) {
     case 0x3D:   // bench: park the USB engine for body[1] seconds (usb_gate.h)
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
       if (len >= 2) usb_gate_holdoff(body[1]);
+#endif
+      return true;
+    case 0x3E:   // bench load experiment: <mode> <seconds> (boot.cpp g_benchMode)
+#ifdef __AVR__
+      if (len >= 3) { g_benchMode = body[1]; g_benchUntil = millis() + (uint32_t)body[2] * 1000; }
 #endif
       return true;
     case 0x2F: if (emu101::available()) RebootTo(FW_EMU); return true;   // does not return

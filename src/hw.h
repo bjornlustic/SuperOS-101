@@ -8,8 +8,43 @@
 #pragma once
 #include <Arduino.h>
 #include "pins.h"
+#ifdef __AVR__
+#include <avr/interrupt.h>
+#include <avr/sleep.h>
+#endif
 
 namespace hw {
+
+// --- Idle-sleep microsecond wait ---------------------------------------------
+// The S/H settle dwells are the bulk of a loop pass, and the SH-101's +5 V
+// regulator (the DAC reference) has almost no current headroom with this
+// board (platformio.ini [env:app]). Instead of spinning, park the CPU core in
+// idle sleep with Timer1 (F_CPU/8 ticks) as the wake alarm; the USB, UART and
+// Timer0 interrupts still run and merely wake us early, after which we go
+// back to sleep until the alarm. Wakes ~2 us late at most, never early. Falls
+// back to a spin when interrupts are globally off (no wake source then).
+// ISR(TIMER1_COMPA_vect) is an empty handler in boot.cpp.
+#ifdef __AVR__
+inline void IdleWaitUs(uint16_t us) {
+  if (!(SREG & (1 << SREG_I))) { delayMicroseconds(us); return; }
+  const uint16_t ticks = (uint16_t)(((uint32_t)us * (F_CPU / 8UL)) / 1000000UL);
+  TCNT1  = 0;
+  OCR1A  = ticks;
+  TIFR1  = (1 << OCF1A);
+  TIMSK1 = (1 << OCIE1A);
+  for (;;) {
+    cli();
+    if (TCNT1 >= ticks) { sei(); break; }
+    sleep_enable();
+    sei();            // the instruction after sei() always runs: no lost wake
+    sleep_cpu();
+    sleep_disable();
+  }
+  TIMSK1 = 0;
+}
+#else
+inline void IdleWaitUs(uint16_t us) { delayMicroseconds(us); }
+#endif
 
 // Settle times. The original's CPU-execution settle is only a few µs; on the analog
 // side the R-2R ladder + 4052 sample/hold RC dominate. MEASURE on the real board and
@@ -22,6 +57,16 @@ static const uint8_t SETTLE_ACQUIRE_US = 100; // S/H acquisition while connected
 static const uint8_t SETTLE_SCAN_US    = 3;   // column-low to P1-read settle
 
 inline void Init() {
+#ifdef __AVR__
+  // Timer1 = the IdleWaitUs alarm: normal mode, F_CPU/8, compare interrupt
+  // armed only inside a wait. (boot.cpp powers the unused timers down via
+  // PRR; this one is needed.) Idle is the only sleep mode used.
+  PRR0  &= (uint8_t)~(1 << PRTIM1);
+  TCCR1A = 0;
+  TCCR1B = (1 << CS11);
+  TIMSK1 = 0;
+  set_sleep_mode(SLEEP_MODE_IDLE);
+#endif
   // BUS (DB0–7) output; idle = 0xFF = value 0 (active-low all-high) with route 11.
   BUS_DDR  = 0xFF;
   BUS_PORT = 0xFF;
@@ -57,7 +102,7 @@ inline void DacWrite(uint8_t value, Route route) {
   BUS_PORT = data | (uint8_t)(ROUTE_NONE << 6);   // route 11: present, disconnected
   delayMicroseconds(SETTLE_LADDER_US);
   BUS_PORT = (uint8_t)((data & 0x3F) | (route << 6)); // connect S/H, data unchanged
-  delayMicroseconds(SETTLE_ACQUIRE_US);
+  IdleWaitUs(SETTLE_ACQUIRE_US);                  // core asleep while the cap acquires
 }
 
 // --- Scan -------------------------------------------------------------------

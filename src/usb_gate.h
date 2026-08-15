@@ -21,11 +21,13 @@
 //
 // SH-101 specific: the PLL and the engine clock are NOT stopped when
 // unplugged. The synth's +5 V regulator (VR-1, "D/A WIDTH") is the R-2R DAC's
-// reference and is loaded to its limit by this board: the USB engine's
-// current alone moved VCC 4.98 -> 4.58 V and the pitch by ~7 semitones
-// (measured 2026-08-15). Keeping the engine clocked whether or not a cable
-// is in keeps the load, and therefore the tuning, constant; VR-1 is trimmed
-// once with this board installed (README, Tuning).
+// reference and has almost no current headroom with this board: with the
+// core at 16 MHz the USB engine's current alone dropped VCC 4.98 -> 4.5-4.6 V
+// and moved the pitch ~7 semitones (2026-08-15). The cure is the 8 MHz core
+// clock plus idle-sleep settle waits (platformio.ini [env:app], hw.h): with
+// those the rail holds 4.96-4.98 V with the engine running (5 cents from
+// engine-off). Keeping the engine clocked whether or not a cable is in makes
+// even that residual constant, so plugging a cable never moves the tuning.
 #pragma once
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
 #include <Arduino.h>
@@ -45,8 +47,15 @@ static inline bool usb_sof_alive() {
 // heard without touching the cable. 0 = no hold-off.
 extern uint32_t g_usbHoldUntil;   // defined in boot.cpp
 static inline void usb_gate_holdoff(uint16_t seconds) { g_usbHoldUntil = millis() + (uint32_t)seconds * 1000; }
+// Bench (SysEx 0x3E bit1): engine completely off, PLL stopped; the gate
+// stands aside until cleared and then brings USB back up on its own.
+extern bool g_usbBenchOff;        // defined in boot.cpp
 
 static inline void usb_vbus_gate() {
+  if (g_usbBenchOff) {
+    UDIEN = 0; UDCON |= _BV(DETACH); USBCON |= _BV(FRZCLK); PLLCSR = 0;
+    return;
+  }
   // Boot settle: stay parked for the first 400 ms even with a cable in, so
   // setup()-time scans and init run with the engine off, and, after a
   // firmware switch or bootloader round trip, the host has finished tearing

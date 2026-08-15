@@ -17,6 +17,7 @@
 #ifdef __AVR__
 #include <avr/wdt.h>
 #include <avr/eeprom.h>
+#include <avr/sleep.h>
 #include <util/delay.h>
 #else
 #include <avr/eeprom.h>          // sim shim
@@ -52,8 +53,16 @@ static void UsbDetach() {
 static uint8_t g_fw = FW_SUPEROS;
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
 uint32_t g_usbHoldUntil = 0;   // usb_gate.h bench hold-off
+bool     g_usbBenchOff = false; // usb_gate.h: bench engine-off (SysEx 0x3E bit1)
 #endif
 uint16_t g_vccParkedMv = 0;    // sysex.h probe: VCC seen while USB was parked
+// Bench load experiment (SysEx 0x3E <mode> <s>, sysex.h): for s seconds run
+// with bit0 CPU clock /2, bit1 USB engine fully off (PLL stopped, clock
+// frozen), bit2 idle-sleep at the end of every pass. VCC is sampled in the
+// last second into g_vccParkedMv. Timekeeping runs off millis(), so with
+// bit0 the window is 2x longer in real time.
+uint8_t  g_benchMode = 0;
+uint32_t g_benchUntil = 0;
 
 #ifdef __AVR__
 // Boot counter that survives watchdog/brown-out resets (RAM is not cleared by
@@ -90,6 +99,7 @@ uint16_t combined_pass_us(bool) { return 0; }
 #ifdef __AVR__
 ISR(USART1_RX_vect)  { midi::HalIsrRx(); }
 ISR(USART1_UDRE_vect){ midi::HalIsrTx(); }
+EMPTY_INTERRUPT(TIMER1_COMPA_vect)   // hw::IdleWaitUs wake alarm
 
 // Pre-main boot guard (ported from SuperOS-303 combined.cpp). The Teensy
 // core's usb_init() runs BEFORE setup() and busy-waits FOREVER on USB PLL
@@ -123,6 +133,7 @@ void EnterBootloader() {
   BUS_PORT = 0xFF;
   UCSR1B = 0;                    // stop the UART ISR sources before the jump
   GPIOR0 = 0xB7;                 // BOOT_MAGIC, keep in sync with bootloader/bootload.c
+  CLKPR = 0x80; CLKPR = 0x00;    // bootloader is built for the full 16 MHz
   asm volatile("jmp 0x1F000");   // boot section (BOOTRST, BOOTSZ=01)
 #else
   sim_reboot();                  // sim has no bootloader; behave like a reset
@@ -204,6 +215,7 @@ void setup() {
   // Every unused peripheral off: the SH-101's +5 V regulator is the DAC
   // reference and runs at its limit with this board, so each mA counts.
   // Timer0 stays (millis), USART1 stays (DIN MIDI), USB stays.
+  // Timer1 is re-enabled by hw::Init() as the idle-sleep wake alarm.
   PRR0 = (1 << PRTWI) | (1 << PRTIM2) | (1 << PRTIM1) | (1 << PRSPI) | (1 << PRADC);
   PRR1 = (1 << PRTIM3);
 #endif
@@ -234,6 +246,32 @@ void loop() {
       (int32_t)(millis() - g_usbHoldUntil) < 0)
     g_vccParkedMv = sysex::MeasureVccMv();   // last second of a hold-off
 #endif
+#ifdef __AVR__
+  // Bench load experiment window (see g_benchMode).
+  {
+    static uint8_t applied = 0;
+    const bool active = g_benchUntil && (int32_t)(millis() - g_benchUntil) < 0;
+    const uint8_t want = active ? g_benchMode : 0;
+    if (want != applied) {
+      cli();
+      if ((want ^ applied) & 1) {
+        CLKPR = 0x80; CLKPR = (want & 1) ? 0x01 : 0x00;
+        UBRR1L = (uint8_t)(F_CPU / ((want & 1) ? 2 : 1) / 16 / 31250 - 1);
+      }
+      sei();
+#ifdef SUPEROS_USB_MIDI
+      g_usbBenchOff = (want & 2) != 0;   // gate parks the engine / brings it back
+#endif
+      applied = want;
+    }
+    if (active) {
+      if ((int32_t)(millis() - (g_benchUntil - 1000)) > 0) g_vccParkedMv = sysex::MeasureVccMv();
+    } else if (g_benchUntil) g_benchUntil = 0;
+  }
+#endif
   if (menu::Active()) { menu::Poll(); return; }
   if (g_fw == FW_EMU) emu101::loop(); else superos_loop();
+#ifdef __AVR__
+  if (g_benchUntil && (g_benchMode & 4)) { set_sleep_mode(SLEEP_MODE_IDLE); sleep_mode(); }
+#endif
 }

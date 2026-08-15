@@ -225,6 +225,12 @@ int main(void) {
   GPIOR1 = MCUSR;
   MCUSR = 0;
   wdt_disable();
+  // Full-speed system clock. The app runs the core prescaled to 8 MHz (rail
+  // current budget, see platformio.ini [env:app]); a jump entry from the app
+  // arrives with CLKPR still set, and this image's UART baud and delays
+  // assume F_CPU = 16 MHz. A reset entry lands here with CLKPR = 0 anyway.
+  CLKPR = 0x80;
+  CLKPR = 0x00;
 
   // -nostartfiles: .bss is never zeroed, so parser state is set explicitly
   // (this also covers entry by jump from the app, where RAM is app leftovers)

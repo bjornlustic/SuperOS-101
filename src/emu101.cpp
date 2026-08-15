@@ -163,8 +163,7 @@ void setup() {
 static const uint16_t SLICE_CYCLES = 200;
 
 void loop() {
-  uint16_t ran = 0;
-  while (ran < SLICE_CYCLES) ran = (uint16_t)(ran + mcs48_step(g_cpu));
+  uint16_t ran = mcs48_run(g_cpu, SLICE_CYCLES);
 
 #ifdef SUPEROS_SIM
   // Host sim: advance virtual time instead of throttling (2.5 us/cycle).
@@ -176,7 +175,13 @@ void loop() {
   if (s_dueUs == 0) s_dueUs = micros();
   s_dueUs += (uint32_t)ran * 5 / 2;
   uint32_t now = micros();
-  if ((int32_t)(s_dueUs - now) > 0)       while ((int32_t)(s_dueUs - micros()) > 0) {}
+  if ((int32_t)(s_dueUs - now) > 0) {
+    // ahead of real time: sleep the difference (hw::IdleWaitUs) instead of
+    // spinning, then trim any remainder
+    int32_t ahead = (int32_t)(s_dueUs - now);
+    if (ahead > 8) hw::IdleWaitUs((uint16_t)(ahead > 60000 ? 60000 : ahead));
+    while ((int32_t)(s_dueUs - micros()) > 0) {}
+  }
   else if ((int32_t)(now - s_dueUs) > 10000) s_dueUs = now;
 #endif
 

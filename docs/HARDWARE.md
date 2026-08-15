@@ -272,13 +272,24 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
 - [x] **Sequencer NVM** = AVR flash/EEPROM (don't rely on battery-backed RAM standby).
 - [ ] Confirm **pin 26 = Vdd RAM-standby** and how the battery backs it (schematic p.5/7).
 - [ ] Confirm whether **EA (pin 7)** is hard-tied low on the board.
-- [ ] **Current budget:** verify the SH-101 +5 V rail (S1671140 DC/DC) has headroom for
-      the AVR (more than the original CMOS 80C49). Evidence it is marginal (2026-08-15):
-      with the BOD fuse at 4.3 V (efuse 0xF8) every SPM flash write and the USB PLL
-      start reset the chip (BORF via SysEx 0x3B); at 3.5 V (efuse 0xF9, now the
-      standard) it is clean. Meter VCC at the AVR with USB plugged and during a
-      pattern save; consider more bulk capacitance on the CPU board if it sits
-      below ~4.6 V.
+- [x] **Current budget:** the SH-101 +5 V rail has NO headroom for the AVR at full
+      speed. The rail is the discrete regulator on the synth board (schematic p.7,
+      POWER SUPPLY: op-amp 1b driving PNP pass transistor TR3 through R2 8.2k,
+      reference D4 + VR-1 "+5V (D/A WIDTH)"), and it is also the R-2R DAC reference,
+      so any sag is a pitch shift (about 57 mV per semitone, lower VCC = higher
+      pitch). Measured at the AVR with the SysEx 0x3E bench window (2026-08-15):
+      core 16 MHz + USB engine 4.49-4.65 V (out of regulation, C4 played ~G4);
+      core 16 MHz, USB engine off 4.98 V; core 8 MHz + USB engine 4.96 V; core
+      8 MHz + USB + idle-sleep settle waits 4.98 V. The firmware therefore runs the
+      core at 8 MHz (platformio.ini [env:app]) and sleeps through the S/H settle
+      dwells (hw.h IdleWaitUs); with that the pitch with USB running is within
+      5 cents of USB-off in both firmwares. Earlier evidence of the same limit:
+      with the BOD fuse at 4.3 V (efuse 0xF8) every SPM flash write and the USB
+      PLL start reset the chip (BORF via SysEx 0x3B); at 3.5 V (efuse 0xF9, now
+      the standard) it is clean. Hardware headroom (a later board rev) would come
+      from powering the AVR from +9 V through its own LDO, or from VBUS-powering
+      UVCC; the SuperOS-303 has no such issue only because the TB-303's 5 V
+      regulator has the headroom.
 - [ ] Measure the real **DAC settle time** the analog ladder/4052 S/H needs.
 - [ ] Lay out the **new DIP-40 mainboard** (reuse FFC breakout + Tag-Connect ISP).
 - [x] Read `SH101.asm` in full → behaviour captured in [`docs/FIRMWARE.md`](FIRMWARE.md)

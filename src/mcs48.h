@@ -44,7 +44,10 @@ inline void mcs48_reset(Mcs48& c) {
 }
 
 // Execute one instruction; returns machine cycles taken (1 or 2).
-inline uint8_t mcs48_step(Mcs48& c) {
+// Always inlined into mcs48_run() below: as an out-of-line function the
+// interpreter's 18-register prologue/epilogue cost ~80 AVR clocks per
+// emulated instruction, more than the instruction itself.
+static inline __attribute__((always_inline)) uint8_t mcs48_step_inl(Mcs48& c) {
   uint8_t op = mcs48_rom_read(c.pc); c.pc = (c.pc + 1) & 0x7FF;
   uint8_t cy = 1;
 
@@ -227,4 +230,13 @@ inline uint8_t mcs48_step(Mcs48& c) {
   #undef M48_ADD
   #undef M48_PUSH
   return cy;
+}
+
+inline uint8_t mcs48_step(Mcs48& c) { return mcs48_step_inl(c); }
+
+// Run at least `cycles` machine cycles; returns the cycles actually run.
+inline uint16_t mcs48_run(Mcs48& c, uint16_t cycles) {
+  uint16_t ran = 0;
+  while (ran < cycles) ran = (uint16_t)(ran + mcs48_step_inl(c));
+  return ran;
 }
