@@ -35,7 +35,7 @@ namespace midi {
 
 static const uint8_t RX_CAP  = 64;    // power of two
 static const uint8_t TX_CAP  = 128;   // power of two
-static const uint8_t SX_MAX  = 160;   // largest inbound SysEx body (0x12 = 120)
+static const uint8_t SX_MAX  = 160;   // largest inbound SysEx body (0x12 = 152)
 
 struct Handlers {
   void (*noteOn )(uint8_t note, uint8_t vel) = nullptr;   // vel > 0

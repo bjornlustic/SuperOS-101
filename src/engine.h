@@ -10,7 +10,7 @@
 //                play as a mono override in keyboard mode
 //   - hold     : HOLD button / pedal latches the held keys (arp keeps running)
 //   - arp      : UP / DOWN / UP&DOWN over held keys, advanced by the clock
-//   - sequencer: 8 patterns x up to 100 steps (note / rest / tie), kept in RAM
+//   - sequencer: 8 patterns x up to 128 steps (note / rest / tie), kept in RAM
 //                and persisted in the flash arena (flash_persist.h); pattern
 //                select = PLAY held + one of the 8 lowest keys, or SysEx 0x1D
 #pragma once
@@ -21,7 +21,7 @@
 
 namespace engine {
 
-static const uint8_t MAX_STEPS    = 100;
+static const uint8_t MAX_STEPS    = 128;
 static const uint8_t NUM_PATTERNS = persist::NUM_PATTERNS;   // 8
 static const uint8_t CV_BASE      = 5;   // cv_dac_val returns value+5 (SH101.asm:992)
 static const uint8_t CV_MAX       = 63;  // 6-bit DAC
@@ -85,7 +85,10 @@ class Sequencer {
   uint8_t pos_ = 0;
   uint8_t curCv_ = CV_BASE; bool curGate_ = false;
   bool    stepChanged_ = false;
+  bool    selChanged_ = false;
+  uint8_t edited_ = 0;                // bit p = edited on the panel since last consume
  public:
+  uint8_t consumeEdited() { uint8_t e = edited_; edited_ = 0; return e; }
   Sequencer() { memset(len_, 0, sizeof(len_)); }
   uint8_t current() const { return cur_; }
   uint8_t length(uint8_t p) const { return p < NUM_PATTERNS ? len_[p] : 0; }
@@ -94,7 +97,9 @@ class Sequencer {
   uint8_t position() const { return pos_; }
   bool consumeStepChanged() { bool c = stepChanged_; stepChanged_ = false; return c; }
 
-  void select(uint8_t p) { if (p < NUM_PATTERNS && p != cur_) { cur_ = p; rewind(); } }
+  void select(uint8_t p) { if (p < NUM_PATTERNS && p != cur_) { cur_ = p; rewind(); selChanged_ = true; } }
+  bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
+  void markEdited() { edited_ |= (uint8_t)(1u << cur_); }
   void clear() { len_[cur_] = 0; pos_ = 0; dirty_ |= (uint8_t)(1u << cur_); }
   // rewind so the NEXT advance() plays step 0 (advance pre-increments)
   void rewind() { pos_ = len_[cur_] ? (uint8_t)(len_[cur_] - 1) : 0; }
@@ -172,6 +177,7 @@ class NoteEngine {
   uint8_t  lastCv_   = CV_BASE;
   uint8_t  keyShift_ = 0;      // KEY TRANSPOSE (TODO: SH101.asm:844-866)
   bool     playHeldUsed_ = false;  // PLAY+key selected a pattern (suppress toggle)
+  bool     playStart_ = false;     // pulse CLOCK RESET once when play begins
   int16_t  prevExtCv_ = -1;
 
   uint8_t noteCv(int8_t key, const controls::Panel& p) const {
@@ -199,10 +205,12 @@ class NoteEngine {
       uint32_t fresh = rawKeys & ~prevMask_ & 0xFF;
       if (fresh) { seq_.select((uint8_t)lowestKey(fresh)); playHeldUsed_ = true; }
     }
-    if (b.released(BTN_PLAY) && !playHeldUsed_)
-      mode_ = (mode_ == MODE_SEQ_PLAY) ? MODE_KEYBOARD : MODE_SEQ_PLAY;
+    if (b.released(BTN_PLAY) && !playHeldUsed_) {
+      if (mode_ == MODE_SEQ_PLAY) mode_ = MODE_KEYBOARD;
+      else { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; }
+    }
     if (b.pressed(BTN_LOAD)) {
-      if (mode_ == MODE_SEQ_LOAD) { seq_.flushAll(); mode_ = MODE_KEYBOARD; }
+      if (mode_ == MODE_SEQ_LOAD) { seq_.flushAll(); seq_.markEdited(); mode_ = MODE_KEYBOARD; }
       else { seq_.clear(); mode_ = MODE_SEQ_LOAD; }
     }
   }
@@ -211,12 +219,12 @@ class NoteEngine {
   Sequencer& seq() { return seq_; }
   void begin() { seq_.loadAll(); }
   // MIDI Start: align the sequence and arpeggiator to the incoming downbeat.
-  void restart() { seq_.rewind(); arp_.reset(); }
+  void restart() { seq_.rewind(); arp_.reset(); playStart_ = true; }
   // SysEx 0x1D / editor: select a pattern (ignored while recording).
   void selectPattern(uint8_t p) { if (mode_ != MODE_SEQ_LOAD) seq_.select(p); }
   void setPlaying(bool on) {
     if (mode_ == MODE_SEQ_LOAD) return;
-    if (on && mode_ != MODE_SEQ_PLAY) { mode_ = MODE_SEQ_PLAY; seq_.rewind(); }
+    if (on && mode_ != MODE_SEQ_PLAY) { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; }
     else if (!on && mode_ == MODE_SEQ_PLAY) mode_ = MODE_KEYBOARD;
   }
   // Function-LED select for the current mode (4556 one-hot, SH101.asm:90-128):
@@ -253,14 +261,19 @@ class NoteEngine {
     Output o{lastCv_, false, false};
     switch (mode_) {
       case MODE_ARP_UP: case MODE_ARP_DOWN: case MODE_ARP_UPDOWN:
-        if (clockEdge) { int8_t k = arp_.step(mask, mode_); if (k >= 0) { lastCv_ = noteCv(k, p); o.clockReset = true; } }
+        // CLOCK RESET only when the arp starts (first key after silence), so
+        // the LFO clock is not restarted on every step: a per-step reset made
+        // the step spacing depend on the LFO phase and sounded uneven.
+        if (mask && !prevMask_) o.clockReset = true;
+        if (clockEdge) { int8_t k = arp_.step(mask, mode_); if (k >= 0) lastCv_ = noteCv(k, p); }
         if (!mask) arp_.reset();
         o.cv = lastCv_;
         o.gate = (mask != 0) && (arp_.current() >= 0);
         break;
 
       case MODE_SEQ_PLAY:
-        if (clockEdge && seq_.advance()) { lastCv_ = seq_.cv(); o.clockReset = true; }
+        if (playStart_) { o.clockReset = true; playStart_ = false; }   // LFO in phase with step 1
+        if (clockEdge && seq_.advance()) lastCv_ = seq_.cv();
         o.cv = seq_.gate() ? seq_.cv() : lastCv_;
         o.gate = seq_.gate();
         break;

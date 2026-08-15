@@ -68,7 +68,7 @@ static void SendPattern(uint8_t p) {
   uint8_t raw[engine::MAX_STEPS + 1];
   raw[0] = sq.length(p);
   memcpy(raw + 1, sq.steps(p), raw[0]);
-  uint8_t body[4 + 128];
+  uint8_t body[4 + 150];   // 4 + PackedLen(129)
   body[0] = 0x11; body[1] = p;
   uint8_t x = 0; for (uint8_t i = 0; i <= raw[0]; ++i) x ^= raw[i];
   body[2] = x & 0x7F; body[3] = (x >> 7) & 1;
@@ -198,7 +198,14 @@ void superos_loop() {
   engine::Output out = g_engine.update(keys, ExtCv(), g_buttons.hold, panel, g_buttons, clockEdge);
   hw::DacWrite(out.cv, ROUTE_CV_OUT);
   MidiOut(out.cv, out.gate);
-  if (g_engine.seq().consumeStepChanged() && midi::HostSeen()) SendStep();
+  if (midi::HostSeen()) {
+    if (g_engine.seq().consumeStepChanged()) SendStep();
+    // Panel edits/selection mirror to the editor: pattern data after LOAD,
+    // config (current pattern) after PLAY+key.
+    uint8_t ed = g_engine.seq().consumeEdited();
+    for (uint8_t p = 0; ed && p < engine::NUM_PATTERNS; ++p) if (ed & (1u << p)) SendPattern(p);
+    if (g_engine.seq().consumeSelChanged()) SendConfig();
+  } else { g_engine.seq().consumeStepChanged(); g_engine.seq().consumeEdited(); g_engine.seq().consumeSelChanged(); }
 
   // Deferred pattern persistence: SysEx writes and panel edits land in RAM;
   // flush one dirty pattern per pass once things have been quiet for 500 ms

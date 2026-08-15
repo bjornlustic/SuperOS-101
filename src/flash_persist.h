@@ -5,9 +5,9 @@
 //   FB_PATTERN_BASE + p   (p = 0..NUM_PATTERNS-1)  pattern p
 //   FB_SETTINGS                                     reserved (settings live
 //                                                   in internal EEPROM today)
-// Pattern payload: [0] len (0..100), [1..len] step bytes = cv(6 bit) | type<<6
+// Pattern payload: [0] len (0..128), [1..len] step bytes = cv(6 bit) | type<<6
 // (type: 0 note, 1 rest, 2 tie), i.e. the SH-101's own one-byte-per-step
-// model. Max 101 bytes per record.
+// model. Max 129 bytes per record.
 #pragma once
 #include <stdint.h>
 #include "flash_eeprom.h"

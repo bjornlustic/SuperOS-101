@@ -398,7 +398,8 @@ static int SelfTest() {
     CHECK(n == 4 && buf[0] == 3, "pattern 0 saved to the flash arena (len 3)");
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
-  ClockTick(); CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step -> note 2 (CV 19)");
+  ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "seq starts at step 1 -> note 0 (CV 17)");
+  ClockTick(); CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step 2 -> note 2 (CV 19)");
   ClockTick(); CHECK(!GateOn(), "seq rest -> gate off");
   ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "seq wraps -> note 0 (CV 17)");
 

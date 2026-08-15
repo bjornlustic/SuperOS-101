@@ -19,7 +19,7 @@ mode** that runs the original Roland mask ROM (see below), selected per boot fro
 config menu. The SuperOS side: faithful DAC/mux protocol and scan invariants,
 **panel decode** (RANGE/OCTAVE/ADSR, ported from the disassembly), a **mono
 keyboard** (lowest/last-note priority), **HOLD**, an **arpeggiator** (up/down/up&down)
-with the mode shown on the function LEDs, **8 patterns of up to 100 steps** stored
+with the mode shown on the function LEDs, **8 patterns of up to 128 steps** stored
 in a flash arena ("emulated EEPROM", same scheme as SuperOS-303), **DIN MIDI in/out**
 (notes, program change, SysEx editor protocol) and **MIDI clock sync**
 (`src/midiclock.h`): the arp/sequencer clock, LFO hard-sync via CLOCK RESET, and a
@@ -118,7 +118,7 @@ refuses emulator mode and the unit always boots SuperOS.
 - `src/hw.h` — low-level driver enforcing the two invariants (active-low DB0–5;
   route = disconnected during every scan).
 - `src/controls.h` — panel switch + function-button decode (ported from `SH101.asm`).
-- `src/engine.h` — keyboard / hold / arpeggiator / 8 x 100-step sequencer.
+- `src/engine.h` — keyboard / hold / arpeggiator / 8 x 128-step sequencer.
 - `src/midi.h` — DIN MIDI driver (UART1 rings + ISRs), parser, SysEx protocol spec.
 - `src/midiclock.h` — MIDI clock divider; `src/sysex.h` — commands common to both firmwares.
 - `src/flash_eeprom.h` / `flash_store.h` / `flash_persist.h` — flash-arena pattern store.

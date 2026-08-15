@@ -68,17 +68,26 @@
   .seq-panel { border:var(--rule); margin-bottom:6px; }
   .seq-toolbar { display:flex; align-items:center; padding:8px var(--pad); border-bottom:var(--rule); flex-wrap:wrap; gap:8px 12px; }
   .seq-toolbar .lbl { border-right:none; margin-right:0; padding-right:0; }
-  .steps { display:grid; grid-template-columns:repeat(auto-fill, minmax(56px,1fr)); gap:0; padding:0; }
-  .step { height:52px; border-right:var(--rule-sm); border-bottom:var(--rule-sm); display:flex; flex-direction:column; align-items:center;
-          justify-content:center; cursor:pointer; user-select:none; position:relative; background:var(--white); }
-  .step .n { font-size:13px; font-weight:900; letter-spacing:-0.02em; }
-  .step .t { font-size:7px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); margin-top:2px; }
-  .step .i { position:absolute; top:2px; left:4px; font-size:7px; font-weight:700; color:var(--gray-3); }
-  .step.rest { background:var(--gray-1); } .step.rest .n { color:var(--gray-3); }
+  .steps { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px,1fr)); gap:0; }
+  .step { border-right:var(--rule-sm); border-bottom:var(--rule-sm); display:flex; flex-direction:column; align-items:stretch;
+          user-select:none; position:relative; background:var(--white); padding:14px 4px 4px; gap:3px; }
+  .step .i { position:absolute; top:2px; left:5px; font-size:8px; font-weight:700; color:var(--gray-3); }
+  .step .row { display:flex; align-items:center; justify-content:center; gap:2px; }
+  .step .n { flex:1; text-align:center; font-size:14px; font-weight:900; letter-spacing:-0.02em; cursor:pointer; line-height:22px; }
+  .step .sb { width:20px; height:20px; border:var(--rule-sm); background:var(--white); font-family:var(--font); font-size:9px; font-weight:900;
+              cursor:pointer; border-radius:0; padding:0; line-height:1; color:var(--black); }
+  .step .sb:hover { background:var(--black); color:var(--white); }
+  .step .sb.oct { width:auto; flex:1; font-size:7px; letter-spacing:0.08em; }
+  .step .tb { flex:1; height:18px; border:var(--rule-sm); background:var(--white); font-family:var(--font); font-size:7px; font-weight:900;
+              letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:0; padding:0; color:var(--gray-4); margin-right:-1px; }
+  .step .tb.on { background:var(--black); color:var(--white); border-color:var(--black); }
+  .step .tb:hover:not(.on) { background:var(--gray-1); color:var(--black); }
+  .step.rest .n { color:var(--gray-3); }
+  .step.rest { background:var(--gray-1); }
   .step.tie .n::before { content:"\2192\00a0"; font-weight:400; color:var(--gray-4); }
   .step.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
-  .step.is-play { background:var(--black); color:var(--white); } .step.is-play .t, .step.is-play .n, .step.is-play .i { color:var(--white); }
-  .step.add { color:var(--gray-3); font-size:20px; font-weight:300; }
+  .step.is-play { background:var(--black); } .step.is-play .n, .step.is-play .i { color:var(--white); }
+  .step.add { align-items:center; justify-content:center; color:var(--gray-3); font-size:22px; font-weight:300; cursor:pointer; min-height:96px; }
   .step.add:hover { background:var(--gray-1); color:var(--black); }
   .empty { grid-column:1 / -1; padding:18px var(--pad); font-size:11px; color:var(--gray-4); border-bottom:var(--rule-sm); }
   /* keyboard */
@@ -165,7 +174,7 @@
       <button class="btn" id="btnClear">Clear pattern</button>
     </div>
     <div class="steps" id="steps"></div>
-    <div class="foot" style="padding:6px var(--pad)">Click a step to select, click again to cycle note / rest / tie. <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> note, <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
+    <div class="foot" style="padding:6px var(--pad)">Per step: &#8722;/+ semitone, OCT&#8722;/OCT+ octave (range F2..C7, the SH-101 keyboard with octave transpose), Note / Rest / Tie. Keyboard: <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> = octave), <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). Patterns recorded or selected on the unit appear here automatically. The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
   </div>
 
   <!-- On-screen keyboard -->
@@ -181,7 +190,10 @@
 // Data model: 8 patterns, each an array of steps {cv:0..63, type:0 note/1 rest/2 tie}
 // mirrors the firmware's one-byte-per-step model (cv | type<<6).
 // ---------------------------------------------------------------------------
-const NUM_PATTERNS = 8, MAX_STEPS = 100, MIDI_CV_OFFSET = 36;
+const NUM_PATTERNS = 8, MAX_STEPS = 128, MIDI_CV_OFFSET = 36;
+// Editable note range = the SH-101 keyboard with octave transpose: F2..C7 (MIDI 41..96, CV 5..60)
+const CV_MIN = 5, CV_MAX = 60;
+const clampCv = cv => Math.min(CV_MAX, Math.max(CV_MIN, cv));
 const DIVS = ['1/4','1/4d','1/4t','1/8','1/8d','1/8t','1/16','1/16d','1/16t','1/32'];
 const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const patterns = Array.from({length: NUM_PATTERNS}, () => []);
@@ -305,7 +317,7 @@ function handleSysex(b) {
       $('btnSync').textContent = cfg.sync ? 'On' : 'Off'; $('btnSync').classList.toggle('is-on', !!cfg.sync);
       $('cfgStatus').textContent = cfg.flash ? 'flash store OK' : 'FLASH STORE MISSING (reflash bootloader)';
       setMode('superos');
-      if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; }
+      if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; }   // follow PLAY+key on the unit
       log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) + ', v' + cfg.version, 'ok');
       renderAll();
       if (!readAllOnce) { readAllOnce = true; readAll(); }
@@ -317,9 +329,11 @@ function handleSysex(b) {
       let x = 0; raw.forEach(v => x ^= v);
       if ((x & 0x7F) !== b[2] || ((x >> 7) & 1) !== b[3]) { log('pattern ' + (p + 1) + ': checksum mismatch', 'err'); break; }
       const len = raw[0]; if (len > MAX_STEPS || raw.length < len + 1) { log('pattern ' + (p + 1) + ': bad length', 'err'); break; }
+      const wasDirty = dirty[p];
       patterns[p] = raw.slice(1, 1 + len).map(s => ({cv: s & 0x3F, type: Math.min(2, s >> 6)}));
       dirty[p] = false;
-      log('read pattern ' + (p + 1) + ' (' + len + ' steps)');
+      if (selStep >= patterns[p].length) selStep = patterns[p].length - 1;
+      log((readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)' + (wasDirty && !readingAll ? ' (replaced your unsent edits)' : ''), readingAll ? '' : 'ok');
       renderAll();
       break;
     }
@@ -333,12 +347,12 @@ function handleSysex(b) {
     default: log('101: unknown SysEx cmd 0x' + cmd.toString(16));
   }
 }
-let readAllOnce = false, pendingWrite = -1;
+let readAllOnce = false, pendingWrite = -1, readingAll = false;
 
 // ---------------------------------------------------------------------------
 // Device actions
 // ---------------------------------------------------------------------------
-function readAll() { sendSysex([0x13]); log('reading all patterns...'); }
+function readAll() { readingAll = true; sendSysex([0x13]); log('reading all patterns...'); setTimeout(() => readingAll = false, 3000); }
 function writePattern(p) {
   const raw = [patterns[p].length, ...patterns[p].map(s => (s.cv & 0x3F) | (s.type << 6))];
   let x = 0; raw.forEach(v => x ^= v);
@@ -425,23 +439,50 @@ function renderSteps() {
   const el = $('steps'); el.innerHTML = '';
   const pat = patterns[curPat];
   $('seqTitle').textContent = 'Pattern ' + (curPat + 1);
-  $('seqLen').textContent = pat.length + ' step' + (pat.length === 1 ? '' : 's');
+  $('seqLen').textContent = pat.length + ' step' + (pat.length === 1 ? '' : 's') + ' / ' + MAX_STEPS;
+  const frag = document.createDocumentFragment();
   pat.forEach((s, i) => {
     const d = document.createElement('div');
     d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' tie' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && playing ? ' is-play' : '');
     d.dataset.i = i;
-    d.innerHTML = '<span class="i">' + (i + 1) + '</span><span class="n">' + (s.type === 1 ? '—' : noteName(s.cv)) + '</span><span class="t">' + ['note','rest','tie'][s.type] + '</span>';
-    d.onclick = () => { if (selStep === i) { cycleType(s); markDirty(); } else selStep = i; renderSteps(); syncInspector(); };
-    el.appendChild(d);
+    d.innerHTML =
+      '<span class="i">' + (i + 1) + '</span>' +
+      '<div class="row"><button class="sb" data-a="dn" title="Semitone down">&#8722;</button>' +
+      '<span class="n" data-a="sel">' + (s.type === 1 ? '&#8212;' : noteName(s.cv)) + '</span>' +
+      '<button class="sb" data-a="up" title="Semitone up">+</button></div>' +
+      '<div class="row"><button class="sb oct" data-a="odn" title="Octave down">OCT&#8722;</button><button class="sb oct" data-a="oup" title="Octave up">OCT+</button></div>' +
+      '<div class="row"><button class="tb' + (s.type === 0 ? ' on' : '') + '" data-a="t0">Note</button>' +
+      '<button class="tb' + (s.type === 1 ? ' on' : '') + '" data-a="t1">Rest</button>' +
+      '<button class="tb' + (s.type === 2 ? ' on' : '') + '" data-a="t2">Tie</button></div>';
+    frag.appendChild(d);
   });
   if (pat.length < MAX_STEPS) {
     const a = document.createElement('div'); a.className = 'step add'; a.textContent = '+'; a.title = 'Append a step';
     a.onclick = () => { appendStep(); };
-    el.appendChild(a);
+    frag.appendChild(a);
   }
-  if (!pat.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Empty pattern. Click + to add steps, or record on the unit (LOAD, keys, LOAD).'; el.appendChild(e); }
+  if (!pat.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Empty pattern. Click + to add steps, or record on the unit (LOAD, keys, LOAD).'; frag.appendChild(e); }
+  el.appendChild(frag);
   syncInspector();
 }
+// One delegated handler for all step controls
+$('steps').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-a]'); if (!btn) return;
+  const cell = ev.target.closest('.step'); if (!cell || cell.dataset.i === undefined) return;
+  const i = +cell.dataset.i, s = patterns[curPat][i]; if (!s) return;
+  selStep = i;
+  switch (btn.dataset.a) {
+    case 'sel': break;
+    case 'up':  s.cv = clampCv(s.cv + 1);  markDirty(); break;
+    case 'dn':  s.cv = clampCv(s.cv - 1);  markDirty(); break;
+    case 'oup': s.cv = clampCv(s.cv + 12); markDirty(); break;
+    case 'odn': s.cv = clampCv(s.cv - 12); markDirty(); break;
+    case 't0': s.type = 0; markDirty(); break;
+    case 't1': s.type = 1; markDirty(); break;
+    case 't2': s.type = 2; markDirty(); break;
+  }
+  renderSteps();
+});
 function renderPlayhead() {
   document.querySelectorAll('#steps .step').forEach(d => d.classList.toggle('is-play', playing && +d.dataset.i === playPos));
 }
@@ -456,7 +497,7 @@ function syncInspector() {
   ['selNote','btnNote','btnRest','btnTie','btnIns','btnDel'].forEach(id => $(id).disabled = !s);
   if (s) $('selNote').value = s.cv;
 }
-for (let cv = 63; cv >= 0; --cv) { const o = document.createElement('option'); o.value = cv; o.textContent = noteName(cv) + '  (' + (cv + MIDI_CV_OFFSET) + ')'; $('selNote').appendChild(o); }
+for (let cv = CV_MAX; cv >= CV_MIN; --cv) { const o = document.createElement('option'); o.value = cv; o.textContent = noteName(cv) + '  (' + (cv + MIDI_CV_OFFSET) + ')'; $('selNote').appendChild(o); }
 $('selNote').onchange = () => { const s = patterns[curPat][selStep]; if (s) { s.cv = +$('selNote').value; markDirty(); renderSteps(); } };
 $('btnNote').onclick = () => setType(0); $('btnRest').onclick = () => setType(1); $('btnTie').onclick = () => setType(2);
 function setType(t) { const s = patterns[curPat][selStep]; if (s) { s.type = t; markDirty(); renderSteps(); } }
@@ -471,8 +512,8 @@ document.addEventListener('keydown', ev => {
   if (k === 'ArrowLeft')  { if (pat.length) { selStep = Math.max(0, selStep - 1); renderSteps(); } ev.preventDefault(); return; }
   if (k === 'ArrowRight') { if (pat.length) { selStep = Math.min(pat.length - 1, selStep + 1); renderSteps(); } ev.preventDefault(); return; }
   if (!s) return;
-  if (k === 'ArrowUp')   { s.cv = Math.min(63, s.cv + (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
-  if (k === 'ArrowDown') { s.cv = Math.max(0,  s.cv - (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
+  if (k === 'ArrowUp')   { s.cv = clampCv(s.cv + (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
+  if (k === 'ArrowDown') { s.cv = clampCv(s.cv - (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
   if (k === 'n' || k === 'N') setType(0);
   if (k === 'r' || k === 'R') setType(1);
   if (k === 't' || k === 'T') setType(2);
