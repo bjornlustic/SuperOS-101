@@ -85,8 +85,13 @@ the USB engine off (8 MHz was enough for SuperOS but left the CPU-bound emulator
 a cable in never moves the tuning (details in `docs/HARDWARE.md`, "Current
 budget"). The side effect is on the 80C49 emulator: its interpreter runs about
 6.9x slower than the real 6 MHz chip (about 3.7x at 16 MHz), which stretches the
-ROM's scan loop and delay loops (key/arp latency of ~10-25 ms), not the pitch CVs.
-The SuperOS loop pass is ~0.9 ms (the original ROM's was 1.5-3.5 ms).
+ROM's scan loop and delay loops (key/arp latency of ~10-25 ms), not the DAC values.
+Since the ROM's pass is also what refreshes the three sample/hold caps (every
+1.5-3.5 ms on the real chip), the stretched pass would let them droop audibly
+between refreshes (a pitch warble on held notes); the emulator host therefore
+re-writes each S/H with the ROM's last value about every 2 ms between emulated
+instructions (`emu101.cpp` ShRefresh, transparent to the ROM), which costs the
+interpreter another ~12-15%. The SuperOS loop pass is ~0.9 ms.
 
 ## Pattern storage (flash arena)
 

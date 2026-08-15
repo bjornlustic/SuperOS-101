@@ -287,7 +287,12 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
       IdleWaitUs); with that the pitch with USB running is indistinguishable from
       USB-off in both firmwares (within the VCO's own 2-3 cent noise). The cost is
       emulator speed: the 80C49 interpreter runs ~6.9x slower than the real chip
-      (scan/arp latency, not pitch). Earlier evidence of the same limit:
+      (scan/arp latency, not the DAC values). One knock-on effect on pitch: the
+      ROM refreshes the S/H caps once per pass, so a 7x longer pass lets them
+      droop 7x further between refreshes (audible warble on held notes in
+      emulator mode, none in SuperOS at its 0.9 ms pass); the emulator host
+      compensates by re-writing each S/H with the ROM's last value about every
+      2 ms (emu101.cpp ShRefresh). Earlier evidence of the same limit:
       with the BOD fuse at 4.3 V (efuse 0xF8) every SPM flash write and the USB
       PLL start reset the chip (BORF via SysEx 0x3B); at 3.5 V (efuse 0xF9, now
       the standard) it is clean. Hardware headroom (a later board rev) would come

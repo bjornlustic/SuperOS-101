@@ -8,8 +8,10 @@
 //
 // Pacing: 6 MHz resonator -> 400k machine cycles/s (15 clocks/cycle). The
 // interpreter is throttled to that rate; if the AVR can't keep up it runs
-// flat out and the emulated firmware simply runs proportionally slower (pitch
-// CVs are unaffected — only scan latency and software delay loops stretch).
+// flat out and the emulated firmware simply runs proportionally slower (the
+// DAC values are unaffected; scan latency and software delay loops stretch).
+// The one analog consequence, the ROM's per-pass sample/hold refresh
+// stretching with it, is compensated by the host (ShRefresh below).
 //
 // MIDI: notes 53..84 (the SH-101's own keys F3..C6, same mapping as SuperOS)
 // are injected into the emulated key matrix, so the ROM sees them exactly as
@@ -71,11 +73,43 @@ static void EchoOut() {
   g_echoNote = note;
 }
 
+// --- sample/hold refresh -----------------------------------------------------
+// The three S/H caps (CV-OUT, VCO range, RANDOM) hold their DAC voltage only
+// as long as the ROM keeps re-writing them, once per pass. On the real chip
+// a pass is 1.5-3.5 ms; the interpreter runs ~7x slower (4 MHz core, rail
+// budget), so a pass takes 10-25 ms and the caps droop audibly between
+// refreshes (a pitch warble that SuperOS, at a 0.9 ms pass, does not have).
+// The host therefore re-presents the last value the ROM connected to each S/H
+// at a SuperOS-like cadence, between emulated instructions, and then restores
+// the ROM's BUS latch (data first, disconnected; then its route). The ROM
+// cannot tell: INS A,BUS reads its own latch, and a scan column it left low
+// is back on the pins before its next instruction. Only S/H the ROM has
+// actually written are refreshed, never the one it currently holds connected.
+static uint8_t  g_shVal[3];              // last value connected to route 0..2
+static uint8_t  g_shKnown = 0;           // bit r = g_shVal[r] is valid
+static const uint16_t SH_REFRESH_US = 1500;
+
+static void ShRefresh() {
+  uint8_t saved = BUS_PORT;              // == the ROM's bus latch (bus_write mirrors it)
+  uint8_t held  = (uint8_t)(saved >> 6); // route the ROM has connected now (3 = none)
+  for (uint8_t r = 0; r < 3; ++r)
+    if ((g_shKnown & (1u << r)) && r != held) hw::DacWrite(g_shVal[r], (Route)r);
+  BUS_PORT = (uint8_t)(saved | 0xC0);    // ROM's data back on the ladder, no S/H
+  delayMicroseconds(hw::SETTLE_LADDER_US);
+  BUS_PORT = saved;                      // and its route (or scan column)
+  delayMicroseconds(hw::SETTLE_SCAN_US);
+}
+
 // --- core hooks: 1:1 port pass-through ---------------------------------------
 uint8_t mcs48_rom_read(uint16_t addr) { return pgm_read_byte(&ROM101[addr & 0x7FF]); }
 void    mcs48_bus_write(uint8_t v)    {
   BUS_PORT = v;
-  if ((v & 0xC0) == (ROUTE_CV_OUT << 6)) { g_cvOut = (uint8_t)(~v & 0x3F); EchoOut(); }
+  uint8_t route = (uint8_t)(v >> 6);
+  if (route != ROUTE_NONE) {
+    g_shVal[route] = (uint8_t)(~v & 0x3F);
+    g_shKnown |= (uint8_t)(1u << route);
+    if (route == ROUTE_CV_OUT) { g_cvOut = g_shVal[route]; EchoOut(); }
+  }
 }
 // P1 rows are active-low; the BUS latch says which keyboard bank (DB0..3
 // low) the ROM is scanning, so pull the MIDI-held keys of that bank low too.
@@ -159,11 +193,29 @@ void setup() {
   RamLoad();          // the "battery" kept the sequence: restore it before the ROM runs
 }
 
-// One slice per loop() pass: 200 cycles = 500 us of emulated time.
+// One slice per loop() pass: 48 cycles = 120 us of emulated time, about 0.8 ms
+// of real time at the 4 MHz core clock, so the S/H refresh below gets its
+// turn about every 2 slices (a slice was 200 cycles = ~3.5 ms real before it
+// existed). The refresh itself costs ~0.2-0.35 ms per round, so the
+// interpreter gives up roughly 12-15% to it.
+// The host sim keeps 200 cycles = 500 us of virtual time per loop(): its
+// self-test counts loops at that rate, and virtual time is not real time.
+#ifdef SUPEROS_SIM
 static const uint16_t SLICE_CYCLES = 200;
+#else
+static const uint16_t SLICE_CYCLES = 48;
+#endif
 
 void loop() {
   uint16_t ran = mcs48_run(g_cpu, SLICE_CYCLES);
+
+  // S/H refresh at a SuperOS-like cadence (see ShRefresh); time-based, since
+  // the droop is per real millisecond however slow the interpreter runs.
+  static uint32_t s_shLastUs = 0;
+  {
+    uint32_t nowUs = micros();
+    if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { s_shLastUs = nowUs; ShRefresh(); }
+  }
 
 #ifdef SUPEROS_SIM
   // Host sim: advance virtual time instead of throttling (2.5 us/cycle).
