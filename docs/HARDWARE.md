@@ -239,13 +239,9 @@ Note: BUS (DB0–7) is **output-only** in this firmware — DAC value, route, an
 low scan column commons are all writes (`OUTL BUS,A`); the keyboard/switch *reading* is on
 P1. So PORTC = pure output, no bus-turnaround handling needed.
 
-### Fuses (differ from the 303/606: CKOUT must be OFF)
-`lfuse 0xDF, hfuse 0xDA, efuse 0xF8` (see `[env:fuses]` in platformio.ini). The 303/606
-low fuse 0x9F has CKOUT programmed, which puts the 16 MHz system clock on CLKO = **PC7**
-regardless of PORTC/DDRC. On this board PC7 is DB7, the 4052 route-select B line, so with
-0x9F the pitch (00) and range (01) routes are unreachable and the DAC staircase lands on
-the random S/H (10). This was the first-unit "constant pitch, RANGE dead" fault
-(2026-08-15). Never burn 0x9F on a SuperOS-101 board.
+### Fuses
+`lfuse 0xDF, hfuse 0xDA, efuse 0xF8`. Only lfuse differs from the 303/606 (CKOUT off,
+because CLKO is PC7 = DB7 here); see `[env:fuses]` in platformio.ini.
 
 ### Board-level deltas vs the SuperOS-303 board
 - **New DIP-40 footprint** (303 is DIP-42). Reuse the FFC breakout + Tag-Connect ISP.

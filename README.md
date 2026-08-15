@@ -121,12 +121,8 @@ chips arrive with lock bits set, so the first write needs a chip erase (`-e`).
 pio run -e fuses
 ```
 
-Do NOT reuse the SuperOS-303/606 low fuse `0x9F`. It has CKOUT programmed, which puts
-the 16 MHz system clock on CLKO = PC7 regardless of PORTC/DDRC, and on this board PC7 is
-DB7 (the 4052 route-select B line). With 0x9F the pitch and range routes are unreachable
-and every note lands on the random S/H (constant pitch, RANGE dead). 0xDF is the same
-crystal/start-up setting with CKOUT off; hfuse/efuse (JTAG off, BOOTRST, 4 KB boot
-section) are the same as the 303/606.
+Do not reuse the SuperOS-303/606 low fuse 0x9F on this board (CKOUT drives PC7 = DB7);
+the reason is documented in `[env:fuses]` in `platformio.ini`.
 
 Then flash the app (chip erase) followed by the bootloader (no erase, `-D`):
 
