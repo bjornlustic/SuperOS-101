@@ -273,11 +273,27 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
 - [ ] Confirm **pin 26 = Vdd RAM-standby** and how the battery backs it (schematic p.5/7).
 - [ ] Confirm whether **EA (pin 7)** is hard-tied low on the board.
 - [ ] **Current budget:** verify the SH-101 +5 V rail (S1671140 DC/DC) has headroom for
-      the AVR (more than the original CMOS 80C49). Likely fine — meter it.
+      the AVR (more than the original CMOS 80C49). Evidence it is marginal (2026-08-15):
+      with the BOD fuse at 4.3 V (efuse 0xF8) every SPM flash write and the USB PLL
+      start reset the chip (BORF via SysEx 0x3B); at 3.5 V (efuse 0xF9, now the
+      standard) it is clean. Meter VCC at the AVR with USB plugged and during a
+      pattern save; consider more bulk capacitance on the CPU board if it sits
+      below ~4.6 V.
 - [ ] Measure the real **DAC settle time** the analog ladder/4052 S/H needs.
 - [ ] Lay out the **new DIP-40 mainboard** (reuse FFC breakout + Tag-Connect ISP).
 - [x] Read `SH101.asm` in full → behaviour captured in [`docs/FIRMWARE.md`](FIRMWARE.md)
       (DAC/mux protocol, numeric model, loop steps, seq/arp). Arp + seq-packing inner-loops
       still to be copied verbatim from the asm at implementation time.
+- [x] **USB-C breakout** carries the CC pull-downs (C-to-C and C-to-A hosts both
+      supply VBUS; confirmed working). UVCC is on the board +5 V and VBUS goes to
+      the AVR's VBUS pin only, so the port neither powers nor back-feeds the unit;
+      the firmware's VBUS gate (src/usb_gate.h) runs the USB engine only with a
+      cable in.
+- [ ] **USB engine noise on the panel nets:** the 606 saw the 48 MHz USB clock
+      charge-pump floating status nets behind diodes. On the 101, P1 rows sit on the
+      AVR's internal pull-ups and the LEDs are static (no scan-multiplexed LEDs), so
+      no clamp scheme is expected to be needed. Bench 2026-08-15 with a cable in: no
+      phantom keys/buttons observed over 30 firmware swaps and 3 update cycles (the
+      config menu combo never fired); still worth a keyboard/T0/T1 pass by hand.
 - [ ] Verify the **MC-202 relationship** (shares the analog voice; different/larger digital
       section — likely a *different* CPU, so probably not a shared board like the µPD650 trio).

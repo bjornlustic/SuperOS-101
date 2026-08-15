@@ -26,5 +26,7 @@ static const uint8_t FW_SUPEROS = 0;   // also 0xFF (virgin EEPROM)
 static const uint8_t FW_EMU     = 1;
 
 uint8_t combined_current_fw();
+uint8_t combined_boot_count();  // boots since power-on (survives resets; SysEx 0x3B)
+uint8_t combined_prev_stage();  // where the previous boot ended (SysEx 0x3B)
 void RebootTo(uint8_t fw);   // persist the select byte, then reset the MCU
 void EnterBootloader();      // park BOOT_MAGIC in GPIOR0, jump to 0x1F000

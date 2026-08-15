@@ -20,8 +20,8 @@ config menu. The SuperOS side: faithful DAC/mux protocol and scan invariants,
 **panel decode** (RANGE/OCTAVE/ADSR, ported from the disassembly), a **mono
 keyboard** (lowest/last-note priority), **HOLD**, an **arpeggiator** (up/down/up&down)
 with the mode shown on the function LEDs, **8 patterns of up to 128 steps** stored
-in a flash arena ("emulated EEPROM", same scheme as SuperOS-303), **DIN MIDI in/out**
-(notes, program change, SysEx editor protocol) and **MIDI clock sync**
+in a flash arena ("emulated EEPROM", same scheme as SuperOS-303), **MIDI in/out on
+DIN and USB-C** (notes, program change, SysEx editor protocol) and **MIDI clock sync**
 (`src/midiclock.h`): the arp/sequencer clock, LFO hard-sync via CLOCK RESET, and a
 beat-stepped random S&H, at ten divisions (1/4 ... 1/32 incl. dotted/triplet), in
 both firmwares (the emulator gets the divided clock on its T1 pin). A **web editor**
@@ -42,7 +42,7 @@ KEY-TRANSPOSE shift value and exact portamento timing. The CPU board lives in
   selects pattern 1..8 (also MIDI Program Change 0..7 or the editor).
 - **HOLD + KEY-TRANSPOSE 2 s**: config menu (below).
 
-## MIDI (DIN, both firmwares)
+## MIDI (DIN + USB-C, both firmwares)
 
 Notes in on the configured channel (default 1): MIDI 53..84 act as the SH-101's own
 keys F3..C6 (so they arpeggiate and record like keys), other notes 36..99 play as a
@@ -50,9 +50,28 @@ mono override. Everything the engine plays is echoed on MIDI OUT (note = CV + 36
 Realtime clock/start/stop drive the sync (config menu or editor). SysEx protocol
 `F0 7D <cmd> ... F7` is documented at the top of [`src/midi.h`](src/midi.h): pattern
 read/write (0x10..0x14), step position (0x15), select/transport (0x1D/0x1E), config
-(0x20..0x22), firmware switch (0x2F/0x4D), emulator status (0x40/0x41), bootloader
-(0x4A). Host tools: `tools/sendsyx` / `tools/recvsyx` (macOS CoreMIDI, build from
+(0x20..0x22), firmware switch (0x2F/0x4D), bench probe (0x3B/0x3C: reset cause,
+USB registers, boots since power-on, where the previous boot ended), emulator status
+(0x40/0x41), bootloader (0x4A). Host tools: `tools/sendsyx` / `tools/recvsyx` (macOS CoreMIDI, build from
 the `.c` files).
+
+**USB-C** (`app` build): the unit enumerates as a class-compliant USB-MIDI device
+"SuperOS-101" (VID/PID 16C0:0485, serial SOS101-0001), one virtual cable, in both
+firmwares. Both ports run at once and carry the same traffic: notes and realtime go
+in from either and out to both; SysEx replies and editor telemetry go to the port(s)
+an editor has spoken on, so a USB session never waits on the 31250-baud DIN ring
+(`src/midi.h`, one parser per port). The USB engine only runs while a cable is
+plugged in (VBUS gate, `src/usb_gate.h`), every USB write is non-blocking and gated
+on the bus being alive, and the firmware detaches cleanly before any reset or
+bootloader jump; a 2 s pre-main watchdog plus an 8 s loop watchdog turn the
+303-era freezes (PLL lock at boot, USB core against a bad bus after a fast firmware
+swap) into recovery reboots, and the Teensy core's EP0 control-transfer spins are
+bounded (`tools/patch_usb_core.py`) so a bus reset mid-enumeration cannot wedge the
+ISR. Bench-verified 2026-08-15 over USB-C: enumeration, SysEx both ways, pattern
+write + flash-arena persistence, 30/30 clean firmware swaps (one boot each, port back
+in 1.2 s), 3/3 bootloader update round trips. The breakout carries the CC pull-downs;
+C-to-C and C-to-A cables both work. The first bring-up day's "USB-C hardware issues"
+were the 4.3 V brown-out fuse (see Flashing), not the port.
 
 ## Pattern storage (flash arena)
 
@@ -70,7 +89,8 @@ the arena. A chip erase over ISP wipes the arena; SysEx OS updates do not.
 SuperOS-303 editor: pattern grid (note / rest / legato, per-step semitone/octave, length control), read/write
 patterns, pattern select and transport, live playhead, config (channel, sync,
 division), firmware switch, OS update from a `*-update.syx`, on-screen MIDI keyboard,
-JSON save/load. Web MIDI needs Chrome/Edge over http or localhost. In Cursor / VS
+JSON save/load. It talks to the unit directly over USB-C (port "SuperOS-101") or via
+any DIN interface. Web MIDI needs Chrome/Edge over http or localhost. In Cursor / VS
 Code press **F5** ("SuperOS-101 Web Editor (Chrome)", `.vscode/launch.json`); it
 serves the folder on port 3101 and opens Chrome. Or:
 
@@ -101,6 +121,13 @@ cycle the clock division, the 10 lowest keys = pick the division directly
 (1/4, 1/4d, 1/4t, 1/8, 1/8d, 1/8t, 1/16, 1/16d, 1/16t, 1/32),
 **KEY-TRANSPOSE** = exit. Sync and division persist in EEPROM.
 
+A firmware switch (menu, or SysEx 0x2F / 0x4D from the editor) waits until every
+key and button has read released for 250 ms (4 s cap), quiets the panel and gate,
+detaches USB, and reboots through the watchdog; the bootloader clears the reset
+cause and falls straight into the selected firmware, which starts from a full
+hardware reset. There is no shared state between the two apart from the EEPROM
+select byte.
+
 **Mask-ROM policy** (same as the 303): the ROM dump is Roland's copyrighted code and
 is **never distributed**. `tools/mkrom.py` embeds it at build time from
 `SH101-reference/80C49_SH101.bin` (git-ignored) into the generated, git-ignored
@@ -123,15 +150,19 @@ refuses emulator mode and the unit always boots SuperOS.
   route = disconnected during every scan).
 - `src/controls.h` — panel switch + function-button decode (ported from `SH101.asm`).
 - `src/engine.h` — keyboard / hold / arpeggiator / 8 x 128-step sequencer.
-- `src/midi.h` — DIN MIDI driver (UART1 rings + ISRs), parser, SysEx protocol spec.
+- `src/midi.h` — MIDI driver: DIN (UART1 rings + ISRs) + USB-MIDI endpoints, one
+  parser per port, SysEx protocol spec; `src/usbmidi_codec.h` — USB-MIDI event codec;
+  `src/usb_gate.h` — USB VBUS/SOF gating (from the 303/606).
 - `src/midiclock.h` — MIDI clock divider; `src/sysex.h` — commands common to both firmwares.
 - `src/flash_eeprom.h` / `flash_store.h` / `flash_persist.h` — flash-arena pattern store.
 - `src/main.cpp` — the SuperOS main loop (steps 3–13; entry points `superos_setup/loop`).
-- `src/boot.cpp` / `src/combined.h` — combined-build dispatch + EEPROM map.
+- `src/boot.cpp` / `src/combined.h` — combined-build dispatch, watchdogs, firmware
+  switch / bootloader entry, EEPROM map.
 - `src/menu.h` — the config menu (firmware select).
 - `src/mcs48.h` / `src/emu101.cpp` — MCS-48 core + 80C49-emulator host layer.
 - `src/bootloader/` — SysEx bootloader + `flash_service.c` (SPM page writer).
-- `tools/web-editor/` — the Web MIDI editor; `tools/flash.sh` — ISP build+flash.
+- `tools/web-editor/` — the Web MIDI editor; `tools/flash.sh` — ISP build+flash;
+  `tools/patch_usb_core.py` — makes the Teensy usb_midi core's USB identity overridable.
 - `sim/` — host-side simulator (see below); runs both firmwares, including the
   emulated mask ROM (`mode emu` / `mode superos` in the CLI, or the menu combo).
 
@@ -162,8 +193,9 @@ saved sequence and the selected firmware survive restarts.
 Requires [PlatformIO](https://platformio.org/).
 
 ```sh
-pio run                 # build the app -> .pio/build/app/firmware.hex
-pio run -e app-debug    # app + USB serial + DEBUG for bench testing
+pio run                 # build the app (USB-MIDI + DIN) -> .pio/build/app/firmware.hex + app-update.syx
+pio run -e app-nousb    # DIN-only app (USB engine never enabled)
+pio run -e app-debug    # app + USB serial + DEBUG for bench testing (no USB-MIDI)
 ```
 
 ## Flashing
@@ -172,32 +204,45 @@ Bench rig: Atmel-ICE on the Tag-Connect TC2030 pads (`avrdude -c atmelice_isp`).
 board is powered from the SH-101 socket (pin 40); the USB port does not power it. Factory
 chips arrive with lock bits set, so the first write needs a chip erase (`-e`).
 
-**Fuses: `lfuse 0xDF, hfuse 0xDA, efuse 0xF8`.** Burn them once per chip:
+**Fuses: `lfuse 0xDF, hfuse 0xDA, efuse 0xF9`.** Burn them once per chip:
 
 ```bash
 pio run -e fuses
 ```
 
-Do not reuse the SuperOS-303/606 low fuse 0x9F on this board (CKOUT drives PC7 = DB7);
-the reason is documented in `[env:fuses]` in `platformio.ini`.
+Do not reuse the SuperOS-303/606 low fuse 0x9F (CKOUT drives PC7 = DB7) or extended
+fuse 0xF8 (4.3 V brown-out; the SH-101's +5 V rail dips below it on every flash write
+and on USB start, resetting the chip); both reasons are documented in `[env:fuses]` in
+`platformio.ini`.
 
-Then flash the app (chip erase) followed by the bootloader (no erase, `-D`):
+Then flash the app (chip erase) followed by the bootloader (no erase, `-D`), or just
+run `tools/flash.sh`:
 
 ```bash
-pio run -e app-nousb -e bootloader-nousb
+pio run -e app -e bootloader
 ```
 
 ```bash
-avrdude -c atmelice_isp -p at90usb1286 -B 4 -e -U flash:w:.pio/build/app-nousb/firmware.hex:i
+avrdude -c atmelice_isp -p at90usb1286 -B 4 -e -U flash:w:.pio/build/app/firmware.hex:i
 ```
 
 ```bash
-avrdude -c atmelice_isp -p at90usb1286 -B 4 -D -U flash:w:.pio/build/bootloader-nousb/firmware.hex:i
+avrdude -c atmelice_isp -p at90usb1286 -B 4 -D -U flash:w:.pio/build/bootloader/firmware.hex:i
 ```
 
-`app-nousb` is the bring-up build for the first board rev (USB-C hardware issues); use
-`app` / `bootloader` once USB works. Later updates can go over DIN MIDI SysEx through the
-bootloader (`tools/makesyx.py` emits `app-update.syx`, send with `tools/sendsyx`).
+`app-nousb` / `bootloader-nousb` (`tools/flash.sh nousb`) are DIN-only fallbacks that
+never enable the USB engine.
+
+**Updates without the ISP rig** go over MIDI SysEx, DIN or USB-C, through the
+bootloader: every `pio run` emits `app-update.syx`. Send `F0 7D 4A F7` to the running
+app (the web editor's *Update OS* button does this, `sendsyx` users send it first) and
+the unit jumps into the bootloader without a reset, HOLD LED blinking then lit; over
+USB it re-enumerates as "SuperOS-101 Bootloader". Then send the file
+(`tools/sendsyx "SuperOS-101 Bootloader" app-update.syx`, or the editor sends the
+pages itself, following the unit onto the bootloader port). The final `F0 7D 02 F7`
+in the file makes the bootloader reset into the new app. The panel fallback is
+holding **LOAD + PLAY** at power-on. The bootloader itself is only ever written over
+ISP; SysEx updates cannot touch it or the pattern arena.
 
 For hardware bring-up of a new board, `pio run -e diag` builds a diagnostic that streams
 a per-pin BUS self-test over MIDI OUT (decode with `tools/recvsyx`); see

@@ -4,7 +4,7 @@
  *
  * Ported from SuperOS-303 (same MCU, same fuses, same protocol):
  *   F0 7D 01 <page-hi> <page-lo> <len-hi> <len-lo> <ck-hi> <ck-lo> <7bit data> F7
- *   F0 7D 02 F7                          run the app
+ *   F0 7D 02 F7                          run the app (watchdog reset)
  * The same stream is accepted from USART1 (DIN MIDI IN via the panel
  * breakout) or the polled USB-MIDI device in usb_boot.c.
  *
@@ -146,6 +146,20 @@ static void jump_to_app(void) {
   }
 }
 
+/* End of an update (SysEx 02): start the app from a full hardware reset
+ * rather than a jump. After an update the bootloader has been running with
+ * USB attached and interrupts off, and RAM/peripherals are its leftovers; a
+ * watchdog reset gives the new app the same cold start it gets at power-on
+ * (the reset lands back here, GPIOR0 is 0, no combo held, so main() falls
+ * straight through jump_to_app). usb_boot_detach first so the host sees the
+ * bootloader leave before the app enumerates. */
+static void reset_to_app(void) {
+  cli();
+  usb_boot_detach();
+  wdt_enable(WDTO_15MS);
+  for (;;) {}
+}
+
 static uint8_t count = 0;
 static void process_sysex(uint8_t *data, uint16_t len) {
   if (len < 2)
@@ -178,7 +192,7 @@ static void process_sysex(uint8_t *data, uint16_t len) {
     }
     flash_write_page(page);
   } else if (cmd == 0x02) {
-    jump_to_app();
+    reset_to_app();
   }
 }
 

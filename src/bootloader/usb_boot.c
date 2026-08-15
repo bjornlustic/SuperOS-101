@@ -35,7 +35,7 @@ static const uint8_t PROGMEM dev_desc[18] = {
   EP0_SIZE,
   0xC0, 0x16, 0x85, 0x04, /* VID/PID 16C0:0485, same as the app */
   0x02, 0x00,             /* bcdDevice 0.02 marks the bootloader */
-  0, 1, 0,                /* no mfr string, product = 1, no serial */
+  0, 1, 2,                /* no mfr string, product = 1, serial = 2 */
   1
 };
 
@@ -64,6 +64,14 @@ static const uint8_t PROGMEM str1[] = {
   'S',0,'u',0,'p',0,'e',0,'r',0,'O',0,'S',0,'-',0,'1',0,'0',0,'1',0,' ',0,
   'B',0,'o',0,'o',0,'t',0,'l',0,'o',0,'a',0,'d',0,'e',0,'r',0
 };
+/* Serial number: hosts match serial-less devices by port location (macOS
+ * CoreMIDI then re-uses whatever entity last lived there); a fixed serial,
+ * distinct from the app's SOS101-0001, gives the bootloader its own stable
+ * identity next to the app. */
+static const uint8_t PROGMEM str2[] = {
+  2 + 2 * 11, 3,
+  'S',0,'O',0,'S',0,'1',0,'0',0,'1',0,'-',0,'B',0,'O',0,'O',0,'T',0
+};
 
 /* MIDI bytes per USB-MIDI Code Index Number */
 static const uint8_t PROGMEM cin_len[16] =
@@ -77,8 +85,18 @@ void usb_boot_init(void) {
   UHWCON = (1 << UIMOD) | (1 << UVREGE);
   USBCON = (1 << USBE) | (1 << FRZCLK);
   PLLCSR = 0x16; /* 16 MHz crystal -> 48 MHz USB clock */
-  while (!(PLLCSR & (1 << PLOCK)))
-    ;
+  /* Bounded lock wait (lock takes ~100 us): the bootloader has no watchdog,
+   * so an unbounded spin on a PLL that misses lock (seen on the 303 after a
+   * hot reset) would strand a unit that could still update over DIN. No lock
+   * within ~10 ms -> run without USB. */
+  for (uint16_t i = 0; i < 10000 && !(PLLCSR & (1 << PLOCK)); i++)
+    _delay_us(1);
+  if (!(PLLCSR & (1 << PLOCK))) {
+    PLLCSR = 0;
+    USBCON = 0;
+    usb_active = 0;
+    return;
+  }
   USBCON = (1 << USBE) | (1 << OTGPADE);
   UDCON = 0; /* attach */
 }
@@ -89,8 +107,7 @@ void usb_boot_detach(void) {
   UDCON = (1 << DETACH);
   USBCON = 0;
   PLLCSR = 0;
-  /* let the host register the drop before the app re-attaches; F_CPU is
-   * 4 MHz in this build vs the real 16 MHz clock, so this is ~50 ms */
+  /* let the host register the drop before the app re-attaches */
   _delay_ms(200);
 }
 
@@ -116,6 +133,8 @@ static void ep0_send(uint_farptr_t p, uint8_t len, uint16_t wLength) {
 }
 
 void usb_boot_task(void) {
+  if (!usb_active)
+    return;
   if (UDINT & (1 << EORSTI)) { /* bus reset: (re)arm EP0 */
     UDINT = (uint8_t)~(1 << EORSTI);
     UENUM = 0;
@@ -153,6 +172,9 @@ void usb_boot_task(void) {
       } else if (wVal_h == 3 && wVal_l == 1) {
         p = pgm_get_far_address(str1);
         len = sizeof(str1);
+      } else if (wVal_h == 3 && wVal_l == 2) {
+        p = pgm_get_far_address(str2);
+        len = sizeof(str2);
       }
       if (p)
         ep0_send(p, len, wLength);

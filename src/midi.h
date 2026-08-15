@@ -1,14 +1,30 @@
-// SuperOS-101 - DIN MIDI driver + parser (UART1, PD2 RX / PD3 TX)
+// SuperOS-101 - MIDI driver + parser: DIN (UART1, PD2 RX / PD3 TX) and, in the
+// SUPEROS_USB_MIDI build, the USB-C port (Teensy usb_midi core, one cable).
 //
 // One driver for both firmwares. Interrupt-driven RX and TX rings so the loop
 // pass (which spends ~350 us in DAC settle waits) can never overrun the UART's
-// 2-byte hardware buffer at 320 us/byte. Poll() drains the RX ring through a
-// small parser and hands out:
+// 2-byte hardware buffer at 320 us/byte. Poll() drains the DIN RX ring and the
+// USB OUT endpoint, each through its own parser instance (so a SysEx arriving
+// on USB cannot be corrupted by notes on DIN and vice versa), and hands out:
 //   - realtime bytes            -> midiclk::OnRealtime() (clock/start/stop)
 //   - channel messages          -> midi::Handlers (note on/off, CC, PC)
 //   - SysEx F0 7D <cmd> .. F7   -> midi::Handlers.sysex(body, len), body[0]=cmd
 // Everything else is dropped. Running status is honoured on input; output is
 // always explicit-status.
+//
+// Output routing: notes / realtime go to every port (Send). SysEx (editor
+// replies, step position, mirrored edits) goes to the ports on which an editor
+// has spoken SysEx to us (sticky per boot), or to every port before any has.
+// So a USB-only editor session never blocks the loop on the 31250-baud DIN
+// ring, and a DIN editor never sees its replies vanish into an unread USB pipe.
+//
+// USB path: raw 4-byte USB-MIDI event packets are read straight from the OUT
+// endpoint and unpacked by Code Index Number into the byte parser, bypassing
+// the core's 60-byte SysEx buffer (our 0x12 pattern write is ~155 bytes).
+// Output is packetised on the fly (usbmidi_codec.h) and every write is gated
+// on usb_gate.h (configured + SOF alive) with a bounded wait for endpoint
+// room, so an unplugged or parked port costs nothing and can never spin the
+// loop.
 //
 // SysEx protocol (manufacturer 0x7D, same family as the SuperOS-303):
 //   0x10 <p>              request pattern p          -> 0x11
@@ -22,6 +38,8 @@
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
 //   0x2F                  switch to the 80C49 emulator (reboots)
+//   0x3B                  bench probe                 -> 0x3C (sysex.h: reset
+//                         cause, USB regs, boot count, previous boot stage)
 //   0x40                  emulator status request     -> 0x41 (emulator only)
 //   0x41 <1> <version ascii...>
 //   0x4D                  switch to SuperOS (reboots)
@@ -31,11 +49,23 @@
 #pragma once
 #include <Arduino.h>
 
+#if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
+#define MIDI_HAS_USB 1
+#include "usb_midi/usb_private.h"   // core endpoint numbers + usb_configuration
+#include "usb_gate.h"
+#include "usbmidi_codec.h"
+#else
+#define MIDI_HAS_USB 0
+#endif
+
 namespace midi {
 
 static const uint8_t RX_CAP  = 64;    // power of two
 static const uint8_t TX_CAP  = 128;   // power of two
 static const uint8_t SX_MAX  = 160;   // largest inbound SysEx body (0x12 = 152)
+
+// Port bitmask (Send / reply routing).
+enum : uint8_t { PORT_DIN = 0x01, PORT_USB = 0x02, PORT_ALL = 0x03 };
 
 struct Handlers {
   void (*noteOn )(uint8_t note, uint8_t vel) = nullptr;   // vel > 0
@@ -46,21 +76,29 @@ struct Handlers {
   void (*realtime)(uint8_t status)           = nullptr;
 };
 
-struct State {
-  Handlers h;
-  uint8_t  channel = 0;             // 0..15 (channel 1..16), receive + send
-  // RX ring (ISR producer)
-  volatile uint8_t rxBuf[RX_CAP];
-  volatile uint8_t rxW = 0, rxR = 0;
-  // TX ring (ISR consumer)
-  volatile uint8_t txBuf[TX_CAP];
-  volatile uint8_t txW = 0, txR = 0;
-  // parser
+// One byte-stream parser per input port.
+struct Parser {
   uint8_t  status = 0;              // running status (channel messages)
   uint8_t  data[2]; uint8_t nData = 0, need = 0;
   bool     inSx = false; bool sxDrop = false;
   uint8_t  sx[SX_MAX]; uint8_t sxLen = 0;
-  bool     hostSeen = false;        // an editor spoke SysEx to us
+};
+
+struct State {
+  Handlers h;
+  uint8_t  channel = 0;             // 0..15 (channel 1..16), receive + send
+  // DIN RX ring (ISR producer)
+  volatile uint8_t rxBuf[RX_CAP];
+  volatile uint8_t rxW = 0, rxR = 0;
+  // DIN TX ring (ISR consumer)
+  volatile uint8_t txBuf[TX_CAP];
+  volatile uint8_t txW = 0, txR = 0;
+  Parser   din;
+#if MIDI_HAS_USB
+  Parser   usb;
+  usbmidi::Encoder utx;             // USB-MIDI TX packetiser
+#endif
+  uint8_t  hostPorts = 0;           // ports an editor has spoken SysEx on (sticky)
 };
 inline State& S() { static State s; return s; }
 
@@ -115,23 +153,98 @@ inline uint8_t TxFree() { return TX_CAP - 1; }
 inline void HalWrite(uint8_t b) { sim_midi_out(b); }
 #endif
 
+// --- USB HAL (Teensy usb_midi core, raw event packets) ---------------------
+// The core (cores/usb_midi/usb.c) does enumeration, SOF flushing of the IN
+// endpoint and the endpoint config; we talk to the two bulk endpoints
+// directly (the core's own accessors are private and its read() path caps
+// SysEx at 60 bytes). Register sequences mirror usb_api.cpp.
+#if MIDI_HAS_USB
+inline bool UsbUp() { return usb_configuration && usb_sof_alive(); }
+
+// Queue one 4-byte event on the IN endpoint. The two 64-byte banks take 32
+// events; a pattern reply is ~52, so wait (interrupts on) for the host to
+// drain a bank, but never longer than ~3 ms and never once the bus has died
+// (SOF stopped) or the configuration dropped: then the event is dropped and
+// the caller moves on. Bounded by construction; the 303's boot-loop came from
+// a wait keyed only on the frame counter. The core's SOF ISR sends whatever
+// sits in the bank each 1 ms frame; a bank we fill is handed over at once.
+inline bool UsbSendEvent(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3) {
+  const uint32_t t0 = millis();
+  for (;;) {
+    uint8_t sreg = SREG;
+    cli();
+    if (!usb_configuration) { SREG = sreg; return false; }
+    UENUM = MIDI_TX_ENDPOINT;
+    if (UEINTX & (1 << RWAL)) {
+      UEDATX = b0; UEDATX = b1; UEDATX = b2; UEDATX = b3;
+      if (!(UEINTX & (1 << RWAL))) UEINTX = 0x3A;   // bank full: hand it to the host
+      SREG = sreg;
+      return true;
+    }
+    SREG = sreg;
+    if ((uint32_t)(millis() - t0) > 3 || !usb_sof_alive()) return false;
+  }
+}
+
+// Fetch one 4-byte event from the OUT endpoint; false when none is pending.
+inline bool UsbReadEvent(uint8_t* pkt) {
+  bool got = false;
+  uint8_t sreg = SREG;
+  cli();
+  if (usb_configuration) {
+    UENUM = MIDI_RX_ENDPOINT;
+    for (;;) {
+      uint8_t c = UEINTX;
+      if (c & (1 << RWAL)) {
+        pkt[0] = UEDATX; pkt[1] = UEDATX; pkt[2] = UEDATX; pkt[3] = UEDATX;
+        if (!(UEINTX & (1 << RWAL))) UEINTX = 0x6B;   // bank drained: release it
+        got = true;
+        break;
+      }
+      if (c & (1 << RXOUTI)) { UEINTX = 0x6B; continue; }   // empty bank: ack, look again
+      break;
+    }
+  }
+  SREG = sreg;
+  return got;
+}
+
+// Feed one output byte to the packetiser; sends a 4-byte event when complete.
+inline void UsbWrite(uint8_t b) {
+  State& s = S();
+  if (!UsbUp()) { s.utx.reset(); return; }             // port down: drop, resync
+  uint8_t ev[4];
+  if (usbmidi::Encode(s.utx, b, ev)) UsbSendEvent(ev[0], ev[1], ev[2], ev[3]);
+}
+#endif
+
 // --- output ----------------------------------------------------------------
-inline void Send(uint8_t b) { HalWrite(b); }
+inline void SendTo(uint8_t ports, uint8_t b) {
+#if MIDI_HAS_USB
+  if (ports & PORT_USB) UsbWrite(b);
+#endif
+  if (ports & PORT_DIN) HalWrite(b);
+}
+// Ports SysEx goes to: wherever an editor has spoken to us, else everywhere.
+inline uint8_t HostPorts() { uint8_t p = S().hostPorts; return p ? p : PORT_ALL; }
+inline void Send(uint8_t b) { SendTo(PORT_ALL, b); }
 inline void NoteOn (uint8_t note, uint8_t vel = 100) {
   Send((uint8_t)(0x90 | S().channel)); Send(note & 0x7F); Send(vel & 0x7F);
 }
 inline void NoteOff(uint8_t note) {
   Send((uint8_t)(0x80 | S().channel)); Send(note & 0x7F); Send(0);
 }
-// SysEx: F0 7D body... F7 (body bytes must be < 0x80).
+// SysEx: F0 7D body... F7 (body bytes must be < 0x80), to the editor port(s).
 inline void SendSysex(const uint8_t* body, uint8_t len) {
-  Send(0xF0); Send(0x7D);
-  for (uint8_t i = 0; i < len; ++i) Send(body[i] & 0x7F);
-  Send(0xF7);
+  const uint8_t p = HostPorts();
+  SendTo(p, 0xF0); SendTo(p, 0x7D);
+  for (uint8_t i = 0; i < len; ++i) SendTo(p, body[i] & 0x7F);
+  SendTo(p, 0xF7);
 }
-// Non-blocking variant for telemetry: dropped if the ring cannot take it whole.
+// Non-blocking variant for telemetry: dropped if the DIN ring (when DIN is a
+// destination) cannot take it whole. USB writes never block.
 inline bool TrySendSysex(const uint8_t* body, uint8_t len) {
-  if (TxFree() < (uint8_t)(len + 3)) return false;
+  if ((HostPorts() & PORT_DIN) && TxFree() < (uint8_t)(len + 3)) return false;
   SendSysex(body, len);
   return true;
 }
@@ -166,7 +279,7 @@ inline uint8_t Unpack7(const uint8_t* src, uint8_t n, uint8_t* dst, uint8_t cap)
 inline void Begin(uint8_t channel) { S().channel = channel & 0x0F; HalBegin(); }
 inline void SetChannel(uint8_t c) { S().channel = c & 0x0F; }
 inline uint8_t Channel() { return S().channel; }
-inline bool HostSeen() { return S().hostSeen; }
+inline bool HostSeen() { return S().hostPorts != 0; }
 inline void SetHandlers(const Handlers& h) { S().h = h; }
 
 inline void Dispatch(uint8_t status, uint8_t d1, uint8_t d2) {
@@ -181,45 +294,54 @@ inline void Dispatch(uint8_t status, uint8_t d1, uint8_t d2) {
   }
 }
 
-inline void Feed(uint8_t b) {
+inline void Feed(Parser& p, uint8_t port, uint8_t b) {
   State& s = S();
   if (b >= 0xF8) { if (s.h.realtime) s.h.realtime(b); return; }   // realtime: transparent
-  if (b == 0xF0) { s.inSx = true; s.sxDrop = false; s.sxLen = 0; s.status = 0; return; }
+  if (b == 0xF0) { p.inSx = true; p.sxDrop = false; p.sxLen = 0; p.status = 0; return; }
   if (b == 0xF7) {
-    if (s.inSx) {
-      s.inSx = false;
-      if (!s.sxDrop && s.sxLen >= 2 && s.sx[0] == 0x7D) {
-        s.hostSeen = true;
-        if (s.h.sysex) s.h.sysex(s.sx + 1, (uint8_t)(s.sxLen - 1));
+    if (p.inSx) {
+      p.inSx = false;
+      if (!p.sxDrop && p.sxLen >= 2 && p.sx[0] == 0x7D) {
+        s.hostPorts |= port;
+        if (s.h.sysex) s.h.sysex(p.sx + 1, (uint8_t)(p.sxLen - 1));
       }
     }
     return;
   }
   if (b & 0x80) {                       // status byte
-    s.inSx = false;
-    if (b >= 0xF0) { s.status = 0; s.need = 0; return; }   // other system common: ignore
-    s.status = b; s.nData = 0;
+    p.inSx = false;
+    if (b >= 0xF0) { p.status = 0; p.need = 0; return; }   // other system common: ignore
+    p.status = b; p.nData = 0;
     uint8_t hi = b & 0xF0;
-    s.need = (hi == 0xC0 || hi == 0xD0) ? 1 : 2;
+    p.need = (hi == 0xC0 || hi == 0xD0) ? 1 : 2;
     return;
   }
   // data byte
-  if (s.inSx) {
-    if (s.sxLen < SX_MAX) s.sx[s.sxLen++] = b; else s.sxDrop = true;
+  if (p.inSx) {
+    if (p.sxLen < SX_MAX) p.sx[p.sxLen++] = b; else p.sxDrop = true;
     return;
   }
-  if (!s.status) return;
-  s.data[s.nData++] = b;
-  if (s.nData >= s.need) {
-    Dispatch(s.status, s.data[0], s.need == 2 ? s.data[1] : 0);
-    s.nData = 0;                        // running status: keep s.status
+  if (!p.status) return;
+  p.data[p.nData++] = b;
+  if (p.nData >= p.need) {
+    Dispatch(p.status, p.data[0], p.need == 2 ? p.data[1] : 0);
+    p.nData = 0;                        // running status: keep p.status
   }
 }
-
 inline void Poll() {
+  State& s = S();
   int16_t b;
   uint8_t budget = RX_CAP;               // bound the work per pass
-  while (budget-- && (b = HalRead()) >= 0) Feed((uint8_t)b);
+  while (budget-- && (b = HalRead()) >= 0) Feed(s.din, PORT_DIN, (uint8_t)b);
+#if MIDI_HAS_USB
+  // Drain up to a full endpoint bank (2 x 64 B = 32 packets) plus slack per
+  // pass; a 0x12 pattern write is ~52 packets and finishes on the next pass.
+  uint8_t pkt[4];
+  for (uint8_t n = 0; n < 48 && UsbReadEvent(pkt); ++n) {
+    uint8_t len = usbmidi::CinLen(pkt[0]);
+    for (uint8_t i = 0; i < len; ++i) Feed(s.usb, PORT_USB, pkt[1 + i]);
+  }
+#endif
 }
 
 } // namespace midi

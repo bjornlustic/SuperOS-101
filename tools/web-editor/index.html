@@ -135,7 +135,7 @@
     <div class="group"><span class="lbl">101 &#8594; In</span><div class="group-inner"><select id="selIn" disabled></select></div></div>
     <div class="group"><div class="group-inner">
       <button class="btn" id="btnFwSwitch" disabled>Switch firmware</button>
-      <button class="btn" id="btnUpdate" disabled title="Pick an app-nousb-update.syx: the unit reboots into the SysEx bootloader and the editor sends the pages">Update OS&#8230;</button>
+      <button class="btn" id="btnUpdate" disabled title="Pick an app-update.syx: the unit reboots into the SysEx bootloader (over USB it re-appears as 'SuperOS-101 Bootloader' and the editor follows it) and the editor sends the pages">Update OS&#8230;</button>
       <input type="file" id="fileSyx" accept=".syx" style="display:none" />
       <span class="status" id="fwStatus">Firmware: unknown</span>
     </div></div>
@@ -275,7 +275,12 @@ function fillPorts() {
   so.disabled = !outs.length; si.disabled = !ins.length;
   const pick = (sel, list, prev) => {
     if (prev && list.find(p => p.id === prev)) sel.value = prev;
-    else { const ux = list.find(p => /UX16|SH-?101|SuperOS/i.test(p.name)); if (ux) sel.value = ux.id; }
+    else {
+      // Prefer the unit itself over its bootloader port (both are "SuperOS-101...")
+      const ux = list.find(p => /UX16|SH-?101|SuperOS/i.test(p.name) && !/Bootloader/i.test(p.name))
+              || list.find(p => /UX16|SH-?101|SuperOS/i.test(p.name));
+      if (ux) sel.value = ux.id;
+    }
   };
   pick(so, outs, prevO); pick(si, ins, prevI);
   selectPorts();
@@ -431,17 +436,29 @@ $('fileSyx').onchange = async ev => {
   }
   if (!confirm('Update the unit with ' + f.name + ' (' + pages.length + ' pages)? The unit reboots into the bootloader; do not power off.')) return;
   log('entering bootloader...'); sendSysex([0x4A]);
-  await new Promise(r => setTimeout(r, 1500));
+  // Over DIN the bootloader listens on the same port. Over USB the app's port
+  // disappears and the bootloader enumerates as its own device
+  // ("SuperOS-101 Bootloader"): wait for it (up to 6 s) and send there.
+  let target = midiOut;
+  for (let i = 0; i < 24; ++i) {
+    await new Promise(r => setTimeout(r, 250));
+    const bl = [...midiAccess.outputs.values()].find(p => /SuperOS-101 Bootloader/i.test(p.name) && p.state === 'connected');
+    if (bl) { target = bl; break; }
+    if (i === 5 && !/SuperOS/i.test(midiOut ? midiOut.name : '')) break;   // DIN interface: no new port coming
+  }
+  if (target !== midiOut) log('bootloader port: ' + target.name);
+  else if (!midiOut || midiOut.state !== 'connected') { log('lost the MIDI port; power-cycle the unit holding LOAD+PLAY and retry', 'err'); return; }
   let n = 0;
   for (const m of msgs) {
-    sendRaw(m);
+    target.send(new Uint8Array(m));
     // DIN: 300-byte page = ~96 ms of wire time; the bootloader spends ~10 ms in
-    // SPM after each page with the UART unread, so leave a gap.
+    // SPM after each page with the UART unread, so leave a gap. USB has flow
+    // control (the bootloader NAKs while it writes) but the same pacing is harmless.
     await new Promise(r => setTimeout(r, m.length > 16 ? 140 : 60));
     if (m[2] === 0x01) log('page ' + (++n) + '/' + pages.length);
   }
   log('update sent; the unit restarts the app', 'ok');
-  setTimeout(() => probe(10), 2000);
+  setTimeout(() => probe(10), 3000);
 };
 
 // ---------------------------------------------------------------------------

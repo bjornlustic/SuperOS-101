@@ -23,6 +23,7 @@
 #include <iostream>
 
 #include <deque>
+#include <vector>
 
 // Combined-build hooks (src/combined.h / boot.cpp / emu101.h / midiclock.h)
 uint8_t combined_current_fw();
@@ -30,6 +31,7 @@ void RebootTo(uint8_t fw);
 namespace emu101 { bool available(); }
 #include "midiclock.h"   // inline; resolved via -I ../src
 #include "midi.h"
+#include "usbmidi_codec.h"
 #include "flash_persist.h"
 static const uint8_t SIM_FW_EMU = 1;
 
@@ -446,6 +448,40 @@ static int SelfTest() {
   sim::g_keys = 1UL << 5; RunLoops(3); sim::g_keys = 0;
   CHECK(sim::g_sh[1] == rngBefore, "scans left the VCO-range S/H untouched");
   (void)cvBefore;
+
+  // USB-MIDI event codec (src/usbmidi_codec.h): every byte stream the
+  // firmware emits must survive encode -> CIN-length decode unchanged, and
+  // realtime bytes must pass straight through, even inside a SysEx.
+  puts("USB-MIDI codec:");
+  {
+    std::vector<uint8_t> in, out;
+    auto sysex = [&](uint8_t bodyLen) {           // F0 7D <bodyLen bytes> F7
+      in.push_back(0xF0); in.push_back(0x7D);
+      for (uint8_t i = 0; i < bodyLen; ++i) in.push_back((uint8_t)(0x10 + i));
+      in.push_back(0xF7);
+    };
+    in.insert(in.end(), {0x90, 60, 100, 0x80, 60, 0, 0xC0, 5, 0xB0, 7, 127});
+    for (uint8_t n = 0; n <= 9; ++n) sysex(n);    // 0..9 body bytes: every CIN 5/6/7 tail
+    in.insert(in.end(), {0x90, 61, 90});
+    usbmidi::Encoder enc; uint8_t ev[4];
+    size_t nEv = 0;
+    for (uint8_t b : in) if (usbmidi::Encode(enc, b, ev)) {
+      ++nEv;
+      for (uint8_t i = 0; i < usbmidi::CinLen(ev[0]); ++i) out.push_back(ev[1 + i]);
+    }
+    CHECK(out == in, "encode -> decode reproduces the byte stream (notes, PC, CC, SysEx 0..9)");
+    CHECK(enc.n == 0 && !enc.sx, "encoder idle after a complete stream");
+    // realtime inside a SysEx: emitted at once as its own event
+    usbmidi::Encoder e2; std::vector<uint8_t> o2; size_t rtAt = 99;
+    const uint8_t mixed[] = {0xF0, 0x7D, 0x11, 0xF8, 0x12, 0x13, 0x14, 0xF7};
+    for (uint8_t b : mixed) if (usbmidi::Encode(e2, b, ev)) {
+      if (ev[0] == 0x0F && ev[1] == 0xF8) rtAt = o2.size();
+      else for (uint8_t i = 0; i < usbmidi::CinLen(ev[0]); ++i) o2.push_back(ev[1 + i]);
+    }
+    const std::vector<uint8_t> want = {0xF0, 0x7D, 0x11, 0x12, 0x13, 0x14, 0xF7};
+    CHECK(o2 == want && rtAt == 3, "realtime byte inside a SysEx passes through at once, SysEx intact");
+    (void)nEv;
+  }
 
   // MIDI clock sync. The engine is still in sequencer-play mode with the
   // 3-step sequence (note 0, note 2, rest) from the tests above.
