@@ -29,14 +29,19 @@ uint8_t combined_current_fw();
 void RebootTo(uint8_t fw);
 namespace emu101 { bool available(); }
 #include "midiclock.h"   // inline; resolved via -I ../src
+#include "midi.h"
+#include "flash_persist.h"
 static const uint8_t SIM_FW_EMU = 1;
 
-// MIDI-in byte queue, drained by midiclk::Poll() via sim_midi_pop().
+// MIDI-in byte queue, drained by midi::Poll() via sim_midi_pop().
 static std::deque<uint8_t> g_midiQ;
 extern "C" int16_t sim_midi_pop() {
   if (g_midiQ.empty()) return -1;
   int16_t b = g_midiQ.front(); g_midiQ.pop_front(); return b;
 }
+// MIDI-out capture (device -> host), inspected by the self-test / `midi out`.
+static std::deque<uint8_t> g_midiOut;
+extern "C" void sim_midi_out(uint8_t b) { g_midiOut.push_back(b); if (g_midiOut.size() > 4096) g_midiOut.pop_front(); }
 
 // RebootTo() in the sim lands here: back to boot, firmware re-dispatches.
 static jmp_buf g_rebootJmp;
@@ -159,6 +164,38 @@ void eeprom_update_byte(uint8_t* addr, uint8_t value) {
   EepromLoad();
   size_t a = (size_t)(uintptr_t)addr;
   if (a < EE_SIZE && g_eeprom[a] != value) { g_eeprom[a] = value; EepromFlush(); }
+}
+
+// ---------------------------------------------------------------------------
+// Flash arena shim (file-backed, 256-byte pages; see src/flash_eeprom.h)
+// ---------------------------------------------------------------------------
+static const size_t FL_PAGES = 0x200, FL_PAGE = 256;
+static uint8_t g_flash[FL_PAGES * FL_PAGE];
+static bool    g_flLoaded = false;
+static std::string FlashPath() {
+  const char* p = getenv("SIM_FLASH");
+  return p ? p : "sim-flash.bin";
+}
+static void FlashLoad() {
+  if (g_flLoaded) return;
+  g_flLoaded = true;
+  memset(g_flash, 0xFF, sizeof(g_flash));
+  if (FILE* f = fopen(FlashPath().c_str(), "rb")) { size_t n = fread(g_flash, 1, sizeof(g_flash), f); (void)n; fclose(f); }
+}
+static void FlashFlush() {
+  if (FILE* f = fopen(FlashPath().c_str(), "wb")) { fwrite(g_flash, 1, sizeof(g_flash), f); fclose(f); }
+}
+extern "C" uint8_t sim_flash_program(uint16_t page, const uint8_t* buf) {
+  FlashLoad();
+  if (page < 0x100 || page > 0x1DF) return 1;   // same guard as flash_service.c
+  memcpy(g_flash + (size_t)page * FL_PAGE, buf, FL_PAGE);
+  FlashFlush();
+  return 0;
+}
+extern "C" void sim_flash_read(uint16_t page, uint8_t* buf) {
+  FlashLoad();
+  if (page >= FL_PAGES) { memset(buf, 0xFF, FL_PAGE); return; }
+  memcpy(buf, g_flash + (size_t)page * FL_PAGE, FL_PAGE);
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +341,8 @@ static int g_fails = 0;
 static int SelfTest() {
   setenv("SIM_EEPROM", "sim-selftest-eeprom.bin", 1);
   remove("sim-selftest-eeprom.bin");
+  setenv("SIM_FLASH", "sim-selftest-flash.bin", 1);
+  remove("sim-selftest-flash.bin");
   g_rebootArmed = true;
   setup();
   RunLoops(2);
@@ -354,12 +393,51 @@ static int SelfTest() {
   sim::g_keys = 1UL << 2; RunLoops(1); sim::g_keys = 0; RunLoops(1);
   sim::g_buttons = 1u << 7; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // KEY-TRANSP = rest
   sim::g_buttons = 1u << 0; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // LOAD (save)
-  CHECK(eeprom_read_byte((const uint8_t*)0x10) == 0x51 &&
-        eeprom_read_byte((const uint8_t*)0x11) == 3, "sequence saved to EEPROM (magic + len 3)");
+  {
+    uint8_t buf[101]; uint8_t n = persist::Store().read(persist::FB_PATTERN_BASE + 0, buf, sizeof(buf));
+    CHECK(n == 4 && buf[0] == 3, "pattern 0 saved to the flash arena (len 3)");
+  }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
   ClockTick(); CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step -> note 2 (CV 19)");
   ClockTick(); CHECK(!GateOn(), "seq rest -> gate off");
   ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "seq wraps -> note 0 (CV 17)");
+
+  // MIDI in/out: note 53 = key 0 (CV 17); the engine echoes notes on the OUT.
+  puts("MIDI:");
+  sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY off
+  g_midiOut.clear();
+  for (uint8_t b : {0x90, 53, 100}) g_midiQ.push_back(b); RunLoops(1);
+  CHECK(sim::g_sh[0] == 17 && GateOn(), "MIDI note 53 -> key 0, CV 17, gate on");
+  CHECK(g_midiOut.size() >= 3 && g_midiOut[0] == 0x90 && g_midiOut[1] == 53, "note echoed on MIDI OUT (note on 53)");
+  for (uint8_t b : {0x80, 53, 0}) g_midiQ.push_back(b); RunLoops(1);
+  CHECK(!GateOn(), "MIDI note off -> gate off");
+  CHECK(g_midiOut.size() >= 6 && g_midiOut[3] == 0x80 && g_midiOut[4] == 53, "note off echoed on MIDI OUT");
+  for (uint8_t b : {0x90, 40, 100}) g_midiQ.push_back(b); RunLoops(1);   // below the keyboard
+  CHECK(sim::g_sh[0] == 4 && GateOn(), "MIDI note 40 (out of key range) -> CV 4 mono override");
+  for (uint8_t b : {0x80, 40, 0}) g_midiQ.push_back(b); RunLoops(1);
+  // SysEx: config request, pattern round trip via 0x12/0x10.
+  g_midiOut.clear();
+  for (uint8_t b : {0xF0, 0x7D, 0x20, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
+  CHECK(g_midiOut.size() > 8 && g_midiOut[0] == 0xF0 && g_midiOut[1] == 0x7D && g_midiOut[2] == 0x21 && g_midiOut[3] == 0,
+        "SysEx 0x20 -> 0x21 config reply (fw 0)");
+  {
+    uint8_t raw[4] = {3, 20, 0x40 | 0, 0x80 | 22};   // len 3: note 20, rest, tie 22
+    uint8_t x = 0; for (uint8_t i = 0; i < 4; ++i) x ^= raw[i];
+    uint8_t packed[8]; uint8_t n = midi::Pack7(raw, 4, packed);
+    g_midiOut.clear();
+    for (uint8_t b : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x12, (uint8_t)5, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)}) g_midiQ.push_back(b);
+    for (uint8_t i = 0; i < n; ++i) g_midiQ.push_back(packed[i]);
+    g_midiQ.push_back(0xF7); RunLoops(1);
+    CHECK(g_midiOut.size() == 5 && g_midiOut[2] == 0x14 && g_midiOut[3] == 0, "SysEx 0x12 set pattern 5 -> ack 0");
+    g_midiOut.clear();
+    for (uint8_t b : {0xF0, 0x7D, 0x10, 5, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
+    uint8_t body[8] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(g_midiOut.size() - 7), body, sizeof(body));
+    CHECK(g_midiOut[2] == 0x11 && g_midiOut[3] == 5 && m == 4 && memcmp(body, raw, 4) == 0, "SysEx 0x10 -> 0x11 returns the same pattern");
+    for (int i = 0; i < 2000; ++i) { delayMicroseconds(1000); RunLoops(1); }   // > 500 ms quiet: deferred flush
+    uint8_t buf[101]; uint8_t k = persist::Store().read(persist::FB_PATTERN_BASE + 5, buf, sizeof(buf));
+    CHECK(k == 4 && buf[0] == 3 && buf[3] == (0x80 | 22), "pattern 5 flushed to the flash arena");
+  }
+  sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY back on (pattern 0)
 
   // Firmware invariant: a scan must never corrupt a held S/H (route 11 only).
   puts("invariants:");

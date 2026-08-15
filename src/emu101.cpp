@@ -17,6 +17,8 @@
 #include "hw.h"
 #include "menu.h"
 #include "midiclock.h"
+#include "midi.h"
+#include "sysex.h"
 
 #ifdef __AVR__
 #include <avr/pgmspace.h>
@@ -45,8 +47,14 @@ namespace emu101 {
 
 bool available() { return ROM101_PRESENT != 0; }
 
+static void OnSysex(const uint8_t* body, uint8_t len) { sysex::HandleCommon(body, len); }
+static void OnRealtime(uint8_t b) { midiclk::OnRealtime(b); }
+
 void setup() {
   hw::Init();
+  midi::Handlers h;
+  h.sysex = OnSysex; h.realtime = OnRealtime;
+  midi::SetHandlers(h);
   // 80C49 reset state: all port latches high (gate off, LEDs per reset).
   BUS_PORT = 0xFF;
   P2_PORT  = 0xFF;
@@ -74,7 +82,7 @@ void loop() {
   else if ((int32_t)(now - s_dueUs) > 10000) s_dueUs = now;
 #endif
 
-  midiclk::Poll();   // keep the divided clock (emulated T1, see mcs48_t1) live
+  midi::Poll();   // keep the divided clock (emulated T1, see mcs48_t1) live + SysEx
 
   // Config-menu combo poll every ~10 ms: scan the buttons ourselves, without
   // disturbing the BUS latch the emulated ROM left behind (route 11 scans

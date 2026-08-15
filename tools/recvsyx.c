@@ -197,7 +197,20 @@ static void read_proc(const MIDIPacketList *pl, void *ref, void *src) {
       unsigned char c = p->data[j];
       if (c >= 0xF8) continue;                       /* realtime: ignore */
       if (c == 0xF0) { g_in_sysex = 1; g_len = 0; }
-      if (!g_in_sysex) continue;
+      if (!g_in_sysex) {                             /* channel messages: one line each */
+        static unsigned char st = 0, d[2]; static int nd = 0;
+        if (c & 0x80) { st = c; nd = 0; }
+        else if (st) {
+          d[nd++] = c;
+          int need = ((st & 0xF0) == 0xC0 || (st & 0xF0) == 0xD0) ? 1 : 2;
+          if (nd >= need) {
+            if (need == 2) printf("[midi] %02X %02X %02X\n", st, d[0], d[1]);
+            else           printf("[midi] %02X %02X\n", st, d[0]);
+            fflush(stdout); nd = 0;
+          }
+        }
+        continue;
+      }
       if (g_len < sizeof g_buf) g_buf[g_len++] = c;
       if (c == 0xF7) { g_in_sysex = 0; handle_sysex(g_buf, g_len); }
       else if (c >= 0x80 && c != 0xF0) g_in_sysex = 0;  /* interrupted */

@@ -10,6 +10,8 @@
 #include "menu.h"
 #include "emu101.h"
 #include "midiclock.h"
+#include "midi.h"
+#include "sysex.h"
 
 #ifdef __AVR__
 #include <avr/wdt.h>
@@ -32,6 +34,11 @@ extern "C" void usb_init(void) {}
 #endif
 
 static uint8_t g_fw = FW_SUPEROS;
+
+#ifdef __AVR__
+ISR(USART1_RX_vect)  { midi::HalIsrRx(); }
+ISR(USART1_UDRE_vect){ midi::HalIsrTx(); }
+#endif
 
 uint8_t combined_current_fw() { return g_fw; }
 
@@ -100,7 +107,8 @@ void setup() {
   wdt_disable();
 #endif
   hw::Init();
-  midiclk::Begin();   // UART + saved sync/division settings (both firmwares)
+  midi::Begin(sysex::LoadChannel());   // UART1 rings + ISRs (both firmwares)
+  midiclk::Begin();                    // saved sync/division settings
   uint8_t sel = eeprom_read_byte(EE_FW_SELECT);
   g_fw = (sel == FW_EMU && emu101::available()) ? FW_EMU : FW_SUPEROS;
   if (menu::PowerOnComboHeld()) menu::Enter();

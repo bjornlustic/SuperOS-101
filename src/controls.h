@@ -63,6 +63,7 @@ struct Buttons {
   }
   bool down(Button b)    const { return (now  >> b) & 1; }              // held
   bool pressed(Button b) const { return ((now & ~prev) >> b) & 1; }     // rising edge
+  bool released(Button b) const { return ((prev & ~now) >> b) & 1; }    // falling edge
 };
 
 } // namespace controls

@@ -9,8 +9,9 @@
 //   0x001        settings magic (EE_CFG_MAGIC_VAL when initialized)
 //   0x002        settings flags: bit0 = MIDI clock sync on
 //   0x003        MIDI clock division index (midiclock.h table)
-//   0x010..0x0DA SuperOS sequencer store (magic + len + 100 notes + 100 types)
-//   0x0DB..      free (future: emulator battery-RAM persistence, user ROM store)
+//   0x004        MIDI channel 0..15 (sysex.h)
+//   0x010..      free (patterns live in the flash arena, flash_persist.h;
+//                future: emulator battery-RAM persistence, user ROM store)
 #pragma once
 #include <stdint.h>
 
@@ -18,8 +19,8 @@
 #define EE_CFG_MAGIC ((uint8_t*)0x001)
 #define EE_CFG_FLAGS ((uint8_t*)0x002)
 #define EE_CFG_DIV   ((uint8_t*)0x003)
+#define EE_CFG_CHAN  ((uint8_t*)0x004)
 static const uint8_t  EE_CFG_MAGIC_VAL = 0x4D;   // 'M'
-static const uint16_t EE_SEQ_BASE = 0x010;
 
 static const uint8_t FW_SUPEROS = 0;   // also 0xFF (virgin EEPROM)
 static const uint8_t FW_EMU     = 1;
