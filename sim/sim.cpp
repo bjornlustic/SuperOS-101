@@ -50,7 +50,7 @@ extern "C" void sim_reboot() {
 // ---------------------------------------------------------------------------
 // AVR register storage
 // ---------------------------------------------------------------------------
-uint8_t sim_ddrc, sim_ddrb, sim_portb, sim_ddrf, sim_portf = 0x80, sim_ddrd = 0xFF;
+uint8_t sim_ddrc, sim_ddrb, sim_portb, sim_ddrf, sim_portf = 0x80, sim_ddrd = 0xFF, sim_portd;
 
 // ---------------------------------------------------------------------------
 // Simulated synth state (what the analog board / panel present to the CPU)

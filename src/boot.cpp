@@ -14,6 +14,7 @@
 #ifdef __AVR__
 #include <avr/wdt.h>
 #include <avr/eeprom.h>
+#include <util/delay.h>
 #else
 #include <avr/eeprom.h>          // sim shim
 extern "C" void sim_reboot();    // sim: longjmp back to boot (sim.cpp)
@@ -22,9 +23,33 @@ extern "C" void sim_reboot();    // sim: longjmp back to boot (sim.cpp)
 void superos_setup();
 void superos_loop();
 
+#if defined(__AVR__) && defined(USB_DISABLED)
+// app-nousb: USB_DISABLED makes the Teensy core compile no USB code, but
+// pins_teensy.c still calls usb_init() unconditionally. With the module
+// never enabled, the AVR's USB controller stays in its reset state
+// (detached, clock frozen), so VBUS events cannot disturb the loop.
+extern "C" void usb_init(void) {}
+#endif
+
 static uint8_t g_fw = FW_SUPEROS;
 
 uint8_t combined_current_fw() { return g_fw; }
+
+// SysEx F0 7D 4A F7 (midiclock.h): jump to the boot section without a reset
+// so GPIOR0 survives; the bootloader sees BOOT_MAGIC and stays resident.
+void EnterBootloader() {
+#ifdef __AVR__
+  cli();
+  UDCON |= (1 << DETACH);        // drop USB cleanly if the core brought it up
+  _delay_ms(30);                 // host must register the detach first
+  USBCON = 0;
+  PLLCSR = 0;
+  GPIOR0 = 0xB7;                 // BOOT_MAGIC, keep in sync with bootloader/bootload.c
+  asm volatile("jmp 0x1F000");   // boot section (BOOTRST, BOOTSZ=01)
+#else
+  sim_reboot();                  // sim has no bootloader; behave like a reset
+#endif
+}
 
 void RebootTo(uint8_t fw) {
   eeprom_update_byte(EE_FW_SELECT, fw);

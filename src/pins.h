@@ -49,8 +49,9 @@ enum ScanCol : uint8_t {
 // ---------------------------------------------------------------------------
 // PORTB = P1 (P10–P17), input — scan rows
 // ---------------------------------------------------------------------------
-// The SH-101 has ~50 kΩ external pull-ups on P1; a closed switch reads 0
-// (active-low). We use plain inputs (no internal pull-ups) to match.
+// The original's "50K pullups" on P1 (SH101.asm:63) are the 80C49's internal
+// quasi-bidirectional port pull-ups — there are none on the SH-101 board, so
+// we enable the AVR's internal pull-ups to match. A closed switch reads 0.
 // ISP (SCK/MOSI/MISO = PB1/2/3) shares this port but is only active during
 // programming, exactly as on the 303.
 #define P1_PIN     PINB

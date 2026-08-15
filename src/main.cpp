@@ -90,10 +90,32 @@ void superos_loop() {
   // too narrow for the LFO reset circuit.
   if (out.clockReset || (midiclk::SyncOn() && divEdge))
     g_rstUntilMs = millis() + 2;
-  uint8_t p2 = 0x00;
+#ifdef DEBUG
+  // Bench diagnostics on USB serial (app-debug build only): raw pin states
+  // every 500 ms, so wiring faults are visible without a scope.
+  // Only when a terminal is open (DTR): an unopened host connection makes
+  // Serial writes stall the loop, and a stalled loop lets the S/H caps
+  // droop — audible as rhythmic pitch/gate artifacts at the print rate.
+  static uint32_t s_dbgNext = 0;
+  if (Serial && millis() >= s_dbgNext) {
+    s_dbgNext = millis() + 500;
+    Serial.print(F("PIND=0x"));  Serial.print(PIND, HEX);
+    Serial.print(F(" T0="));     Serial.print((PIND >> T0_HOLD_BIT) & 1);
+    Serial.print(F(" btnraw=0x")); Serial.print(g_buttons.now, HEX);
+    Serial.print(F(" hold="));   Serial.print(g_buttons.hold);
+    Serial.print(F(" keys=0x")); Serial.println(keys, HEX);
+  }
+#endif
+  // LED drive (SH101.asm:90-128): the two direct LEDs have OPPOSITE
+  // polarities — HOLD is lit by P25=0, KEY-TRANSPOSE by P26=1 (extra
+  // inverter TR10). Function-LED select 0 = all off, 1-5 = exactly one of
+  // LOAD/PLAY/DOWN/U&D/UP. Idle = everything off: select 0, P25=1, P26=0.
+  uint8_t p2 = (uint8_t)(1u << P2_LED_HOLD);
+  if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
   if (!out.gate)       p2 |= (uint8_t)(1u << P2_GATE);      // bit=1 -> gate OFF
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
     p2 |= (uint8_t)(1u << P2_CLOCK_RST);
-  // TODO: function-LED one-hot via IC8 4552 (P20–P22) + HOLD/KEY-TRANSP LEDs.
+  // TODO: arp/seq mode on the function-LED select (1-5), KT LED (P26=1) when
+  // KEY-TRANSPOSE lands.
   hw::P2Write(p2);
 }

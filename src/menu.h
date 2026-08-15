@@ -47,7 +47,7 @@ inline void Enter()  {
 // Called every pass by whichever firmware runs, with buttons in 1=pressed form.
 inline void NotifyButtons(uint8_t buttons, uint32_t nowMs) {
   const uint8_t combo = (uint8_t)((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
-  if ((buttons & combo) == combo) {
+  if (buttons == combo) {   // exact: all-pressed (floating P1) must not enter
     if (!S().comboStart) S().comboStart = nowMs ? nowMs : 1;
     else if (!S().active && nowMs - S().comboStart >= COMBO_MS) Enter();
   } else {
@@ -57,8 +57,9 @@ inline void NotifyButtons(uint8_t buttons, uint32_t nowMs) {
 
 inline bool PowerOnComboHeld() {
   uint8_t b = hw::ScanRead(COL_BUTTONS);
-  return (b & ((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS)))
-         ==   ((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
+  // Exact match, not a mask: a floating/unwired P1 reads all-pressed and
+  // must not false-enter the menu (same guard as the bootloader's combo).
+  return b == ((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
 }
 
 // One menu pass; call instead of the firmware loop while Active().
@@ -77,8 +78,11 @@ inline void Poll() {
 
   // Gate off, portamento off; HOLD LED on (P25=0 -> TR16 off -> D41 lit);
   // function LED one-hot: 1 = LOAD (emulator running), 2 = PLAY (SuperOS);
-  // KEY-TRANSP LED (P26=1 -> lit) = MIDI clock sync on.
-  uint8_t p2 = (uint8_t)((1u << P2_GATE) | (1u << P2_PORTA_OFF));
+  // KEY-TRANSP LED (P26=1 -> lit, via inverter TR10; HOLD is the opposite
+  // polarity, P25=1 -> off) = MIDI clock sync on. Function LED 1 (LOAD) =
+  // emulator selected, 2 (PLAY) = SuperOS.
+  uint8_t p2 = (uint8_t)((1u << P2_GATE) | (1u << P2_PORTA_OFF) |
+                         (1u << P2_LED_HOLD));
   p2 |= (combined_current_fw() == FW_EMU) ? 1 : 2;
   if (midiclk::SyncOn()) p2 |= (uint8_t)(1u << P2_LED_KTRANS);
   hw::P2Write(p2);

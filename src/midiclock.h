@@ -30,6 +30,11 @@ struct State {
   uint8_t tick    = 0;      // 0..ticks-1 within the current division
   bool    edge    = false;  // division boundary since last Consume
   bool    started = false;  // 0xFA received since last Consume
+  // Minimal SysEx tracker: only F0 7D 4A F7 (enter bootloader) is acted on.
+  bool    sx      = false;  // inside F0..F7
+  bool    sxGood  = false;  // body still short enough to be ours
+  uint8_t sxLen   = 0;
+  uint8_t sxBuf[2] = {0, 0};
 };
 inline State& S() { static State s; return s; }
 
@@ -89,7 +94,26 @@ inline void Poll() {
       case 0xFA: S().running = true; S().tick = 0; S().started = true; break;
       case 0xFB: S().running = true; break;
       case 0xFC: S().running = false; break;
-      default: break;
+      case 0xF0: S().sx = true; S().sxGood = true; S().sxLen = 0; break;
+      case 0xF7:
+        if (S().sx) {
+          S().sx = false;
+          // F0 7D 4A F7 -> park BOOT_MAGIC and jump to the SysEx bootloader
+          if (S().sxGood && S().sxLen == 2 &&
+              S().sxBuf[0] == 0x7D && S().sxBuf[1] == 0x4A)
+            EnterBootloader();   // does not return on hardware
+        }
+        break;
+      default:
+        if ((uint8_t)b < 0x80) {              // data byte
+          if (S().sx) {
+            if (S().sxLen < 2) S().sxBuf[S().sxLen++] = (uint8_t)b;
+            else               S().sxGood = false;   // longer than ours
+          }
+        } else if ((uint8_t)b < 0xF8) {
+          S().sx = false;                     // non-realtime status aborts SysEx
+        }
+        break;
     }
   }
 }

@@ -10,8 +10,10 @@
  *
  * Entry: every reset lands here (BOOTRST) and jumps straight to the app
  * unless (a) the app parked BOOT_MAGIC in GPIOR0 and jumped here (SysEx
- * F0 7D 4A F7 in the app, no reset, so GPIOR0 survives), (b) HOLD +
- * KEY-TRANSPOSE are held at power-on, or (c) the app section is blank.
+ * F0 7D 4A F7 in the app, no reset, so GPIOR0 survives), (b) LOAD + PLAY
+ * are held at power-on (HOLD + KEY-TRANSPOSE is taken: it is the app's
+ * config-menu combo, and the bootloader runs first), or (c) the app
+ * section is blank.
  *
  * Board differences from the 303 (see src/pins.h):
  *   PORTC = BUS (DB0-7, active-low data + 4052 route + scan commons)
@@ -29,7 +31,15 @@
 #include <util/delay.h>
 #include <stdint.h>
 
+/* NO_USB (env:bootloader-nousb): DIN MIDI is the only transport; usb_boot.c
+ * is excluded from the build and its entry points become no-ops. */
+#ifdef NO_USB
+#define usb_boot_init()
+#define usb_boot_task()
+#define usb_boot_detach()
+#else
 #include "usb_boot.h"
+#endif
 
 #define APP_ADDRESS 0x0000
 #define PAGE_SIZE SPM_PAGESIZE
@@ -48,9 +58,9 @@
 /* BUS scan column: DB5 low = function buttons; DB6/7 high = route 11
  * (disconnected), so the scan can never corrupt a held S/H CV. */
 #define SCAN_BUTTONS 0xDF
-/* P1 rows (PINB), 0 = pressed: HOLD = bit 5, KEY-TRANSPOSE = bit 7 */
-#define BTN_HOLD_BIT 5
-#define BTN_KEYTRANS_BIT 7
+/* P1 rows (PINB), 0 = pressed: LOAD = bit 0, PLAY = bit 1 */
+#define BTN_LOAD_BIT 0
+#define BTN_PLAY_BIT 1
 
 /* Hardware enters the boot section at 0x1F000. This stub is pinned there by
  * the linker (.boot_entry); it establishes the C environment the app or
@@ -208,10 +218,11 @@ int main(void) {
   in_sysex = 0;
   count = 0;
 
-  // BUS output, idle 0xFF (data 0 active-low, route 11); P1 input, no
-  // pull-ups (external ~50k); P2 output, gate OFF + portamento off.
+  // BUS output, idle 0xFF (data 0 active-low, route 11); P1 input with
+  // internal pull-ups (the original's "50k pullups" were inside the 80C49 —
+  // the board has none); P2 output, gate OFF + portamento off.
   DDRC = 0xFF; PORTC = 0xFF;
-  DDRB = 0x00; PORTB = 0x00;
+  DDRB = 0x00; PORTB = 0xFF;
   DDRF = 0xFF; PORTF = (1 << P2_GATE) | (1 << P2_PORTA_OFF);
   uart_init();
 
@@ -222,11 +233,16 @@ int main(void) {
     stay = 1;
   }
 
-  // hold HOLD + KEY-TRANSPOSE at power-on to stay in the bootloader
+  // hold LOAD + PLAY at power-on to stay in the bootloader (pull-ups are
+  // already on). Every other row must read released: a floating or
+  // unplugged P1 reads all-pressed, which must never trap the unit here.
   PORTC = SCAN_BUTTONS;
   _delay_ms(1);
-  if (!(PINB & (1 << BTN_HOLD_BIT)) && !(PINB & (1 << BTN_KEYTRANS_BIT)))
-    stay = 1;
+  {
+    uint8_t combo = (1 << BTN_LOAD_BIT) | (1 << BTN_PLAY_BIT);
+    if ((uint8_t)(PINB ^ combo) == 0xFF)   /* combo low, all others high */
+      stay = 1;
+  }
   PORTC = 0xFF;
 
   if (!stay)

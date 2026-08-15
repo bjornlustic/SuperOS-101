@@ -21,7 +21,7 @@ uint8_t ReadPinD();  // PIND — T1 clock (bit 0), T0 HOLD (bit 1, active-low)
 
 } // namespace sim
 
-extern uint8_t sim_ddrc, sim_ddrb, sim_portb, sim_ddrf, sim_portf, sim_ddrd;
+extern uint8_t sim_ddrc, sim_ddrb, sim_portb, sim_ddrf, sim_portf, sim_ddrd, sim_portd;
 
 #define PORTC (sim::busPort)
 #define DDRC  sim_ddrc
@@ -31,6 +31,7 @@ extern uint8_t sim_ddrc, sim_ddrb, sim_portb, sim_ddrf, sim_portf, sim_ddrd;
 #define PORTF sim_portf
 #define DDRF  sim_ddrf
 #define DDRD  sim_ddrd
+#define PORTD sim_portd
 #define PIND  (sim::ReadPinD())
 
 void delayMicroseconds(uint32_t us);

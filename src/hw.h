@@ -14,26 +14,37 @@ namespace hw {
 // Settle times. The original's CPU-execution settle is only a few µs; on the analog
 // side the R-2R ladder + 4052 sample/hold RC dominate. MEASURE on the real board and
 // raise these to whatever the S/H needs to acquire/settle (TODO in docs/HARDWARE.md).
-static const uint8_t SETTLE_LADDER_US  = 5;  // after presenting data, before connecting S/H
-static const uint8_t SETTLE_ACQUIRE_US = 10; // S/H acquisition while connected
-static const uint8_t SETTLE_SCAN_US    = 3;  // column-low to P1-read settle
+// Bench finding (first hardware, 2026-08-14): 10 µs acquire left the S/H
+// caps near 0 V — gate fired but the VCO sat sub-audio ("gate but no note").
+// 100 µs ≈ 5-10 RC of the 4052 Ron into the S/H cap; still MEASURE and trim.
+static const uint8_t SETTLE_LADDER_US  = 10;  // after presenting data, before connecting S/H
+static const uint8_t SETTLE_ACQUIRE_US = 100; // S/H acquisition while connected
+static const uint8_t SETTLE_SCAN_US    = 3;   // column-low to P1-read settle
 
 inline void Init() {
   // BUS (DB0–7) output; idle = 0xFF = value 0 (active-low all-high) with route 11.
   BUS_DDR  = 0xFF;
   BUS_PORT = 0xFF;
 
-  // P1 (P10–7) input, no internal pull-ups (the synth has external ~50 kΩ).
+  // P1 (P10–7) input WITH internal pull-ups. The original's "50K pullups"
+  // (SH101.asm:63) are the 80C49's own quasi-bidirectional port pull-ups,
+  // NOT board resistors — proven on hardware: without these, every row
+  // floats low and reads as pressed. The AVR must supply its own.
   P1_DDR  = 0x00;
-  P1_PORT = 0x00;
+  P1_PORT = 0xFF;
 
-  // P2 (P20–7) output; idle = GATE off (bit7=1). LEDs get their correct pattern on
-  // the first loop pass (<3.5 ms later); only "gate off" matters at power-on.
+  // P2 (P20–7) output; idle = GATE off (bit7=1) + HOLD LED off (P25=1 — it
+  // lights on 0, and the first loop pass can be seconds away when the USB
+  // core waits for enumeration). KT LED off = P26=0 (opposite polarity).
   P2_DDR  = 0xFF;
-  P2_PORT = (uint8_t)(1u << P2_GATE);
+  P2_PORT = (uint8_t)((1u << P2_GATE) | (1u << P2_LED_HOLD));
 
-  // T1 (clock) / T0 (HOLD) inputs.
-  DDRD &= (uint8_t)~((1u << T1_CLOCK_BIT) | (1u << T0_HOLD_BIT));
+  // T1 (clock) / T0 (HOLD) inputs, WITH internal pull-ups: both are
+  // active-low/driven lines on a fully wired board, but an unwired pedal
+  // jack or clock line must read inactive, not float low (a floating T0
+  // latched HOLD permanently during bring-up).
+  DDRD  &= (uint8_t)~((1u << T1_CLOCK_BIT) | (1u << T0_HOLD_BIT));
+  PORTD |= (uint8_t)((1u << T1_CLOCK_BIT) | (1u << T0_HOLD_BIT));
 }
 
 // --- DAC + 4052 mux ---------------------------------------------------------
