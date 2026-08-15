@@ -5,12 +5,16 @@
 // transliteration of the 8049 code; where exact original semantics are
 // uncertain (mode latching, tie/rest edge cases) it's marked TODO/verify.
 //
+//   - portamento AUTO: PORTAMENTO OFF (P23) is pulsed on every non-legato note
+//                (fresh key from silence, arp step, sequencer note step) and
+//                left alone on legato notes (new key while one is held, legato
+//                steps), so with the switch on AUTO only legato notes glide
 //   - keyboard : mono, lowest- or last-note priority (panel-selected); MIDI
 //                notes in the keyboard's range act as keys, notes outside it
 //                play as a mono override in keyboard mode
 //   - hold     : HOLD button / pedal latches the held keys (arp keeps running)
 //   - arp      : UP / DOWN / UP&DOWN over held keys, advanced by the clock
-//   - sequencer: 8 patterns x up to 128 steps (note / rest / tie), kept in RAM
+//   - sequencer: 8 patterns x up to 128 steps (note / rest / legato), kept in RAM
 //                and persisted in the flash arena (flash_persist.h); pattern
 //                select = PLAY held + one of the 8 lowest keys, or SysEx 0x1D
 #pragma once
@@ -32,14 +36,16 @@ static const uint8_t MIDI_CV_OFFSET = 36;
 enum Mode : uint8_t {
   MODE_KEYBOARD, MODE_ARP_UP, MODE_ARP_DOWN, MODE_ARP_UPDOWN, MODE_SEQ_PLAY, MODE_SEQ_LOAD,
 };
-enum StepType : uint8_t { STEP_NOTE = 0, STEP_REST = 1, STEP_TIE = 2 };
+// Legato (2): this step's note starts WITHOUT the gate dropping after the
+// previous step: no envelope retrigger, and (portamento AUTO) a glide into it.
+enum StepType : uint8_t { STEP_NOTE = 0, STEP_REST = 1, STEP_LEGATO = 2 };
 
 // One step byte, the SH-101's own model: 6-bit CV + 2 type bits.
 inline uint8_t  StepByte(uint8_t cv, StepType t) { return (uint8_t)((cv & 0x3F) | ((uint8_t)t << 6)); }
 inline uint8_t  StepCv  (uint8_t s) { return s & 0x3F; }
 inline StepType StepKind(uint8_t s) { uint8_t t = s >> 6; return t > 2 ? STEP_NOTE : (StepType)t; }
 
-struct Output { uint8_t cv; bool gate; bool clockReset; };
+struct Output { uint8_t cv; bool gate; bool clockReset; bool portaOff; };
 
 // --- held-key (32-bit) mask helpers -----------------------------------------
 inline int8_t lowestKey (uint32_t m) { for (uint8_t k = 0; k < 32; ++k) if (m & (1UL << k)) return (int8_t)k; return -1; }
@@ -52,8 +58,9 @@ class Arp {
   int8_t cur = -1;
   int8_t dir = 1;
  public:
+  bool gate = false;   // on at each step, off at the half-step
   int8_t current() const { return cur; }
-  void reset() { cur = -1; dir = 1; }
+  void reset() { cur = -1; dir = 1; gate = false; }
   int8_t step(uint32_t mask, Mode mode) {
     if (!mask) { cur = -1; return -1; }
     if (cur < 0 || !(mask & (1UL << cur))) {        // (re)start
@@ -102,9 +109,9 @@ class Sequencer {
   void markEdited() { edited_ |= (uint8_t)(1u << cur_); }
   void clear() { len_[cur_] = 0; pos_ = 0; dirty_ |= (uint8_t)(1u << cur_); }
   // rewind so the NEXT advance() plays step 0 (advance pre-increments). A
-  // pattern that STARTS with a tie continues the last pitch of the pattern
-  // (same rule as the 303: a tie on step 1 ties across the loop point), so
-  // seed the held CV from the last step and start with the gate closed.
+  // pattern that STARTS with a legato step glides from the last pitch of the
+  // pattern (across the loop point, 303-style), so seed the held CV from the
+  // last step and start with the gate closed.
   void rewind() {
     uint8_t len = len_[cur_];
     pos_ = len ? (uint8_t)(len - 1) : 0;
@@ -124,7 +131,8 @@ class Sequencer {
     return true;
   }
 
-  // advance one step on a clock edge; returns true if a fresh note triggered.
+  // advance one step on a clock edge; returns true if a NON-legato note
+  // started (caller pulses PORTAMENTO OFF).
   bool advance() {
     uint8_t len = len_[cur_];
     if (len == 0) { curGate_ = false; return false; }
@@ -132,10 +140,19 @@ class Sequencer {
     stepChanged_ = true;
     uint8_t s = step_[cur_][pos_];
     switch (StepKind(s)) {
-      case STEP_REST: curGate_ = false; return false;
-      case STEP_TIE:  curGate_ = true;  return false;       // hold prev cv, no retrigger
-      default:        curCv_ = StepCv(s); curGate_ = true; return true;
+      case STEP_REST:   curGate_ = false; return false;
+      case STEP_LEGATO: curCv_ = StepCv(s); curGate_ = true; return false;   // gate already on: no retrigger, glide
+      default:          curCv_ = StepCv(s); curGate_ = true; return true;
     }
+  }
+  // Half-step (clock's other edge): close the gate so the next note
+  // retriggers, unless the NEXT step is legato (then the gate carries over,
+  // 303-style look-ahead).
+  void halfStep() {
+    uint8_t len = len_[cur_];
+    if (!len || !curGate_) return;
+    uint8_t next = step_[cur_][(uint8_t)((pos_ + 1) % len)];
+    if (StepKind(next) != STEP_LEGATO) curGate_ = false;
   }
   uint8_t cv()   const { return curCv_; }
   bool    gate() const { return curGate_; }
@@ -252,7 +269,7 @@ class NoteEngine {
   // a MIDI note outside the keyboard range (-1 = none). hold: HOLD button or
   // pedal. clockEdge: arp/seq clock.
   Output update(uint32_t mask, int16_t extCv, bool hold, const controls::Panel& p,
-                controls::Buttons& b, bool clockEdge) {
+                controls::Buttons& b, bool clockEdge, bool halfEdge) {
     selectMode(b, mask);
     if (b.down(controls::BTN_PLAY) && mode_ != MODE_SEQ_LOAD) mask &= ~0xFFUL;  // select keys are not notes
 
@@ -266,32 +283,34 @@ class NoteEngine {
       holdMask_ = 0;
     }
 
-    Output o{lastCv_, false, false};
+    Output o{lastCv_, false, false, false};
     switch (mode_) {
       case MODE_ARP_UP: case MODE_ARP_DOWN: case MODE_ARP_UPDOWN:
         // CLOCK RESET only when the arp starts (first key after silence), so
         // the LFO clock is not restarted on every step: a per-step reset made
         // the step spacing depend on the LFO phase and sounded uneven.
         if (mask && !prevMask_) o.clockReset = true;
-        if (clockEdge) { int8_t k = arp_.step(mask, mode_); if (k >= 0) lastCv_ = noteCv(k, p); }
+        if (clockEdge) { int8_t k = arp_.step(mask, mode_); if (k >= 0) { lastCv_ = noteCv(k, p); arp_.gate = true; o.portaOff = true; } }
+        if (halfEdge) arp_.gate = false;
         if (!mask) arp_.reset();
         o.cv = lastCv_;
-        o.gate = (mask != 0) && (arp_.current() >= 0);
+        o.gate = (mask != 0) && arp_.gate;
         break;
 
       case MODE_SEQ_PLAY:
         if (playStart_) { o.clockReset = true; playStart_ = false; }   // LFO in phase with step 1
-        if (clockEdge && seq_.advance()) lastCv_ = seq_.cv();
+        if (clockEdge) { if (seq_.advance()) o.portaOff = true; lastCv_ = seq_.cv(); }
+        if (halfEdge) seq_.halfStep();
         o.cv = seq_.gate() ? seq_.cv() : lastCv_;
         o.gate = seq_.gate();
         break;
 
       case MODE_SEQ_LOAD: {
-        // record: KEY-TRANSPOSE = rest, HOLD-held = tie, else the note.
+        // record: KEY-TRANSPOSE = rest, HOLD-held = legato, else the note.
         if (b.pressed(controls::BTN_KEYTRANS)) seq_.record(lastCv_, STEP_REST);
         uint32_t fresh = mask & ~prevMask_;
-        if (fresh) { int8_t k = lowestKey(fresh); if (k >= 0) seq_.record(noteCv(k, p), b.down(controls::BTN_HOLD) ? STEP_TIE : STEP_NOTE); }
-        if (extCv >= 0 && extCv != prevExtCv_) seq_.record((uint8_t)extCv, b.down(controls::BTN_HOLD) ? STEP_TIE : STEP_NOTE);
+        if (fresh) { int8_t k = lowestKey(fresh); if (k >= 0) seq_.record(noteCv(k, p), b.down(controls::BTN_HOLD) ? STEP_LEGATO : STEP_NOTE); }
+        if (extCv >= 0 && extCv != prevExtCv_) seq_.record((uint8_t)extCv, b.down(controls::BTN_HOLD) ? STEP_LEGATO : STEP_NOTE);
         // live monitor through the keyboard while recording
         int8_t lk = lowestKey(mask);
         if (lk >= 0) { lastCv_ = noteCv(lk, p); o.cv = lastCv_; o.gate = true; }
@@ -304,9 +323,11 @@ class NoteEngine {
         if (k >= 0) {
           lastCv_ = noteCv(k, p); o.cv = lastCv_; o.gate = true;
           if (p.adsrLfo && (mask & ~prevMask_)) o.clockReset = true; // reset LFO on new key
+          if (!prevMask_ && prevExtCv_ < 0) o.portaOff = true;       // fresh from silence: no glide (AUTO)
         } else if (extCv >= 0) {                     // MIDI note outside the keyboard
           lastCv_ = (uint8_t)extCv; o.cv = lastCv_; o.gate = true;
           if (p.adsrLfo && extCv != prevExtCv_) o.clockReset = true;
+          if (!prevMask_ && prevExtCv_ < 0) o.portaOff = true;
         }
         break;
       }

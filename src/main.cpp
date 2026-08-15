@@ -22,6 +22,7 @@ static bool                  g_lastClock = false;
 static uint8_t               g_rnd = 0xA5;
 static uint8_t               g_rndHeld = 0;       // synced S&H latch (MIDI sync on)
 static uint32_t              g_rstUntilMs = 0;    // CLOCK-RESET pulse stretcher
+static uint32_t              g_portaUntilMs = 0;  // PORTAMENTO OFF pulse (non-legato notes)
 static uint32_t              g_lastEditMs = 0;    // for the deferred flash flush
 
 // --- MIDI note input ----------------------------------------------------------
@@ -136,10 +137,12 @@ static uint32_t ReadKeyboard() {
   return mask;
 }
 
-// LFO/EXT-CLK H->L edge (SH101.asm:768-789) + a placeholder random byte.
-static uint8_t ClockAndRandom(bool &edge) {
+// LFO/EXT-CLK H->L edge (SH101.asm:768-789) = step; L->H edge = half-step
+// (gate-off point), plus a placeholder random byte.
+static uint8_t ClockAndRandom(bool &edge, bool &halfEdge) {
   bool now = hw::ClockLevel();
   edge = (g_lastClock && !now);
+  halfEdge = (!g_lastClock && now);
   g_lastClock = now;
   uint8_t x = g_rnd; x ^= x << 3; x ^= x >> 5; x ^= x << 1;
   g_rnd = x ? x : 0xA5;
@@ -185,17 +188,18 @@ void superos_loop() {
   // 6/7. CLOCK CHECK + RANDOM DATA OUTPUT -> RANDOM sample/hold
   // Sync ON: the divided MIDI clock replaces the T1 (LFO/EXT-CLK) edge, and
   // the random S&H steps once per division instead of free-running.
-  bool clockEdge;
-  uint8_t random = ClockAndRandom(clockEdge);
+  bool clockEdge, halfEdge;
+  uint8_t random = ClockAndRandom(clockEdge, halfEdge);
   if (midiclk::SyncOn()) {
     clockEdge = divEdge;
+    halfEdge = midiclk::ConsumeHalfEdge();
     if (divEdge) g_rndHeld = random;
     random = g_rndHeld;
   }
   hw::DacWrite(random, ROUTE_RANDOM);
 
   // 9-12. LOAD/PLAY/ARP/keyboard -> note CV, then CV OUTPUT -> CV-OUT sample/hold
-  engine::Output out = g_engine.update(keys, ExtCv(), g_buttons.hold, panel, g_buttons, clockEdge);
+  engine::Output out = g_engine.update(keys, ExtCv(), g_buttons.hold, panel, g_buttons, clockEdge, halfEdge);
   hw::DacWrite(out.cv, ROUTE_CV_OUT);
   MidiOut(out.cv, out.gate);
   if (midi::HostSeen()) {
@@ -216,13 +220,18 @@ void superos_loop() {
     g_lastEditMs = millis();
   }
 
-  // 13. GATE / CLOCK-RESET / LEDs (PORTAMENTO OFF: TODO)
+  // 13. GATE / CLOCK-RESET / PORTAMENTO OFF / LEDs
   // CLOCK RESET fires on engine events and, with sync ON, on every division
   // boundary (hard-syncs the analog LFO). Stretched to >=2 ms: our loop pass
   // is far shorter than the original's 3.5 ms, so a 1-pass pulse would be
   // too narrow for the LFO reset circuit.
   if (out.clockReset || (midiclk::SyncOn() && divEdge))
     g_rstUntilMs = millis() + 2;
+  // PORTAMENTO OFF (P23, active-high; the ROM idles it low and raises it
+  // briefly on a fresh, non-legato note): the S/H jumps instead of gliding.
+  // With the panel switch on AUTO this is what makes only legato notes glide;
+  // ON / OFF ignore the line. Held a few ms so the RC has settled on the jump.
+  if (out.portaOff) g_portaUntilMs = millis() + 4;
 #ifdef DEBUG
   static uint32_t s_dbgNext = 0;
   if (Serial && millis() >= s_dbgNext) {
@@ -242,5 +251,7 @@ void superos_loop() {
   if (out.gate)        p2 &= (uint8_t)~(1u << P2_GATE);      // bit=0 -> gate ON
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
     p2 &= (uint8_t)~(1u << P2_CLOCK_RST);                    // pulse LOW
+  if ((int32_t)(g_portaUntilMs - millis()) > 0)
+    p2 |= (uint8_t)(1u << P2_PORTA_OFF);                     // pulse HIGH
   hw::P2Write(p2);
 }

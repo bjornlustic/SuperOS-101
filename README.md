@@ -33,7 +33,11 @@ KEY-TRANSPOSE shift value and exact portamento timing. The CPU board lives in
 
 - **UP / DOWN / UP&DOWN**: arpeggiator on/off (LED shows the mode). **HOLD**: latch keys.
 - **LOAD**: start recording the current pattern (LOAD LED); keys = notes, HOLD held while
-  pressing a key = tie, KEY-TRANSPOSE = rest; **LOAD** again stores it.
+  pressing a key = legato (no gate gap before it, glides with PORTAMENTO on AUTO),
+  KEY-TRANSPOSE = rest; **LOAD** again stores it.
+- **PORTAMENTO AUTO** works as on the original: the firmware pulses PORTAMENTO OFF on
+  every fresh note and leaves it alone on legato notes (keyboard legato, legato steps),
+  so only those glide. ON / OFF ignore the line.
 - **PLAY**: sequencer play/stop (PLAY LED). **PLAY held + one of the 8 lowest keys**
   selects pattern 1..8 (also MIDI Program Change 0..7 or the editor).
 - **HOLD + KEY-TRANSPOSE 2 s**: config menu (below).
@@ -63,7 +67,7 @@ the arena. A chip erase over ISP wipes the arena; SysEx OS updates do not.
 ## Web editor
 
 `tools/web-editor/index.html` is a single-file Web MIDI editor in the style of the
-SuperOS-303 editor: pattern grid (note / rest / tie, keyboard shortcuts), read/write
+SuperOS-303 editor: pattern grid (note / rest / legato, per-step semitone/octave, length control), read/write
 patterns, pattern select and transport, live playhead, config (channel, sync,
 division), firmware switch, OS update from a `*-update.syx`, on-screen MIDI keyboard,
 JSON save/load. Web MIDI needs Chrome/Edge over http or localhost. In Cursor / VS

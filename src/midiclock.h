@@ -28,6 +28,7 @@ struct State {
   bool    running = false;
   uint8_t tick    = 0;      // 0..ticks-1 within the current division
   bool    edge    = false;  // division boundary since last Consume
+  bool    half    = false;  // half-division point since last Consume (gate off)
   bool    started = false;  // 0xFA received since last Consume
   bool    stopped = false;  // 0xFC received since last Consume
 };
@@ -63,6 +64,7 @@ inline void OnRealtime(uint8_t b) {
     case 0xF8:
       if (S().running) {
         if (S().tick == 0) S().edge = true;
+        if (S().tick == DIV_TICKS[S().divIdx] / 2) S().half = true;
         if (++S().tick >= DIV_TICKS[S().divIdx]) S().tick = 0;
       }
       break;
@@ -74,6 +76,7 @@ inline void OnRealtime(uint8_t b) {
 }
 
 inline bool ConsumeEdge()    { bool e = S().edge;    S().edge = false;    return e; }
+inline bool ConsumeHalfEdge(){ bool h = S().half;    S().half = false;    return h; }
 inline bool ConsumeStart()   { bool s = S().started; S().started = false; return s; }
 inline bool ConsumeStop()    { bool s = S().stopped; S().stopped = false; return s; }
 inline bool Running()        { return S().running; }

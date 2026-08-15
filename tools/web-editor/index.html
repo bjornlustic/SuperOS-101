@@ -84,7 +84,7 @@
   .step .tb:hover:not(.on) { background:var(--gray-1); color:var(--black); }
   .step.rest .n { color:var(--gray-3); }
   .step.rest { background:var(--gray-1); }
-  .step.tie .n::before { content:"\2192\00a0"; font-weight:400; color:var(--gray-4); }
+  .step.legato .n::before { content:"\223F\00a0"; font-weight:400; color:var(--gray-4); }   /* ~ = glide in */
   .step.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
   .step.is-play { background:var(--red); } .step.is-play .n, .step.is-play .i { color:var(--white); }
   .step.is-play .tb:not(.on), .step.is-play .sb { background:var(--white); }
@@ -186,13 +186,13 @@
       <select id="selNote" title="Note of the selected step"></select>
       <button class="btn" id="btnNote">Note</button>
       <button class="btn" id="btnRest">Rest</button>
-      <button class="btn" id="btnTie">Tie</button>
+      <button class="btn" id="btnTie" title="Legato: the gate is not released before this note (no envelope retrigger); with PORTAMENTO on AUTO it glides">Legato</button>
       <button class="btn" id="btnIns" title="Insert a new step BEFORE the selected step (or use the + on each step to insert after it)">Insert before</button>
       <button class="btn" id="btnDel" title="Delete the selected step (or use the x on each step)">Delete</button>
       <button class="btn" id="btnClear">Clear pattern</button>
     </div>
     <div class="steps" id="steps"></div>
-    <div class="foot" style="padding:6px var(--pad)">Per step: &#8722;/+ semitone, OCT&#8722;/OCT+ octave (range F2..C7, the SH-101 keyboard with octave transpose), Note / Rest / Tie, <b>+</b> inserts a step after, <b>&#215;</b> deletes. Length: type a number, &#8722;/+, or 8/16/32/64. A tie on step 1 continues the last note of the pattern. Red step = the unit's playhead. Keyboard: <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> = octave), <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). Patterns recorded or selected on the unit appear here automatically. The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
+    <div class="foot" style="padding:6px var(--pad)">Per step: &#8722;/+ semitone, OCT&#8722;/OCT+ octave (range F2..C7, the SH-101 keyboard with octave transpose), Note / Rest / Legato, <b>+</b> inserts a step after, <b>&#215;</b> deletes. Legato = the previous note is held into this one (no envelope retrigger); with PORTAMENTO on AUTO only legato notes glide. Length: type a number, &#8722;/+, or 8/16/32/64. Red step = the unit's playhead. Keyboard: <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> = octave), <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>L</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). Patterns recorded or selected on the unit appear here automatically. The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
   </div>
 
   <!-- On-screen keyboard -->
@@ -205,7 +205,7 @@
 <script>
 'use strict';
 // ---------------------------------------------------------------------------
-// Data model: 8 patterns, each an array of steps {cv:0..63, type:0 note/1 rest/2 tie}
+// Data model: 8 patterns, each an array of steps {cv:0..63, type:0 note/1 rest/2 legato}
 // mirrors the firmware's one-byte-per-step model (cv | type<<6).
 // ---------------------------------------------------------------------------
 const NUM_PATTERNS = 8, MAX_STEPS = 128, MIDI_CV_OFFSET = 36;
@@ -468,7 +468,7 @@ function renderSteps() {
   const frag = document.createDocumentFragment();
   pat.forEach((s, i) => {
     const d = document.createElement('div');
-    d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' tie' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-play' : '');
+    d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' legato' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-play' : '');
     d.dataset.i = i;
     d.innerHTML =
       '<span class="i">' + (i + 1) + '</span>' +
@@ -479,7 +479,7 @@ function renderSteps() {
       '<div class="row"><button class="sb oct" data-a="odn" title="Octave down">OCT&#8722;</button><button class="sb oct" data-a="oup" title="Octave up">OCT+</button></div>' +
       '<div class="row"><button class="tb' + (s.type === 0 ? ' on' : '') + '" data-a="t0">Note</button>' +
       '<button class="tb' + (s.type === 1 ? ' on' : '') + '" data-a="t1">Rest</button>' +
-      '<button class="tb' + (s.type === 2 ? ' on' : '') + '" data-a="t2">Tie</button></div>';
+      '<button class="tb' + (s.type === 2 ? ' on' : '') + '" data-a="t2" title="Legato: no gate gap before this note, glides with PORTAMENTO on AUTO">Leg</button></div>';
     frag.appendChild(d);
   });
   if (pat.length < MAX_STEPS) {
@@ -558,7 +558,7 @@ document.addEventListener('keydown', ev => {
   if (k === 'ArrowDown') { s.cv = clampCv(s.cv - (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
   if (k === 'n' || k === 'N') setType(0);
   if (k === 'r' || k === 'R') setType(1);
-  if (k === 't' || k === 'T') setType(2);
+  if (k === 'l' || k === 'L' || k === 't' || k === 'T') setType(2);
   if (k === 'Delete' || k === 'Backspace') { $('btnDel').onclick(); ev.preventDefault(); }
 });
 
