@@ -86,7 +86,18 @@
   .step.rest { background:var(--gray-1); }
   .step.tie .n::before { content:"\2192\00a0"; font-weight:400; color:var(--gray-4); }
   .step.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
-  .step.is-play { background:var(--black); } .step.is-play .n, .step.is-play .i { color:var(--white); }
+  .step.is-play { background:var(--red); } .step.is-play .n, .step.is-play .i { color:var(--white); }
+  .step.is-play .tb:not(.on), .step.is-play .sb { background:var(--white); }
+  .step .hd { position:absolute; top:1px; right:2px; display:flex; gap:1px; }
+  .step .hb { width:16px; height:12px; border:none; background:transparent; font-family:var(--font); font-size:10px; font-weight:900;
+              line-height:1; cursor:pointer; color:var(--gray-3); padding:0; border-radius:0; }
+  .step .hb:hover { color:var(--black); }
+  .step .hb.del:hover { color:var(--red); }
+  .step.is-play .hb { color:var(--white); }
+  .len-ctl { display:flex; align-items:center; gap:0; }
+  .len-ctl input { width:52px; text-align:center; height:28px; border-left:none; border-right:none; }
+  .len-ctl .btn { height:28px; width:28px; padding:0; }
+  .len-ctl .btn.q { width:auto; padding:0 6px; font-size:9px; border-left:none; }
   .step.add { align-items:center; justify-content:center; color:var(--gray-3); font-size:22px; font-weight:300; cursor:pointer; min-height:96px; }
   .step.add:hover { background:var(--gray-1); color:var(--black); }
   .empty { grid-column:1 / -1; padding:18px var(--pad); font-size:11px; color:var(--gray-4); border-bottom:var(--rule-sm); }
@@ -162,6 +173,13 @@
   <div class="seq-panel">
     <div class="seq-toolbar">
       <span class="lbl" id="seqTitle">Pattern 1</span>
+      <span class="lbl">Length</span>
+      <div class="len-ctl">
+        <button class="btn" id="btnLenDn" title="One step shorter">&#8722;</button>
+        <input type="number" id="inLen" min="0" max="128" value="0" title="Number of steps (1..128); adding steps appends copies of the last step" />
+        <button class="btn" id="btnLenUp" title="One step longer">+</button>
+        <button class="btn q" data-len="8">8</button><button class="btn q" data-len="16">16</button><button class="btn q" data-len="32">32</button><button class="btn q" data-len="64">64</button>
+      </div>
       <span class="status is-ok" id="seqLen">0 steps</span>
       <span style="flex:1"></span>
       <span class="lbl">Step</span>
@@ -169,12 +187,12 @@
       <button class="btn" id="btnNote">Note</button>
       <button class="btn" id="btnRest">Rest</button>
       <button class="btn" id="btnTie">Tie</button>
-      <button class="btn" id="btnIns" title="Insert a step before the selected one">Insert</button>
-      <button class="btn" id="btnDel" title="Delete the selected step">Delete</button>
+      <button class="btn" id="btnIns" title="Insert a new step BEFORE the selected step (or use the + on each step to insert after it)">Insert before</button>
+      <button class="btn" id="btnDel" title="Delete the selected step (or use the x on each step)">Delete</button>
       <button class="btn" id="btnClear">Clear pattern</button>
     </div>
     <div class="steps" id="steps"></div>
-    <div class="foot" style="padding:6px var(--pad)">Per step: &#8722;/+ semitone, OCT&#8722;/OCT+ octave (range F2..C7, the SH-101 keyboard with octave transpose), Note / Rest / Tie. Keyboard: <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> = octave), <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). Patterns recorded or selected on the unit appear here automatically. The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
+    <div class="foot" style="padding:6px var(--pad)">Per step: &#8722;/+ semitone, OCT&#8722;/OCT+ octave (range F2..C7, the SH-101 keyboard with octave transpose), Note / Rest / Tie, <b>+</b> inserts a step after, <b>&#215;</b> deletes. Length: type a number, &#8722;/+, or 8/16/32/64. A tie on step 1 continues the last note of the pattern. Red step = the unit's playhead. Keyboard: <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> = octave), <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). Patterns recorded or selected on the unit appear here automatically. The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
   </div>
 
   <!-- On-screen keyboard -->
@@ -343,11 +361,17 @@ function handleSysex(b) {
       if (b[1] === 0 && pendingWrite >= 0) { dirty[pendingWrite] = false; pendingWrite = -1; renderPills(); }
       break;
     }
-    case 0x15: playPos = b[2]; if (b[1] !== devPat) { devPat = b[1]; renderPills(); } renderPlayhead(); break;
+    case 0x15:   // step position from the unit (also when PLAY was pressed on the panel)
+      playPos = b[2]; unitPlaying = true;
+      if (b[1] !== devPat) { devPat = b[1]; renderPills(); }
+      renderPlayhead();
+      clearTimeout(playheadTimer);
+      playheadTimer = setTimeout(() => { unitPlaying = false; playPos = -1; renderPlayhead(); renderPills(); }, 2500);
+      break;
     default: log('101: unknown SysEx cmd 0x' + cmd.toString(16));
   }
 }
-let readAllOnce = false, pendingWrite = -1, readingAll = false;
+let readAllOnce = false, pendingWrite = -1, readingAll = false, unitPlaying = false, playheadTimer = null;
 
 // ---------------------------------------------------------------------------
 // Device actions
@@ -375,7 +399,7 @@ $('btnPlay').onclick = async () => {
   }
   sendSysex([0x1E, playing ? 1 : 0]);
   $('btnPlay').textContent = playing ? '■ Stop' : '▶ Play'; $('btnPlay').classList.toggle('is-on', playing);
-  if (!playing) { playPos = -1; renderPlayhead(); }
+  if (!playing) { playPos = -1; unitPlaying = false; renderPlayhead(); }
   renderPills();
 };
 $('btnCfgApply').onclick = () => { sendSysex([0x22, +$('selChan').value, $('btnSync').classList.contains('is-on') ? 1 : 0, +$('selDiv').value]); log('config sent'); };
@@ -429,7 +453,7 @@ function renderPills() {
   const el = $('pills'); el.innerHTML = '';
   for (let p = 0; p < NUM_PATTERNS; ++p) {
     const d = document.createElement('div');
-    d.className = 'pat-pill' + (p === curPat ? ' is-active' : '') + (dirty[p] ? ' is-dirty' : '') + (playing && p === devPat ? ' is-playing' : '');
+    d.className = 'pat-pill' + (p === curPat ? ' is-active' : '') + (dirty[p] ? ' is-dirty' : '') + ((playing || unitPlaying) && p === devPat ? ' is-playing' : '');
     d.textContent = p + 1; d.title = 'Pattern ' + (p + 1) + (p === devPat ? ' (selected on the unit)' : '');
     d.onclick = () => { curPat = p; selStep = -1; selectDevicePattern(p); renderAll(); };
     el.appendChild(d);
@@ -440,13 +464,15 @@ function renderSteps() {
   const pat = patterns[curPat];
   $('seqTitle').textContent = 'Pattern ' + (curPat + 1);
   $('seqLen').textContent = pat.length + ' step' + (pat.length === 1 ? '' : 's') + ' / ' + MAX_STEPS;
+  $('inLen').value = pat.length;
   const frag = document.createDocumentFragment();
   pat.forEach((s, i) => {
     const d = document.createElement('div');
-    d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' tie' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && playing ? ' is-play' : '');
+    d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' tie' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-play' : '');
     d.dataset.i = i;
     d.innerHTML =
       '<span class="i">' + (i + 1) + '</span>' +
+      '<span class="hd"><button class="hb" data-a="insa" title="Insert a step after this one">+</button><button class="hb del" data-a="del" title="Delete this step">&#215;</button></span>' +
       '<div class="row"><button class="sb" data-a="dn" title="Semitone down">&#8722;</button>' +
       '<span class="n" data-a="sel">' + (s.type === 1 ? '&#8212;' : noteName(s.cv)) + '</span>' +
       '<button class="sb" data-a="up" title="Semitone up">+</button></div>' +
@@ -480,11 +506,27 @@ $('steps').addEventListener('click', ev => {
     case 't0': s.type = 0; markDirty(); break;
     case 't1': s.type = 1; markDirty(); break;
     case 't2': s.type = 2; markDirty(); break;
+    case 'insa': if (patterns[curPat].length < MAX_STEPS) { patterns[curPat].splice(i + 1, 0, {cv: s.cv, type: 0}); selStep = i + 1; markDirty(); } break;
+    case 'del': patterns[curPat].splice(i, 1); if (selStep >= patterns[curPat].length) selStep = patterns[curPat].length - 1; markDirty(); break;
   }
   renderSteps();
 });
+// Pattern length: grow by repeating the last step (or F3 notes), shrink by truncating.
+function setLength(n) {
+  n = Math.max(0, Math.min(MAX_STEPS, n | 0));
+  const pat = patterns[curPat];
+  while (pat.length > n) pat.pop();
+  while (pat.length < n) { const last = pat.length ? pat[pat.length - 1] : null; pat.push({cv: last ? last.cv : 17, type: last ? last.type : 0}); }
+  if (selStep >= pat.length) selStep = pat.length - 1;
+  markDirty(); renderSteps();
+}
+$('btnLenDn').onclick = () => setLength(patterns[curPat].length - 1);
+$('btnLenUp').onclick = () => setLength(patterns[curPat].length + 1);
+$('inLen').onchange = () => setLength(+$('inLen').value);
+document.querySelectorAll('.len-ctl .q').forEach(b => b.onclick = () => setLength(+b.dataset.len));
 function renderPlayhead() {
-  document.querySelectorAll('#steps .step').forEach(d => d.classList.toggle('is-play', playing && +d.dataset.i === playPos));
+  const show = unitPlaying && devPat === curPat;
+  document.querySelectorAll('#steps .step').forEach(d => d.classList.toggle('is-play', show && +d.dataset.i === playPos));
 }
 function renderAll() { renderPills(); renderSteps(); }
 function appendStep() {

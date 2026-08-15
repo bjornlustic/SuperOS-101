@@ -101,8 +101,16 @@ class Sequencer {
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
   void markEdited() { edited_ |= (uint8_t)(1u << cur_); }
   void clear() { len_[cur_] = 0; pos_ = 0; dirty_ |= (uint8_t)(1u << cur_); }
-  // rewind so the NEXT advance() plays step 0 (advance pre-increments)
-  void rewind() { pos_ = len_[cur_] ? (uint8_t)(len_[cur_] - 1) : 0; }
+  // rewind so the NEXT advance() plays step 0 (advance pre-increments). A
+  // pattern that STARTS with a tie continues the last pitch of the pattern
+  // (same rule as the 303: a tie on step 1 ties across the loop point), so
+  // seed the held CV from the last step and start with the gate closed.
+  void rewind() {
+    uint8_t len = len_[cur_];
+    pos_ = len ? (uint8_t)(len - 1) : 0;
+    if (len) curCv_ = StepCv(step_[cur_][len - 1]);
+    curGate_ = false;
+  }
   void record(uint8_t cv, StepType t) {
     if (len_[cur_] < MAX_STEPS) { step_[cur_][len_[cur_]++] = StepByte(cv, t); dirty_ |= (uint8_t)(1u << cur_); }
   }
