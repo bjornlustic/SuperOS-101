@@ -165,7 +165,7 @@
       <button class="btn" id="btnClear">Clear pattern</button>
     </div>
     <div class="steps" id="steps"></div>
-    <div class="foot" style="padding:6px var(--pad)">Click a step to select, click again to cycle note / rest / tie. <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> note, <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = not yet written to the unit.</div>
+    <div class="foot" style="padding:6px var(--pad)">Click a step to select, click again to cycle note / rest / tie. <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> note, <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>T</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
   </div>
 
   <!-- On-screen keyboard -->
@@ -348,8 +348,22 @@ function writePattern(p) {
 }
 function selectDevicePattern(p) { sendSysex([0x1D, p]); }
 $('btnReadAll').onclick = readAll;
-$('btnWrite').onclick = () => writePattern(curPat);
-$('btnPlay').onclick = () => { playing = !playing; sendSysex([0x1E, playing ? 1 : 0]); $('btnPlay').textContent = playing ? '■ Stop' : '▶ Play'; $('btnPlay').classList.toggle('is-on', playing); if (!playing) { playPos = -1; renderPlayhead(); } };
+$('btnWrite').onclick = () => { writePattern(curPat); if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; renderPills(); } };
+$('btnPlay').onclick = async () => {
+  playing = !playing;
+  if (playing) {
+    // Play what is on screen: push unsaved edits to the unit, make sure the
+    // unit has this pattern selected, then start the transport.
+    if (dirty[curPat]) { writePattern(curPat); await new Promise(r => setTimeout(r, 250)); }
+    if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; await new Promise(r => setTimeout(r, 100)); }
+    if (!patterns[curPat].length) log('pattern ' + (curPat + 1) + ' is empty: nothing to play', 'err');
+    if (cfg.sync) log('MIDI clock sync is ON: the sequencer only steps on incoming MIDI clock (turn sync off to use the LFO clock)');
+  }
+  sendSysex([0x1E, playing ? 1 : 0]);
+  $('btnPlay').textContent = playing ? '■ Stop' : '▶ Play'; $('btnPlay').classList.toggle('is-on', playing);
+  if (!playing) { playPos = -1; renderPlayhead(); }
+  renderPills();
+};
 $('btnCfgApply').onclick = () => { sendSysex([0x22, +$('selChan').value, $('btnSync').classList.contains('is-on') ? 1 : 0, +$('selDiv').value]); log('config sent'); };
 $('btnSync').onclick = () => { const on = !$('btnSync').classList.contains('is-on'); $('btnSync').classList.toggle('is-on', on); $('btnSync').textContent = on ? 'On' : 'Off'; };
 $('btnFwSwitch').onclick = () => {
