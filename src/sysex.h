@@ -82,13 +82,15 @@ inline uint16_t MeasureVccMv() {
 //   [51..52] emulator: last gate off->on gap (us)  [53..54] max gap since last probe
 //   [55..56] emulator: gate-on events per second
 //   [57..58] emulator: last off->on gap on the physical GATE pin (us, after shaping)
+//   [59..60] emulator: PORTAMENTO OFF pulses per second  [61..62] last pulse length (us)
+//   [63..64] emulator: last PORTAMENTO OFF rise minus last CV-OUT change (us)
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
 extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[59] = {0};
+  uint8_t raw[65] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -109,6 +111,8 @@ inline void SendProbe() {
     uint16_t gl = emu101::gateGapUs(false), gm = emu101::gateGapUs(true), go = emu101::gateOnsPerSec();
     raw[51] = gl >> 8; raw[52] = gl & 0xFF; raw[53] = gm >> 8; raw[54] = gm & 0xFF; raw[55] = go >> 8; raw[56] = go & 0xFF;
     uint16_t gp = emu101::gatePhysGapUs(); raw[57] = gp >> 8; raw[58] = gp & 0xFF;
+    uint16_t pp_ = emu101::portaPulsesPerSec(), pl = emu101::portaPulseLenUs(), pd = emu101::portaAfterCvUs();
+    raw[59] = pp_ >> 8; raw[60] = pp_ & 0xFF; raw[61] = pl >> 8; raw[62] = pl & 0xFF; raw[63] = pd >> 8; raw[64] = pd & 0xFF;
   }
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;

@@ -99,9 +99,13 @@ pass rate, ~75 Hz, and a step can land up to one pass late); and the ROM's
 per-key scan loop (40% of a pass) runs natively (`emu101_hle.h`, verified
 cycle- and state-exact against the interpreter); and since the ROM retriggers
 each sequencer/arp step by dropping GATE for exactly one pass (~2 ms on the
-chip, ~8 ms here, an audible re-attack), the host re-times that hole on the
-GATE pin back to 2 ms (`GateOnRomChange`; a plain release lands at most 12 ms
-late, the MIDI echo follows the ROM's own transitions). The interpreter itself keeps
+chip, ~8 ms here, an audible re-attack), the GATE pin drops with the ROM and
+comes back after 2 ms on its own whenever the ROM's own state says a retrigger
+follows (PLAY mode, current step is a note; `GateOnRomChange`); rests and
+releases follow the ROM exactly. The hole must start with the ROM's, not later:
+the analog PORTAMENTO AUTO logic reads a CV change under a high GATE as legato
+(the ROM never raises PORTAMENTO OFF for these), so a delayed hole made every
+step glide. The MIDI echo follows the ROM's own transitions. The interpreter itself keeps
 its PC as a pointer into the 2 KB-aligned ROM image and dispatches through a
 flash jump table (`mcs48.h`). The SuperOS loop pass is ~0.85 ms.
 

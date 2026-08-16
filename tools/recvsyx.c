@@ -178,8 +178,8 @@ static int g_in_sysex;
 
 static void handle_sysex(const unsigned char *msg, size_t len) {
   printf("[%zu bytes]", len);
-  for (size_t i = 0; i < len && i < 128; i++) printf(" %02X", msg[i]);
-  if (len > 128) printf(" ...");
+  for (size_t i = 0; i < len && i < 200; i++) printf(" %02X", msg[i]);
+  if (len > 200) printf(" ...");
   printf("\n");
   if (len >= 3 && msg[0] == 0xF0 && msg[1] == 0x7D) {
     if (msg[2] == 0x44) decode_report(msg + 3, len - 4);

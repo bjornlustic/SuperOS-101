@@ -59,6 +59,9 @@ static uint32_t g_cycAcc = 0, g_passAcc = 0, g_rateT0 = 0;
 static uint16_t g_cyc100 = 0, g_pps = 0, g_eps = 0, g_runPm = 0, g_shPm = 0, g_pollEps = 0;
 static uint16_t g_pollEdgeAcc = 0;   // T1 falling edges seen by the once-per-pass poll (diagnostic)
 static uint16_t g_t1RejAcc = 0, g_t1Rej = 0;   // INT0 edges rejected as bounces (T1Qualify), per s
+static bool g_portaLast = false; static uint32_t g_portaOnUs = 0;   // PORTA OFF telemetry (probe)
+static uint16_t g_portaLenUs = 0, g_portaAcc = 0, g_portaPerSec = 0, g_portaCvDeltaUs = 0;
+static uint32_t g_lastCvChangeUs = 0;
 static uint32_t g_gateOffUs = 0;                 // gate-gap telemetry (probe)
 static uint16_t g_gateGapLastUs = 0, g_gateGapMaxUs = 0, g_gateOnAcc = 0, g_gateOnPerSec = 0;
 static uint32_t g_runUsAcc = 0, g_shUsAcc = 0;
@@ -74,6 +77,7 @@ static void RateTick(uint32_t ms, uint16_t ran) {
     g_pollEps = g_pollEdgeAcc; g_pollEdgeAcc = 0;
     g_t1Rej = g_t1RejAcc; g_t1RejAcc = 0;
     g_gateOnPerSec = g_gateOnAcc; g_gateOnAcc = 0;
+    g_portaPerSec = g_portaAcc; g_portaAcc = 0;
     g_runPm = (uint16_t)(g_runUsAcc / 1000); g_shPm = (uint16_t)(g_shUsAcc / 1000);
     g_runUsAcc = 0; g_shUsAcc = 0;
     g_cycAcc = 0; g_passAcc = 0; g_rateT0 = ms;
@@ -143,7 +147,7 @@ void    mcs48_bus_write(uint8_t v)    {
   if (route != ROUTE_NONE) {
     g_shVal[route] = (uint8_t)(~v & 0x3F);
     g_shKnown |= (uint8_t)(1u << route);
-    if (route == ROUTE_CV_OUT) { ++g_passAcc; g_cvOut = g_shVal[route]; EchoOut(); }
+    if (route == ROUTE_CV_OUT) { ++g_passAcc; if (g_cvOut != g_shVal[route]) g_lastCvChangeUs = micros(); g_cvOut = g_shVal[route]; EchoOut(); }
   }
 }
 // P1 rows are active-low; the BUS latch says which keyboard bank (DB0..3
@@ -162,25 +166,23 @@ uint8_t mcs48_p1_read() {
   return rows;
 }
 // --- gate gap shaping ---------------------------------------------------------
-// At every sequencer/arp step the ROM drops GATE for exactly one program
-// pass and raises it again (r2 = 0 in handle_play). On the real chip that is
-// a ~2 ms hole; here a pass is ~8 ms, and an 8 ms hole lets the envelope
-// fall far enough that every step re-attacks audibly (a "stutter" that
-// SuperOS, whose gate closes at the half-step, does not have). The physical
-// GATE therefore follows the ROM's with the hole re-timed: when the ROM
-// drops the gate, the pin stays high for up to GATE_HOLD_US; if the ROM
-// raises it again inside that window (a retrigger), the pin gets a
-// GATE_GAP_US low pulse and then goes high; if not (rest, key release), the
-// pin goes low when the window ends. Note-on timing is unchanged apart from
-// the 2 ms pulse; a release lands at most 12 ms late. The MIDI echo follows
-// the ROM's own transitions.
-static const uint16_t GATE_HOLD_US = 12000;   // > one emulated pass
-static const uint16_t GATE_GAP_US  = 2000;    // the original's one-pass hole
-static uint8_t  g_p2Rom     = P2_IDLE;   // last P2 the ROM wrote
-static bool     g_gatePhys  = false;     // what the pin shows
-static bool     g_gateHold  = false;     // ROM off, pin held on
-static bool     g_gateGap   = false;     // 2 ms hole in progress
-static uint32_t g_gateT     = 0;         // hold / gap deadline
+// At every sequencer step the ROM drops GATE for exactly one program pass
+// and raises it again (r2 = 0 in handle_play). On the real chip that is a
+// ~2 ms hole; here a pass is ~8 ms, and an 8 ms hole lets the envelope fall
+// far enough that every step re-attacks audibly (a "stutter" SuperOS does
+// not have). The hole must start when the ROM's does: the CV-OUT S/H was
+// written a few instructions earlier, and the analog PORTAMENTO AUTO logic
+// takes a CV change under a still-high GATE as legato (a glide; the ROM
+// never raises PORTAMENTO OFF here). So the pin drops with the ROM, and it
+// comes back after GATE_GAP_US on its own when a retrigger is certain: the
+// ROM is in PLAY (RAM 0x15 bit 1) and the step it just moved to (RAM[RAM
+// 0x1B]) is a note (bit 7), so its next pass will raise the gate anyway.
+// Otherwise (rest, key release, stop) the pin follows the ROM exactly.
+static const uint16_t GATE_GAP_US = 2000;   // the original's one-pass hole
+static uint8_t  g_p2Rom    = P2_IDLE;   // last P2 the ROM wrote
+static bool     g_gatePhys = false;     // what the pin shows
+static bool     g_gateGap  = false;     // shaped hole in progress
+static uint32_t g_gateT    = 0;         // hole end
 static uint32_t g_physOffUs = 0; static uint16_t g_physGapUs = 0; static bool g_physLast = false;   // probe
 static inline void GateApply() {
   P2_PORT = (uint8_t)((g_p2Rom | (1u << P2_GATE)) & (g_gatePhys ? (uint8_t)~(1u << P2_GATE) : 0xFF));
@@ -191,24 +193,36 @@ static inline void GateApply() {
     else { uint32_t d = now - g_physOffUs; g_physGapUs = d > 0xFFFF ? 0xFFFF : (uint16_t)d; }
   }
 }
+static inline bool RomRetriggerCertain() {
+  const uint8_t* ram = g_cpu.ram;
+  if (!(ram[0x15] & 0x02)) return false;                 // not in PLAY
+  return (ram[ram[0x1B] & 0x7F] & 0x80) != 0;            // current step is a note
+}
 static inline void GateOnRomChange(bool gate, uint32_t now) {
-  if (!gate) {                                   // ROM: gate off -> start the hold window
-    if (g_gatePhys && !g_gateGap) { g_gateHold = true; g_gateT = now + GATE_HOLD_US; }
-    else if (g_gateGap) { /* hole in progress: pin already low; ROM off again -> stay low */ g_gateGap = false; g_gatePhys = false; }
-    else g_gatePhys = false;
-  } else {                                       // ROM: gate on
-    if (g_gateHold) { g_gateHold = false; g_gatePhys = false; g_gateGap = true; g_gateT = now + GATE_GAP_US; }
-    else if (!g_gateGap) g_gatePhys = true;      // fresh note: on immediately
+  if (!gate) {
+    g_gatePhys = false;
+    g_gateGap = RomRetriggerCertain();
+    g_gateT = now + GATE_GAP_US;
+  } else {
+    g_gateGap = false;
+    g_gatePhys = true;
   }
   GateApply();
 }
 static inline void GateTick(uint32_t now) {
-  if (g_gateHold && (int32_t)(now - g_gateT) >= 0) { g_gateHold = false; g_gatePhys = false; GateApply(); }
-  if (g_gateGap  && (int32_t)(now - g_gateT) >= 0) { g_gateGap = false; g_gatePhys = true;  GateApply(); }
+  if (g_gateGap && (int32_t)(now - g_gateT) >= 0) { g_gateGap = false; g_gatePhys = true; GateApply(); }
 }
 
 void    mcs48_p2_write(uint8_t v)     {
   g_p2Rom = v;
+  {
+    bool porta = (v & (1u << P2_PORTA_OFF)) != 0;
+    if (porta != g_portaLast) {
+      g_portaLast = porta; uint32_t now = micros();
+      if (porta) { g_portaOnUs = now; ++g_portaAcc; g_portaCvDeltaUs = (uint16_t)(now - g_lastCvChangeUs); }
+      else { uint32_t d = now - g_portaOnUs; g_portaLenUs = d > 0xFFFF ? 0xFFFF : (uint16_t)d; }
+    }
+  }
   bool gate = !(v & (1u << P2_GATE));
   if (gate != g_gate) {
     g_gate = gate; EchoOut();
@@ -326,6 +340,9 @@ uint16_t t1RejectedPerSec()  { return g_t1Rej; }
 uint16_t gateGapUs(bool max)  { uint16_t m = g_gateGapMaxUs; if (max) { g_gateGapMaxUs = 0; return m; } return g_gateGapLastUs; }
 uint16_t gateOnsPerSec()      { return g_gateOnPerSec; }
 uint16_t gatePhysGapUs()      { return g_physGapUs; }
+uint16_t portaPulsesPerSec()  { return g_portaPerSec; }
+uint16_t portaPulseLenUs()    { return g_portaLenUs; }
+uint16_t portaAfterCvUs()     { return g_portaCvDeltaUs; }
 uint16_t runPerMille()     { return g_runPm; }
 uint16_t shPerMille()      { return g_shPm; }
 uint16_t benchUs(bool ints) { return ints ? g_benchIntUs : g_benchNoIntUs; }
