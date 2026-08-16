@@ -221,8 +221,12 @@ static bool     g_gatePending = false;     // ROM dropped, retrigger certain, pi
 static bool     g_gateGap     = false;     // hole in progress
 static uint32_t g_gateT       = 0;         // hole end
 static uint32_t g_physOffUs = 0; static uint16_t g_physGapUs = 0; static bool g_physLast = false;   // probe
+static bool     g_portaPulse = false;   // PORTAMENTO OFF raised by the host (retriggered step)
+static uint32_t g_portaT     = 0;
 static inline void GateApply() {
-  P2_PORT = (uint8_t)((g_p2Rom | (1u << P2_GATE)) & (g_gatePhys ? (uint8_t)~(1u << P2_GATE) : 0xFF));
+  uint8_t p2 = (uint8_t)((g_p2Rom | (1u << P2_GATE)) & (g_gatePhys ? (uint8_t)~(1u << P2_GATE) : 0xFF));
+  if (g_portaPulse) p2 |= (uint8_t)(1u << P2_PORTA_OFF);
+  P2_PORT = p2;
   if (g_gatePhys != g_physLast) {
     g_physLast = g_gatePhys;
     uint32_t now = micros();
@@ -235,12 +239,27 @@ static inline bool RomRetriggerCertain() {
   if (!(ram[0x15] & 0x02)) return false;                 // not in PLAY
   return (ram[ram[0x1B] & 0x7F] & 0x80) != 0;            // current step is a note
 }
+// PORTAMENTO OFF (P23): the analog PORTAMENTO AUTO logic keys on this line
+// (a 4 ms pulse makes the S/H jump; without it every pitch change glides at
+// the portamento setting, verified in recorded audio), and the ROM never
+// raises it in sequencer/arp/keyboard use, so left alone every sequencer
+// step slid in from the previous pitch. As SuperOS does, the host pulses it
+// on every fresh note (gate rise), on every retriggered step, and on a pitch
+// change during arpeggio play; a tied step or a legato key (gate stays high,
+// no retrigger) still glides, which is what AUTO is for.
+static const uint16_t PORTA_PULSE_US = 4000;
+static inline void PortaPulse(uint32_t now) { g_portaPulse = true; g_portaT = now + PORTA_PULSE_US; }
+static inline bool RomArpMode() { return (g_cpu.ram[0x15] & 0x1C) != 0; }   // UP / U&D / DOWN latched
 static inline void GateOpenHole(uint32_t now) {
   g_gatePending = false; g_gateGap = true; g_gateT = now + GATE_GAP_US;
-  g_gatePhys = false; GateApply();
+  g_gatePhys = false;
+  PortaPulse(now);
+  GateApply();
 }
 static inline void GateOnCvChange() {                    // ROM connects a changed CV-OUT value
-  if (g_gatePending) GateOpenHole(micros());
+  uint32_t now = micros();
+  if (g_gatePending) GateOpenHole(now);
+  else if (g_gate && RomArpMode()) { PortaPulse(now); GateApply(); }   // arp step under a held gate
 }
 static inline void GateOnRomChange(bool gate, uint32_t now) {
   if (!gate) {
@@ -248,12 +267,13 @@ static inline void GateOnRomChange(bool gate, uint32_t now) {
     else { g_gatePending = false; g_gateGap = false; g_gatePhys = false; }
   } else {
     if (g_gatePending) { GateOpenHole(now); return; }    // note repeated: hole at the raise
-    if (!g_gateGap) g_gatePhys = true;                   // else: raise deferred to the hole end
+    if (!g_gateGap) { g_gatePhys = true; PortaPulse(now); }   // fresh note; else: raise deferred to the hole end
   }
   GateApply();
 }
 static inline void GateTick(uint32_t now) {
   if (g_gateGap && (int32_t)(now - g_gateT) >= 0) { g_gateGap = false; g_gatePhys = true; GateApply(); }
+  if (g_portaPulse && (int32_t)(now - g_portaT) >= 0) { g_portaPulse = false; GateApply(); }
 }
 
 void    mcs48_p2_write(uint8_t v)     {

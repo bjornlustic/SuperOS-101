@@ -110,7 +110,12 @@ and stop follow the ROM exactly. Placing the hole elsewhere is audible: a hole
 ending before the CV change re-attacks on the old pitch (stutter), and a CV
 change under a high gate is legato to the analog PORTAMENTO AUTO logic (glide;
 the ROM never raises PORTAMENTO OFF here). The MIDI echo follows the ROM's own
-transitions. The host's own BUS traffic obeys the S/H invariants in `hw.h`
+transitions. And since the analog PORTAMENTO AUTO logic keys on the
+PORTAMENTO OFF line (verified: a 4 ms pulse makes the pitch S/H jump, without
+it every change glides at the portamento setting) and the ROM never raises it
+in sequencer/arp/keyboard use, the host pulses it as SuperOS does: on every
+fresh note, every retriggered step and every arp pitch change; tied steps and
+legato keys still glide. The host's own BUS traffic obeys the S/H invariants in `hw.h`
 (present, then connect; a single-write restore after the menu button poll put a
 blip on the pitch S/H every time it landed while the ROM held CV-OUT connected,
 and the analog trigger detector turned that into envelope retriggers on some
