@@ -18,6 +18,9 @@ uint16_t gatePhysGapUs();     // last off->on gap on the physical GATE pin (afte
 uint16_t portaPulsesPerSec(); // ROM PORTAMENTO OFF (P23) rising edges per second
 uint16_t portaPulseLenUs();   // last PORTAMENTO OFF pulse length (us)
 uint16_t portaAfterCvUs();    // last PORTAMENTO OFF rise minus last CV-OUT value change (us)
+uint16_t p2TogglesPerSec(uint8_t bit); // ROM P2 bit transitions per second
+uint16_t gateOnLenUs();   // last ROM gate on-length (us)
+uint16_t cvToGateOffUs(); // last ROM gate drop minus last CV-OUT change (us)
 uint16_t runPerMille();     // share of wall time inside the interpreter, per mille
 uint16_t shPerMille();      // share of wall time inside the S/H refresh, per mille
 uint16_t benchUs(bool ints); // boot bench: us for 4000 emulated cycles (10 ms real chip), interrupts off/on
