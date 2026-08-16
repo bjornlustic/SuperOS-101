@@ -95,7 +95,9 @@ emulated instructions, transparently to the ROM (`ShRefresh`), so the caps do no
 droop 4x further than on the original; LFO / EXT CLK edges are captured by INT0
 and fed to the ROM one per read as a virtual T1 (`mcs48_t1`), so its
 once-per-pass sample never misses one (max followable clock is about half the
-pass rate, ~75 Hz, and a step can land up to one pass late); and the ROM's
+pass rate, ~75 Hz, and a step can land up to one pass late; the virtual line
+only ever falls through that queue, never by showing the raw pin, or an edge
+still inside INT0's bounce qualification stepped the ROM twice); and the ROM's
 per-key scan loop (40% of a pass) runs natively (`emu101_hle.h`, verified
 cycle- and state-exact against the interpreter); and since the ROM retriggers
 each sequencer/arp step by dropping GATE for exactly one pass (~2 ms on the

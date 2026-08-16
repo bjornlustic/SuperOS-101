@@ -390,7 +390,13 @@ bool    mcs48_t1() {
     } else g_t1Shown = true;                               // set up the next one
     return g_t1Shown;
   }
-  g_t1Shown = g_t1Level;
+  // No edge queued: follow the source upward only. A falling edge reaches the
+  // ROM solely through the queue above; showing the raw LOW here let a read
+  // that landed inside the INT0 qualification window (the pin already low,
+  // the edge not yet pending) count as the edge, after which the queued copy
+  // of the same edge stepped the sequencer again two passes later (~17 ms:
+  // the double-triggered steps heard against SuperOS, about 1 step in 5).
+  if (g_t1Level) g_t1Shown = true;
   return g_t1Shown;
 }
 
