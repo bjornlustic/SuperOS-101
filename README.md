@@ -97,7 +97,11 @@ and fed to the ROM one per read as a virtual T1 (`mcs48_t1`), so its
 once-per-pass sample never misses one (max followable clock is about half the
 pass rate, ~75 Hz, and a step can land up to one pass late); and the ROM's
 per-key scan loop (40% of a pass) runs natively (`emu101_hle.h`, verified
-cycle- and state-exact against the interpreter). The interpreter itself keeps
+cycle- and state-exact against the interpreter); and since the ROM retriggers
+each sequencer/arp step by dropping GATE for exactly one pass (~2 ms on the
+chip, ~8 ms here, an audible re-attack), the host re-times that hole on the
+GATE pin back to 2 ms (`GateOnRomChange`; a plain release lands at most 12 ms
+late, the MIDI echo follows the ROM's own transitions). The interpreter itself keeps
 its PC as a pointer into the 2 KB-aligned ROM image and dispatches through a
 flash jump table (`mcs48.h`). The SuperOS loop pass is ~0.85 ms.
 

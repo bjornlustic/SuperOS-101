@@ -12,6 +12,9 @@ uint16_t passesPerSec();    // ROM program passes per second (CV-OUT S/H writes)
 uint16_t t1EdgesPerSec();   // T1 (LFO / EXT CLK) falling edges per second (INT0 / sync poll)
 uint16_t t1PollEdgesPerSec(); // same, as seen by the once-per-host-pass poll (diagnostic)
 uint16_t t1RejectedPerSec();  // INT0 falling edges rejected as bounces (pin back high within 0.5 ms)
+uint16_t gateGapUs(bool max); // ROM gate off->on gap: last / max since last read (us)
+uint16_t gateOnsPerSec();     // ROM gate-on events per second
+uint16_t gatePhysGapUs();     // last off->on gap on the physical GATE pin (after shaping)
 uint16_t runPerMille();     // share of wall time inside the interpreter, per mille
 uint16_t shPerMille();      // share of wall time inside the S/H refresh, per mille
 uint16_t benchUs(bool ints); // boot bench: us for 4000 emulated cycles (10 ms real chip), interrupts off/on
