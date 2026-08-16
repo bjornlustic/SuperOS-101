@@ -86,13 +86,16 @@ inline uint16_t MeasureVccMv() {
 //   [63..64] emulator: last PORTAMENTO OFF rise minus last CV-OUT change (us)
 //   [65..80] emulator: ROM P2 bit 0..7 transitions per second (8 words)
 //   [81..82] emulator: last ROM gate on-length (us)  [83..84] last gate drop minus CV change (us)
+//   [85..86] emulator: incoming MIDI note-ons per second
+//   [87..88] emulator: ROM key-column reads per second with a key down  [89..90] same, buttons
+//   [91..96] emulator: S/H value changes per second: CV-OUT, VCO, RANDOM
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
 extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[85] = {0};
+  uint8_t raw[97] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -118,6 +121,10 @@ inline void SendProbe() {
     for (uint8_t b = 0; b < 8; ++b) { uint16_t t = emu101::p2TogglesPerSec(b); raw[65 + 2 * b] = t >> 8; raw[66 + 2 * b] = t & 0xFF; }
     uint16_t ol = emu101::gateOnLenUs(), cg = emu101::cvToGateOffUs();
     raw[81] = ol >> 8; raw[82] = ol & 0xFF; raw[83] = cg >> 8; raw[84] = cg & 0xFF;
+    uint16_t mi = emu101::midiNoteOnsPerSec(); raw[85] = mi >> 8; raw[86] = mi & 0xFF;
+    uint16_t ks = emu101::keysSeenPerSec(), bs = emu101::btnsSeenPerSec();
+    raw[87] = ks >> 8; raw[88] = ks & 0xFF; raw[89] = bs >> 8; raw[90] = bs & 0xFF;
+    for (uint8_t r = 0; r < 3; ++r) { uint16_t c2 = emu101::shChangesPerSec(r); raw[91 + 2 * r] = c2 >> 8; raw[92 + 2 * r] = c2 & 0xFF; }
   }
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;

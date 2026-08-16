@@ -21,6 +21,10 @@ uint16_t portaAfterCvUs();    // last PORTAMENTO OFF rise minus last CV-OUT valu
 uint16_t p2TogglesPerSec(uint8_t bit); // ROM P2 bit transitions per second
 uint16_t gateOnLenUs();   // last ROM gate on-length (us)
 uint16_t cvToGateOffUs(); // last ROM gate drop minus last CV-OUT change (us)
+uint16_t midiNoteOnsPerSec(); // incoming MIDI note-ons per second (DIN + USB)
+uint16_t keysSeenPerSec();    // ROM keyboard-column P1 reads per second with a row low
+uint16_t shChangesPerSec(uint8_t route); // S/H value changes per second: 0 CV-OUT, 1 VCO, 2 RANDOM
+uint16_t btnsSeenPerSec();    // ROM button-column P1 reads per second with a row low
 uint16_t runPerMille();     // share of wall time inside the interpreter, per mille
 uint16_t shPerMille();      // share of wall time inside the S/H refresh, per mille
 uint16_t benchUs(bool ints); // boot bench: us for 4000 emulated cycles (10 ms real chip), interrupts off/on

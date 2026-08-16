@@ -110,7 +110,11 @@ and stop follow the ROM exactly. Placing the hole elsewhere is audible: a hole
 ending before the CV change re-attacks on the old pitch (stutter), and a CV
 change under a high gate is legato to the analog PORTAMENTO AUTO logic (glide;
 the ROM never raises PORTAMENTO OFF here). The MIDI echo follows the ROM's own
-transitions. The interpreter itself keeps
+transitions. The host's own BUS traffic obeys the S/H invariants in `hw.h`
+(present, then connect; a single-write restore after the menu button poll put a
+blip on the pitch S/H every time it landed while the ROM held CV-OUT connected,
+and the analog trigger detector turned that into envelope retriggers on some
+notes: the per-step "stutter", found by recording the audio and bisecting). The interpreter itself keeps
 its PC as a pointer into the 2 KB-aligned ROM image and dispatches through a
 flash jump table (`mcs48.h`). The SuperOS loop pass is ~0.85 ms.
 

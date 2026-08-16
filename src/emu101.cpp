@@ -63,6 +63,9 @@ static bool g_portaLast = false; static uint32_t g_portaOnUs = 0;   // PORTA OFF
 static uint16_t g_portaLenUs = 0, g_portaAcc = 0, g_portaPerSec = 0, g_portaCvDeltaUs = 0;
 static uint32_t g_lastCvChangeUs = 0;
 static uint16_t g_p2TogAcc[8], g_p2TogPerSec[8];   // P2 bit toggles per second (probe)
+static uint16_t g_midiInAcc = 0, g_midiInPerSec = 0;   // incoming note-ons per second (probe)
+static uint16_t g_shChgAcc[3], g_shChgPerSec[3];   // S/H value changes per second per route (probe)
+static uint16_t g_keySeenAcc = 0, g_keySeenPerSec = 0, g_btnSeenAcc = 0, g_btnSeenPerSec = 0;   // P1 reads with something down
 static uint8_t  g_p2Prev = P2_IDLE;
 static uint32_t g_gateOffUs = 0, g_gateOnUsT = 0;   // gate telemetry (probe)
 static uint16_t g_gateOnLenUs = 0, g_cvToGateOffUs = 0;
@@ -81,6 +84,9 @@ static void RateTick(uint32_t ms, uint16_t ran) {
     g_t1Rej = g_t1RejAcc; g_t1RejAcc = 0;
     g_gateOnPerSec = g_gateOnAcc; g_gateOnAcc = 0;
     g_portaPerSec = g_portaAcc; g_portaAcc = 0;
+    g_midiInPerSec = g_midiInAcc; g_midiInAcc = 0;
+    g_keySeenPerSec = g_keySeenAcc; g_keySeenAcc = 0;
+    for (uint8_t r = 0; r < 3; ++r) { g_shChgPerSec[r] = g_shChgAcc[r]; g_shChgAcc[r] = 0; } g_btnSeenPerSec = g_btnSeenAcc; g_btnSeenAcc = 0;
     for (uint8_t b = 0; b < 8; ++b) { g_p2TogPerSec[b] = g_p2TogAcc[b]; g_p2TogAcc[b] = 0; }
     g_runPm = (uint16_t)(g_runUsAcc / 1000); g_shPm = (uint16_t)(g_shUsAcc / 1000);
     g_runUsAcc = 0; g_shUsAcc = 0;
@@ -97,6 +103,7 @@ static int16_t  g_echoNote = -1;       // note currently sounding on MIDI OUT
 static const uint8_t MIDI_KEY0 = 53;   // MIDI note of key 0 (F3), as SuperOS
 
 static void MidiNoteOn(uint8_t note, uint8_t) {
+  ++g_midiInAcc;
   int16_t k = (int16_t)note - MIDI_KEY0;
   if (k >= 0 && k < 32) g_midiKeys |= (1UL << k);
 }
@@ -151,6 +158,7 @@ void    mcs48_bus_write(uint8_t v)    {
   if (route == ROUTE_CV_OUT && (uint8_t)(~v & 0x3F) != g_cvOut) GateOnCvChange();   // pin drops before the S/H moves
   BUS_PORT = v;
   if (route != ROUTE_NONE) {
+    if ((g_shKnown & (1u << route)) && g_shVal[route] != (uint8_t)(~v & 0x3F)) ++g_shChgAcc[route];
     g_shVal[route] = (uint8_t)(~v & 0x3F);
     g_shKnown |= (uint8_t)(1u << route);
     if (route == ROUTE_CV_OUT) {
@@ -173,6 +181,7 @@ uint8_t mcs48_p1_read() {
   for (uint8_t bank = 0; bank < 4; ++bank)
     if (!(bus & (1u << bank))) rows &= (uint8_t)~(uint8_t)(g_midiKeys >> (8 * bank));
   if (g_virtButtons && !(bus & (1u << COL_BUTTONS))) rows &= (uint8_t)~g_virtButtons;
+  if (rows != 0xFF) { if ((bus & 0x0F) != 0x0F) ++g_keySeenAcc; else if (!(bus & (1u << COL_BUTTONS))) ++g_btnSeenAcc; }
   return rows;
 }
 // --- gate gap shaping ---------------------------------------------------------
@@ -370,6 +379,10 @@ uint16_t portaAfterCvUs()     { return g_portaCvDeltaUs; }
 uint16_t p2TogglesPerSec(uint8_t b) { return b < 8 ? g_p2TogPerSec[b] : 0; }
 uint16_t gateOnLenUs()   { return g_gateOnLenUs; }
 uint16_t cvToGateOffUs() { return g_cvToGateOffUs; }
+uint16_t midiNoteOnsPerSec() { return g_midiInPerSec; }
+uint16_t keysSeenPerSec()    { return g_keySeenPerSec; }
+uint16_t shChangesPerSec(uint8_t r) { return r < 3 ? g_shChgPerSec[r] : 0; }
+uint16_t btnsSeenPerSec()    { return g_btnSeenPerSec; }
 uint16_t runPerMille()     { return g_runPm; }
 uint16_t shPerMille()      { return g_shPm; }
 uint16_t benchUs(bool ints) { return ints ? g_benchIntUs : g_benchNoIntUs; }
@@ -538,6 +551,14 @@ void loop() {
     s_lastPollMs = ms;
     uint8_t savedBus = BUS_PORT;
     uint8_t buttons = hw::ScanRead(COL_BUTTONS);
+    // Restore like a DAC write: the ROM's data first with no S/H connected,
+    // then its route. A single write reconnected a held S/H (CV-OUT during
+    // steps 13/1/2) at the instant the ladder switched from the scan
+    // pattern's value back to the CV: a ~1 V blip on the pitch S/H every
+    // time the poll landed there (10-25 times/s), which the analog board's
+    // trigger detector turned into envelope retriggers on some notes.
+    BUS_PORT = (uint8_t)(savedBus | 0xC0);
+    delayMicroseconds(hw::SETTLE_LADDER_US);
     BUS_PORT = savedBus;
     menu::NotifyButtons(buttons, ms);
   }

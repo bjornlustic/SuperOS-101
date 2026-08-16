@@ -5,6 +5,14 @@
 //   1. DB0–5 are ACTIVE-LOW — we always output the one's-complement of the value.
 //   2. The 4052 route is 11 (disconnected) during EVERY scan, so a held S/H CV is
 //      never corrupted. ScanRead()/DacWrite() are built so this can't be violated.
+//   3. A S/H is only ever (re)connected with its data already settled on the
+//      ladder: present with route 11 first, then switch the route. This holds for
+//      DacWrite() by construction; any host code that scans while an emulated
+//      ROM holds a S/H connected must restore the BUS in those two steps too
+//      (emu101.cpp menu poll / ShRefresh). A single restoring write reconnects
+//      the S/H while the ladder is still slewing from the scan value: a blip on
+//      the pitch S/H that the analog board's trigger detector turned into
+//      envelope retriggers (heard as a per-step stutter, 2026-08-15).
 #pragma once
 #include <Arduino.h>
 #include "pins.h"
