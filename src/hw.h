@@ -27,7 +27,17 @@ namespace hw {
 #ifdef __AVR__
 inline void IdleWaitUs(uint16_t us) {
   if (!(SREG & (1 << SREG_I))) { delayMicroseconds(us); return; }
-  const uint16_t ticks = (uint16_t)(((uint32_t)us * (F_CPU / 8UL)) / 1000000UL);
+  // Timer1 ticks at F_CPU/8: 0.5 tick/us at 4 MHz, 1 at 8, 2 at 16. Shifts,
+  // not a 32-bit divide (that cost ~150 us per call at 4 MHz).
+#if F_CPU == 4000000L
+  const uint16_t ticks = (uint16_t)(us >> 1);
+#elif F_CPU == 8000000L
+  const uint16_t ticks = us;
+#elif F_CPU == 16000000L
+  const uint16_t ticks = (uint16_t)(us > 32767 ? 65535 : (us << 1));
+#else
+#error "IdleWaitUs: add the tick scale for this F_CPU"
+#endif
   TCNT1  = 0;
   OCR1A  = ticks;
   TIFR1  = (1 << OCF1A);

@@ -286,13 +286,16 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
       (platformio.ini [env:app]) and sleeps through the S/H settle dwells (hw.h
       IdleWaitUs); with that the pitch with USB running is indistinguishable from
       USB-off in both firmwares (within the VCO's own 2-3 cent noise). The cost is
-      emulator speed: the 80C49 interpreter runs ~6.9x slower than the real chip
-      (scan/arp latency, not the DAC values). One knock-on effect on pitch: the
-      ROM refreshes the S/H caps once per pass, so a 7x longer pass lets them
-      droop 7x further between refreshes (audible warble on held notes in
-      emulator mode, none in SuperOS at its 0.9 ms pass); the emulator host
-      compensates by re-writing each S/H with the ROM's last value about every
-      2 ms (emu101.cpp ShRefresh). Earlier evidence of the same limit:
+      emulator speed: the 80C49 interpreter reaches ~107k of the chip's 400k
+      machine cycles/s (SysEx 0x3B probe fields 17..34: cycles/s, ROM passes/s,
+      T1 edges/s, time shares, boot benches), so the ROM's pass is ~6.6 ms
+      instead of ~1.6 ms (scan/arp latency, not the DAC values). Two knock-on
+      effects on the analog side are compensated by the host (emu101.cpp): the
+      ROM refreshes the S/H caps once per pass, so the host re-writes the two
+      pitch S/H every 2 ms (ShRefresh); and the ROM samples the LFO/EXT-CLK on
+      T1 once per pass, so INT0 captures every edge and a virtual T1 hands them
+      to the ROM one at a time (a clock above ~half the pass rate is capped, not
+      lost into aliasing). Earlier evidence of the same limit:
       with the BOD fuse at 4.3 V (efuse 0xF8) every SPM flash write and the USB
       PLL start reset the chip (BORF via SysEx 0x3B); at 3.5 V (efuse 0xF9, now
       the standard) it is clean. Hardware headroom (a later board rev) would come

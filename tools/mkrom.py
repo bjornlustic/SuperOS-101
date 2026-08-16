@@ -31,10 +31,12 @@ def build():
         for i in range(0, 2048, 16):
             rows.append(",".join("0x%02X" % b for b in data[i:i + 16]))
         return (HEAD + "#define ROM101_PRESENT 1\n"
-                "static const uint8_t ROM101[2048] PROGMEM = {\n"
+                "// 2 KB-aligned: the interpreter (mcs48.h) keeps its PC as a pointer into\n"
+                "// this array and derives the 11-bit address / page from the low bits.\n"
+                "static const uint8_t ROM101[2048] PROGMEM __attribute__((aligned(2048))) = {\n"
                 + ",\n".join(rows) + "\n};\n")
     return (HEAD + "#define ROM101_PRESENT 0\n"
-            "static const uint8_t ROM101[2048] PROGMEM = {0};\n")
+            "static const uint8_t ROM101[2048] PROGMEM __attribute__((aligned(2048))) = {0};\n")
 
 body = build()
 old = open(OUT).read() if os.path.exists(OUT) else None

@@ -64,17 +64,42 @@ inline uint16_t MeasureVccMv() {
 #endif
 }
 //   [15..16] VCC in mV sampled while the USB engine was parked (0x3D hold-off)
+//   [17..18] emulator: emulated 80C49 machine cycles per second / 100
+//            (the real 6 MHz chip = 4000); 0 in SuperOS
+//   [19..20] emulator: ROM program passes per second (S/H refresh rate,
+//            T1 clock sample rate); 0 in SuperOS
+//   [21..22] emulator: T1 (LFO / EXT CLK) falling edges per second
+//   [23..24] emulator: share of time inside the interpreter (per mille)
+//   [25..26] emulator: share of time inside the S/H refresh (per mille)
+//   [27..28] emulator: boot bench, us per 4000 emulated cycles, interrupts off
+//   [29..30] emulator: same with interrupts on
+//   [31..32] emulator: boot bench, us for 10 hw::DacWrite
+//   [33..34] emulator: boot bench, us for 100 midi::Poll
+//   [35..46] emulator: boot bench, us for 100x T1Watch, RateTick, RamPersistTick,
+//            micros(), button scan (5 words; word 0 repeats [33..34])
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
 extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[17] = {0};
+  uint8_t raw[47] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
   raw[8] = combined_prev_stage();
+  if (combined_current_fw() == FW_EMU) {
+    uint16_t c = emu101::cyclesPerSec100(), p = emu101::passesPerSec();
+    raw[17] = c >> 8; raw[18] = c & 0xFF; raw[19] = p >> 8; raw[20] = p & 0xFF;
+    uint16_t e = emu101::t1EdgesPerSec(); raw[21] = e >> 8; raw[22] = e & 0xFF;
+    uint16_t r = emu101::runPerMille();   raw[23] = r >> 8; raw[24] = r & 0xFF;
+    uint16_t h = emu101::shPerMille();    raw[25] = h >> 8; raw[26] = h & 0xFF;
+    uint16_t b0 = emu101::benchUs(false), b1 = emu101::benchUs(true);
+    raw[27] = b0 >> 8; raw[28] = b0 & 0xFF; raw[29] = b1 >> 8; raw[30] = b1 & 0xFF;
+    uint16_t bd = emu101::benchDacUs(), bp = emu101::benchPollUs();
+    raw[31] = bd >> 8; raw[32] = bd & 0xFF; raw[33] = bp >> 8; raw[34] = bp & 0xFF;
+    for (uint8_t i = 0; i < 6; ++i) { uint16_t v = emu101::benchB(i); raw[35 + 2 * i] = v >> 8; raw[36 + 2 * i] = v & 0xFF; }
+  }
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;
 #ifdef __AVR__

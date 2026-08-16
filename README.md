@@ -83,15 +83,23 @@ through the S/H settle waits (`hw.h`); measured on the first unit the rail then 
 the USB engine off (8 MHz was enough for SuperOS but left the CPU-bound emulator
 ~5 cents load-sensitive). The USB engine keeps its clock when unplugged so plugging
 a cable in never moves the tuning (details in `docs/HARDWARE.md`, "Current
-budget"). The side effect is on the 80C49 emulator: its interpreter runs about
-6.9x slower than the real 6 MHz chip (about 3.7x at 16 MHz), which stretches the
-ROM's scan loop and delay loops (key/arp latency of ~10-25 ms), not the DAC values.
-Since the ROM's pass is also what refreshes the three sample/hold caps (every
-1.5-3.5 ms on the real chip), the stretched pass would let them droop audibly
-between refreshes (a pitch warble on held notes); the emulator host therefore
-re-writes each S/H with the ROM's last value about every 2 ms between emulated
-instructions (`emu101.cpp` ShRefresh, transparent to the ROM), which costs the
-interpreter another ~12-15%. The SuperOS loop pass is ~0.9 ms.
+budget"). The side effect is on the 80C49 emulator: the interpreter cannot keep
+up with the real 6 MHz chip. Measured on the unit (SysEx 0x3B probe): about
+107k emulated machine cycles/s against the chip's 400k, so the ROM's program
+pass, which is its S/H refresh and its clock-sample rate, takes ~6.6 ms instead
+of ~1.6 ms (152 passes/s), and key/arp latency stretches with it (not the DAC
+values). Three things keep the pitch and the sequencer usable at that speed
+(`src/emu101.cpp`, `src/emu101_hle.h`, `src/mcs48.h`): the host re-writes the two
+pitch S/H (CV-OUT, VCO range) with the ROM's last values every 2 ms between
+emulated instructions, transparently to the ROM (`ShRefresh`), so the caps do not
+droop 4x further than on the original; LFO / EXT CLK edges are captured by INT0
+and fed to the ROM one per read as a virtual T1 (`mcs48_t1`), so its
+once-per-pass sample never misses one (max followable clock is about half the
+pass rate, ~75 Hz, and a step can land up to one pass late); and the ROM's
+per-key scan loop (40% of a pass) runs natively (`emu101_hle.h`, verified
+cycle- and state-exact against the interpreter). The interpreter itself keeps
+its PC as a pointer into the 2 KB-aligned ROM image and dispatches through a
+flash jump table (`mcs48.h`). The SuperOS loop pass is ~0.85 ms.
 
 ## Pattern storage (flash arena)
 

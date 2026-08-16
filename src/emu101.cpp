@@ -28,7 +28,6 @@
 // this region, so wear is a non-issue.
 #include <Arduino.h>
 #include "emu101.h"
-#include "mcs48.h"
 #include "pins.h"
 #include "hw.h"
 #include "menu.h"
@@ -44,10 +43,35 @@
 #else
 #define PROGMEM
 #define pgm_read_byte(p) (*(const uint8_t*)(p))
+#define cli() ((void)0)
+#define sei() ((void)0)
 #endif
 #include "rom101_data.h"
+#define MCS48_ROM_BASE ROM101      // 2 KB-aligned (tools/mkrom.py), as mcs48.h requires
+
+#include "emu101_hle.h"     // native fast path for the ROM's key-scan loop (defines MCS48_HLE_ENTRY)
+#include "mcs48.h"
 
 static Mcs48 g_cpu;
+
+// --- speed telemetry -----------------------------------------------------------
+static uint32_t g_cycAcc = 0, g_passAcc = 0, g_rateT0 = 0;
+static uint16_t g_cyc100 = 0, g_pps = 0, g_eps = 0, g_runPm = 0, g_shPm = 0;
+static uint32_t g_runUsAcc = 0, g_shUsAcc = 0;
+static uint16_t g_benchNoIntUs = 0, g_benchIntUs = 0;   // boot bench (BenchRun)
+static uint16_t g_benchDacUs = 0, g_benchPollUs = 0;      // 10x hw::DacWrite / 100x midi::Poll
+static uint16_t g_benchB[6];                               // 100x: Poll, T1Watch, RateTick, RamPersistTick, micros, button scan
+static volatile uint16_t g_edgeAcc = 0;   // T1 falling edges seen (INT0 / poll)
+static void RateTick(uint32_t ms, uint16_t ran) {
+  g_cycAcc += ran;
+  if ((uint32_t)(ms - g_rateT0) >= 1000) {
+    g_cyc100 = (uint16_t)(g_cycAcc / 100); g_pps = (uint16_t)g_passAcc;
+    cli(); g_eps = g_edgeAcc; g_edgeAcc = 0; sei();
+    g_runPm = (uint16_t)(g_runUsAcc / 1000); g_shPm = (uint16_t)(g_shUsAcc / 1000);
+    g_runUsAcc = 0; g_shUsAcc = 0;
+    g_cycAcc = 0; g_passAcc = 0; g_rateT0 = ms;
+  }
+}
 
 // --- MIDI keys into the matrix, ROM output onto MIDI OUT ---------------------
 static uint32_t g_midiKeys = 0;        // bit k = MIDI holds key k (0 = F3)
@@ -85,14 +109,18 @@ static void EchoOut() {
 // cannot tell: INS A,BUS reads its own latch, and a scan column it left low
 // is back on the pins before its next instruction. Only S/H the ROM has
 // actually written are refreshed, never the one it currently holds connected.
+// Costs about 12% of the interpreter's time at the 2 ms cadence.
 static uint8_t  g_shVal[3];              // last value connected to route 0..2
 static uint8_t  g_shKnown = 0;           // bit r = g_shVal[r] is valid
-static const uint16_t SH_REFRESH_US = 1500;
+static const uint16_t SH_REFRESH_US = 2000;
 
 static void ShRefresh() {
   uint8_t saved = BUS_PORT;              // == the ROM's bus latch (bus_write mirrors it)
   uint8_t held  = (uint8_t)(saved >> 6); // route the ROM has connected now (3 = none)
-  for (uint8_t r = 0; r < 3; ++r)
+  // The two pitch S/H (CV-OUT, VCO range) only: the RANDOM S/H is the LFO's
+  // S&H waveform, refreshed by the ROM's own pass often enough, and each
+  // route costs ~130 us of interpreter time per refresh.
+  for (uint8_t r = ROUTE_CV_OUT; r <= ROUTE_VCO; ++r)
     if ((g_shKnown & (1u << r)) && r != held) hw::DacWrite(g_shVal[r], (Route)r);
   BUS_PORT = (uint8_t)(saved | 0xC0);    // ROM's data back on the ladder, no S/H
   delayMicroseconds(hw::SETTLE_LADDER_US);
@@ -108,7 +136,7 @@ void    mcs48_bus_write(uint8_t v)    {
   if (route != ROUTE_NONE) {
     g_shVal[route] = (uint8_t)(~v & 0x3F);
     g_shKnown |= (uint8_t)(1u << route);
-    if (route == ROUTE_CV_OUT) { g_cvOut = g_shVal[route]; EchoOut(); }
+    if (route == ROUTE_CV_OUT) { ++g_passAcc; g_cvOut = g_shVal[route]; EchoOut(); }
   }
 }
 // P1 rows are active-low; the BUS latch says which keyboard bank (DB0..3
@@ -145,10 +173,11 @@ bool    mcs48_t0() { return (PIND & (1u << T0_HOLD_BIT))  != 0; }
 static bool             g_t1Level   = true;   // last source level seen
 static volatile uint8_t g_t1Pending = 0;      // falling edges captured, not yet shown to the ROM
 static bool             g_t1Shown   = true;   // last level returned to the ROM
-static const uint8_t T1_PENDING_MAX = 8;
+static const uint8_t T1_PENDING_MAX = 2;   // small: a clock faster than the ROM can follow drops edges instead of lagging
 
 #ifdef __AVR__
 ISR(INT0_vect) {
+  ++g_edgeAcc;
   if (!midiclk::SyncOn() && g_t1Pending < T1_PENDING_MAX) ++g_t1Pending;
 }
 static inline void T1PinEdgeInit() {
@@ -158,8 +187,6 @@ static inline void T1PinEdgeInit() {
 }
 #else
 static inline void T1PinEdgeInit() {}
-#define cli() ((void)0)
-#define sei() ((void)0)
 #endif
 
 static inline bool T1Source() {
@@ -175,6 +202,7 @@ static inline void T1Watch() {
 #endif
   if (countHere && g_t1Level && !lvl) {
     cli();
+    ++g_edgeAcc;
     if (g_t1Pending < T1_PENDING_MAX) ++g_t1Pending;
     sei();
   }
@@ -197,6 +225,15 @@ namespace emu101 {
 
 bool available() { return ROM101_PRESENT != 0; }
 const uint8_t* ram() { return g_cpu.ram; }   // sim / bench inspection
+uint16_t cyclesPerSec100() { return g_cyc100; }
+uint16_t passesPerSec()    { return g_pps; }
+uint16_t t1EdgesPerSec()   { return g_eps; }
+uint16_t runPerMille()     { return g_runPm; }
+uint16_t shPerMille()      { return g_shPm; }
+uint16_t benchUs(bool ints) { return ints ? g_benchIntUs : g_benchNoIntUs; }
+uint16_t benchDacUs()  { return g_benchDacUs; }
+uint16_t benchPollUs() { return g_benchPollUs; }
+uint16_t benchB(uint8_t i) { return i < 6 ? g_benchB[i] : 0; }
 
 static void OnSysex(const uint8_t* body, uint8_t len) { sysex::HandleCommon(body, len); }
 static void OnRealtime(uint8_t b) { midiclk::OnRealtime(b); }
@@ -225,7 +262,7 @@ static void RamPersistTick(uint32_t ms) {
   for (uint8_t n = 0; n < 8; ++n) {
     uint8_t v = g_cpu.ram[EMU_RAM_FIRST + scan];
     if (v != g_ramSeen[scan]) { g_ramSeen[scan] = v; g_ramDirty = true; g_ramQuietMs = ms; }
-    scan = (uint8_t)((scan + 1) % EMU_RAM_COUNT);
+    if (++scan >= EMU_RAM_COUNT) scan = 0;   // no modulo: -Os made that a division call per byte
   }
   if (!g_ramDirty || (uint32_t)(ms - g_ramQuietMs) < 1000) return;
   for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i) {
@@ -240,9 +277,40 @@ static void RamPersistTick(uint32_t ms) {
   g_ramDirty = false;
 }
 
+// Boot bench: interpreter speed alone, interrupts off / on (probe raw[27..30]).
+static uint16_t BenchRun(bool ints) {
+#ifdef __AVR__
+  Mcs48 c; mcs48_reset(c);
+  uint8_t sreg = SREG;
+  if (ints) sei(); else cli();
+  TCNT1 = 0;
+  uint16_t ran = 0;
+  while (ran < 4000) ran = (uint16_t)(ran + mcs48_run(c, 64));
+  uint16_t t = TCNT1;
+  SREG = sreg;
+  return (uint16_t)(t * 2UL);   // F_CPU/8 ticks -> us at 4 MHz
+#else
+  (void)ints; return 0;
+#endif
+}
+
 void setup() {
   hw::Init();
   T1PinEdgeInit();
+  g_hleOk = HleCheck();
+  g_benchNoIntUs = BenchRun(false);
+  g_benchIntUs   = BenchRun(true);
+  BUS_PORT = 0xFF; P2_PORT = 0xFF;   // the bench ran ROM code against the ports; re-idle
+#ifdef __AVR__
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 10; ++i) hw::DacWrite(0, ROUTE_NONE); g_benchDacUs = (uint16_t)(micros() - t); BUS_PORT = 0xFF; }
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 100; ++i) midi::Poll();        g_benchB[0] = (uint16_t)(micros() - t); }
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 100; ++i) T1Watch();           g_benchB[1] = (uint16_t)(micros() - t); }
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 100; ++i) RateTick(millis(), 0); g_benchB[2] = (uint16_t)(micros() - t); }
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 100; ++i) RamPersistTick(millis()); g_benchB[3] = (uint16_t)(micros() - t); }
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 100; ++i) { (void)micros(); }  g_benchB[4] = (uint16_t)(micros() - t); }
+  { uint32_t t = micros(); for (uint8_t i = 0; i < 100; ++i) { uint8_t sb = BUS_PORT; (void)hw::ScanRead(COL_BUTTONS); BUS_PORT = sb; } g_benchB[5] = (uint16_t)(micros() - t); }
+  g_benchPollUs = g_benchB[0];
+#endif
   midi::Handlers h;
   h.noteOn = MidiNoteOn; h.noteOff = MidiNoteOff;
   h.sysex = OnSysex; h.realtime = OnRealtime;
@@ -254,28 +322,36 @@ void setup() {
   RamLoad();          // the "battery" kept the sequence: restore it before the ROM runs
 }
 
-// One slice per loop() pass: 48 cycles = 120 us of emulated time, about 0.8 ms
-// of real time at the 4 MHz core clock, so the S/H refresh below gets its
-// turn about every 2 slices (a slice was 200 cycles = ~3.5 ms real before it
-// existed). The refresh itself costs ~0.2-0.35 ms per round, so the
-// interpreter gives up roughly 12-15% to it.
-// The host sim keeps 200 cycles = 500 us of virtual time per loop(): its
+// Slices: 30 instructions (~48 cycles = 120 us of emulated time, ~0.4 ms real
+// at the 4 MHz core clock), the granularity of the S/H refresh check;
+// SLICES_PER_PASS of them per host loop() pass, between which the
+// MIDI/menu/persistence polls and the host loop overhead run once (they cost
+// ~0.3 ms, several emulated instructions' worth, per pass).
+// The host sim keeps ~200 cycles = 500 us of virtual time per loop(): its
 // self-test counts loops at that rate, and virtual time is not real time.
 #ifdef SUPEROS_SIM
-static const uint16_t SLICE_CYCLES = 200;
+static const uint8_t SLICE_INSNS = 64;
+static const uint8_t SLICES_PER_PASS = 2;
 #else
-static const uint16_t SLICE_CYCLES = 48;
+static const uint8_t SLICE_INSNS = 30;
+static const uint8_t SLICES_PER_PASS = 4;
 #endif
 
 void loop() {
-  uint16_t ran = mcs48_run(g_cpu, SLICE_CYCLES);
-
-  // S/H refresh at a SuperOS-like cadence (see ShRefresh); time-based, since
-  // the droop is per real millisecond however slow the interpreter runs.
+  // Several slices per host pass: the S/H refresh check and the sync-clock
+  // watch sit between slices (cheap), the polls below run once per pass.
+  // Fewer host passes per ROM pass = less overhead per emulated instruction.
+  uint16_t ran = 0;
   static uint32_t s_shLastUs = 0;
-  {
+  for (uint8_t i = 0; i < SLICES_PER_PASS; ++i) {
+    uint32_t tRun = micros();
+    ran = (uint16_t)(ran + mcs48_run(g_cpu, SLICE_INSNS));
     uint32_t nowUs = micros();
-    if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { s_shLastUs = nowUs; ShRefresh(); }
+    g_runUsAcc += nowUs - tRun;
+    // S/H refresh at a SuperOS-like cadence (see ShRefresh); time-based, since
+    // the droop is per real millisecond however slow the interpreter runs.
+    if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { s_shLastUs = nowUs; ShRefresh(); g_shUsAcc += micros() - nowUs; }
+    if (midiclk::SyncOn()) T1Watch();   // divided-clock edges (pin edges arrive via INT0)
   }
 
 #ifdef SUPEROS_SIM
@@ -299,14 +375,15 @@ void loop() {
 #endif
 
   midi::Poll();   // notes into the matrix, divided clock (emulated T1), SysEx
-  T1Watch();      // catch clock edges the ROM's once-per-pass sample would miss
-  RamPersistTick(millis());
+  T1Watch();      // sync-clock edge right after Poll advanced it
+  uint32_t ms = millis();
+  RateTick(ms, ran);
+  RamPersistTick(ms);
 
   // Config-menu combo poll every ~10 ms: scan the buttons ourselves, without
   // disturbing the BUS latch the emulated ROM left behind (route 11 scans
   // can't corrupt a S/H; restoring the latch keeps the ROM's own scan state).
   static uint32_t s_lastPollMs = 0;
-  uint32_t ms = millis();
   if (ms - s_lastPollMs >= 10) {
     s_lastPollMs = ms;
     uint8_t savedBus = BUS_PORT;
