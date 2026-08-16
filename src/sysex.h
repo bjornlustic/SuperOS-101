@@ -77,13 +77,15 @@ inline uint16_t MeasureVccMv() {
 //   [33..34] emulator: boot bench, us for 100 midi::Poll
 //   [35..46] emulator: boot bench, us for 100x T1Watch, RateTick, RamPersistTick,
 //            micros(), button scan (5 words; word 0 repeats [33..34])
+//   [47..48] emulator: T1 falling edges per second as seen by the host-pass poll
+//   [49..50] emulator: INT0 edges per second rejected as bounces (< 0.5 ms low)
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
 extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[47] = {0};
+  uint8_t raw[51] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -99,6 +101,8 @@ inline void SendProbe() {
     uint16_t bd = emu101::benchDacUs(), bp = emu101::benchPollUs();
     raw[31] = bd >> 8; raw[32] = bd & 0xFF; raw[33] = bp >> 8; raw[34] = bp & 0xFF;
     for (uint8_t i = 0; i < 6; ++i) { uint16_t v = emu101::benchB(i); raw[35 + 2 * i] = v >> 8; raw[36 + 2 * i] = v & 0xFF; }
+    uint16_t pe = emu101::t1PollEdgesPerSec(); raw[47] = pe >> 8; raw[48] = pe & 0xFF;
+    uint16_t rj = emu101::t1RejectedPerSec();  raw[49] = rj >> 8; raw[50] = rj & 0xFF;
   }
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;

@@ -56,7 +56,9 @@ static Mcs48 g_cpu;
 
 // --- speed telemetry -----------------------------------------------------------
 static uint32_t g_cycAcc = 0, g_passAcc = 0, g_rateT0 = 0;
-static uint16_t g_cyc100 = 0, g_pps = 0, g_eps = 0, g_runPm = 0, g_shPm = 0;
+static uint16_t g_cyc100 = 0, g_pps = 0, g_eps = 0, g_runPm = 0, g_shPm = 0, g_pollEps = 0;
+static uint16_t g_pollEdgeAcc = 0;   // T1 falling edges seen by the once-per-pass poll (diagnostic)
+static uint16_t g_t1RejAcc = 0, g_t1Rej = 0;   // INT0 edges rejected as bounces (T1Qualify), per s
 static uint32_t g_runUsAcc = 0, g_shUsAcc = 0;
 static uint16_t g_benchNoIntUs = 0, g_benchIntUs = 0;   // boot bench (BenchRun)
 static uint16_t g_benchDacUs = 0, g_benchPollUs = 0;      // 10x hw::DacWrite / 100x midi::Poll
@@ -67,6 +69,8 @@ static void RateTick(uint32_t ms, uint16_t ran) {
   if ((uint32_t)(ms - g_rateT0) >= 1000) {
     g_cyc100 = (uint16_t)(g_cycAcc / 100); g_pps = (uint16_t)g_passAcc;
     cli(); g_eps = g_edgeAcc; g_edgeAcc = 0; sei();
+    g_pollEps = g_pollEdgeAcc; g_pollEdgeAcc = 0;
+    g_t1Rej = g_t1RejAcc; g_t1RejAcc = 0;
     g_runPm = (uint16_t)(g_runUsAcc / 1000); g_shPm = (uint16_t)(g_shUsAcc / 1000);
     g_runUsAcc = 0; g_shUsAcc = 0;
     g_cycAcc = 0; g_passAcc = 0; g_rateT0 = ms;
@@ -141,11 +145,17 @@ void    mcs48_bus_write(uint8_t v)    {
 }
 // P1 rows are active-low; the BUS latch says which keyboard bank (DB0..3
 // low) the ROM is scanning, so pull the MIDI-held keys of that bank low too.
+// Editor transport (SysEx 0x1E, see OnSysex): a virtual PLAY button, held
+// on the buttons column (DB5 low) for a few ROM passes so its edge detector
+// sees the tap. The ROM's PLAY toggles play/stop.
+static uint8_t  g_virtButtons = 0;
+static uint32_t g_virtUntilMs = 0;
 uint8_t mcs48_p1_read() {
   uint8_t rows = P1_PIN;
   uint8_t bus = BUS_PORT;
   for (uint8_t bank = 0; bank < 4; ++bank)
     if (!(bus & (1u << bank))) rows &= (uint8_t)~(uint8_t)(g_midiKeys >> (8 * bank));
+  if (g_virtButtons && !(bus & (1u << COL_BUTTONS))) rows &= (uint8_t)~g_virtButtons;
   return rows;
 }
 void    mcs48_p2_write(uint8_t v)     {
@@ -176,9 +186,29 @@ static bool             g_t1Shown   = true;   // last level returned to the ROM
 static const uint8_t T1_PENDING_MAX = 2;   // small: a clock faster than the ROM can follow drops edges instead of lagging
 
 #ifdef __AVR__
+// A falling edge only counts once the pin has stayed low for T1_QUALIFY_US
+// (checked from the slice loop, T1Qualify): the ROM pulses CLOCK RESET on
+// sequencer/arp events, the LFO restarts, and the T1 line can bounce for a
+// few us on that; the original CPU never saw such a bounce (it sampled once
+// per pass) but INT0 would turn each into an extra clock edge, i.e. an extra
+// step / gate retrigger. Real clocks are far longer than that; an EXT CLK
+// pulse shorter than ~0.5 ms was invisible to the original too.
+static volatile uint32_t g_t1CandUs = 0;   // micros() of the last unqualified falling edge
+static volatile bool     g_t1Cand   = false;
+static const uint16_t    T1_QUALIFY_US = 500;
 ISR(INT0_vect) {
   ++g_edgeAcc;
-  if (!midiclk::SyncOn() && g_t1Pending < T1_PENDING_MAX) ++g_t1Pending;
+  if (!midiclk::SyncOn()) { g_t1CandUs = micros(); g_t1Cand = true; }
+}
+static inline void T1Qualify() {
+  if (!g_t1Cand) return;
+  uint32_t t; cli(); t = g_t1CandUs; sei();
+  if ((uint32_t)(micros() - t) < T1_QUALIFY_US) return;
+  cli();
+  g_t1Cand = false;
+  if (!(PIND & (1u << T1_CLOCK_BIT))) { if (g_t1Pending < T1_PENDING_MAX) ++g_t1Pending; }
+  else ++g_t1RejAcc;
+  sei();
 }
 static inline void T1PinEdgeInit() {
   EICRA = (uint8_t)((EICRA & ~((1u << ISC01) | (1u << ISC00))) | (1u << ISC01)); // falling edge
@@ -187,6 +217,7 @@ static inline void T1PinEdgeInit() {
 }
 #else
 static inline void T1PinEdgeInit() {}
+static inline void T1Qualify() {}
 #endif
 
 static inline bool T1Source() {
@@ -195,6 +226,7 @@ static inline bool T1Source() {
 }
 static inline void T1Watch() {
   bool lvl = T1Source();
+  if (g_t1Level && !lvl) ++g_pollEdgeAcc;   // diagnostic: edges as a slow poll sees them
 #ifdef __AVR__
   bool countHere = midiclk::SyncOn();     // pin edges arrive via INT0
 #else
@@ -210,6 +242,7 @@ static inline void T1Watch() {
 }
 bool    mcs48_t1() {
   T1Watch();
+  if (!midiclk::SyncOn()) T1Qualify();
   if (g_t1Pending) {
     if (g_t1Shown) {                                       // deliver the edge
       g_t1Shown = false;
@@ -228,6 +261,8 @@ const uint8_t* ram() { return g_cpu.ram; }   // sim / bench inspection
 uint16_t cyclesPerSec100() { return g_cyc100; }
 uint16_t passesPerSec()    { return g_pps; }
 uint16_t t1EdgesPerSec()   { return g_eps; }
+uint16_t t1PollEdgesPerSec() { return g_pollEps; }
+uint16_t t1RejectedPerSec()  { return g_t1Rej; }
 uint16_t runPerMille()     { return g_runPm; }
 uint16_t shPerMille()      { return g_shPm; }
 uint16_t benchUs(bool ints) { return ints ? g_benchIntUs : g_benchNoIntUs; }
@@ -235,7 +270,12 @@ uint16_t benchDacUs()  { return g_benchDacUs; }
 uint16_t benchPollUs() { return g_benchPollUs; }
 uint16_t benchB(uint8_t i) { return i < 6 ? g_benchB[i] : 0; }
 
-static void OnSysex(const uint8_t* body, uint8_t len) { sysex::HandleCommon(body, len); }
+static void OnSysex(const uint8_t* body, uint8_t len) {
+  if (sysex::HandleCommon(body, len)) return;
+  // 0x1E <x>: transport from the editor. The ROM's PLAY button toggles, so
+  // any value taps PLAY (the editor tracks the state from the note echo).
+  if (body[0] == 0x1E) { g_virtButtons |= (1u << 1); g_virtUntilMs = millis() + 60; }
+}
 static void OnRealtime(uint8_t b) { midiclk::OnRealtime(b); }
 
 // --- battery-RAM persistence -------------------------------------------------
@@ -352,6 +392,7 @@ void loop() {
     // the droop is per real millisecond however slow the interpreter runs.
     if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { s_shLastUs = nowUs; ShRefresh(); g_shUsAcc += micros() - nowUs; }
     if (midiclk::SyncOn()) T1Watch();   // divided-clock edges (pin edges arrive via INT0)
+    else T1Qualify();                    // promote a settled INT0 edge to a pending clock
   }
 
 #ifdef SUPEROS_SIM
@@ -379,6 +420,7 @@ void loop() {
   uint32_t ms = millis();
   RateTick(ms, ran);
   RamPersistTick(ms);
+  if (g_virtButtons && (int32_t)(ms - g_virtUntilMs) >= 0) g_virtButtons = 0;
 
   // Config-menu combo poll every ~10 ms: scan the buttons ourselves, without
   // disturbing the BUS latch the emulated ROM left behind (route 11 scans

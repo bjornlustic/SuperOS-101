@@ -34,6 +34,8 @@
 //   0x14 <code>           ack: 0 ok, 1 bad checksum, 2 bad pattern/length
 //   0x15 <p> <step>       (device) sequencer step position, sent on change
 //   0x1D <p>              select pattern p (as PLAY + key on the panel)
+//   0x1E <x>              transport: SuperOS x=1 play / 0 stop; the emulator
+//                         taps its PLAY button (toggle) for any x
 //   0x20                  request config              -> 0x21
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
