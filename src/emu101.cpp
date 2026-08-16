@@ -136,9 +136,21 @@ static uint8_t  g_shVal[3];              // last value connected to route 0..2
 static uint8_t  g_shKnown = 0;           // bit r = g_shVal[r] is valid
 static const uint16_t SH_REFRESH_US = 2000;
 
-static void ShRefresh() {
+// True when the ROM's latch is a scan (exactly one of DB0..5 low) or idle
+// (0xFF): the only route-11 states in which the host may take the ladder.
+// Any other route-11 data is a dac_out present, i.e. the ROM is about to
+// connect a S/H to what it just presented; a refresh there would first put
+// the previous value on that S/H (a pitch blip when the note just changed,
+// which the analog trigger detector can turn into an extra note).
+static inline bool BusIsScanOrIdle(uint8_t bus) {
+  if ((bus >> 6) != ROUTE_NONE) return false;
+  uint8_t low = (uint8_t)(~bus & 0x3F);          // the columns pulled low
+  return (low & (uint8_t)(low - 1)) == 0;        // none or exactly one
+}
+static bool ShRefresh() {                        // false: skipped, try next slice
   uint8_t saved = BUS_PORT;              // == the ROM's bus latch (bus_write mirrors it)
   uint8_t held  = (uint8_t)(saved >> 6); // route the ROM has connected now (3 = none)
+  if (held == ROUTE_NONE && !BusIsScanOrIdle(saved)) return false;
   // The two pitch S/H (CV-OUT, VCO range) only: the RANDOM S/H is the LFO's
   // S&H waveform, refreshed by the ROM's own pass often enough, and each
   // route costs ~130 us of interpreter time per refresh.
@@ -148,6 +160,7 @@ static void ShRefresh() {
   delayMicroseconds(hw::SETTLE_LADDER_US);
   BUS_PORT = saved;                      // and its route (or scan column)
   delayMicroseconds(hw::SETTLE_SCAN_US);
+  return true;
 }
 
 // --- core hooks: 1:1 port pass-through ---------------------------------------
@@ -294,15 +307,15 @@ static const uint8_t T1_PENDING_MAX = 2;   // small: a clock faster than the ROM
 
 #ifdef __AVR__
 // A falling edge only counts once the pin has stayed low for T1_QUALIFY_US
-// (checked from the slice loop, T1Qualify): the ROM pulses CLOCK RESET on
-// sequencer/arp events, the LFO restarts, and the T1 line can bounce for a
-// few us on that; the original CPU never saw such a bounce (it sampled once
-// per pass) but INT0 would turn each into an extra clock edge, i.e. an extra
-// step / gate retrigger. Real clocks are far longer than that; an EXT CLK
-// pulse shorter than ~0.5 ms was invisible to the original too.
+// (checked from the slice loop, T1Qualify): the LFO line can bounce (CLOCK
+// RESET restarts, a moving RATE pot); the original CPU never saw pulses
+// shorter than its ~1.5-3.5 ms pass, INT0 would turn each into an extra
+// clock edge, i.e. an extra step / gate retrigger. A clock up to ~150 Hz
+// still has a longer low half than this; an EXT CLK pulse shorter than
+// ~1.5 ms was invisible to the original too.
 static volatile uint32_t g_t1CandUs = 0;   // micros() of the last unqualified falling edge
 static volatile bool     g_t1Cand   = false;
-static const uint16_t    T1_QUALIFY_US = 500;
+static const uint16_t    T1_QUALIFY_US = 1500;   // about the original's shortest pass
 ISR(INT0_vect) {
   ++g_edgeAcc;
   if (!midiclk::SyncOn()) { g_t1CandUs = micros(); g_t1Cand = true; }
@@ -510,7 +523,7 @@ void loop() {
     g_runUsAcc += nowUs - tRun;
     // S/H refresh at a SuperOS-like cadence (see ShRefresh); time-based, since
     // the droop is per real millisecond however slow the interpreter runs.
-    if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { s_shLastUs = nowUs; ShRefresh(); g_shUsAcc += micros() - nowUs; }
+    if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { if (ShRefresh()) { s_shLastUs = nowUs; g_shUsAcc += micros() - nowUs; } }
     if (midiclk::SyncOn()) T1Watch();   // divided-clock edges (pin edges arrive via INT0)
     else T1Qualify();                    // promote a settled INT0 edge to a pending clock
     GateTick(nowUs);                     // gate hold / hole deadlines
