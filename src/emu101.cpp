@@ -126,11 +126,71 @@ void    mcs48_p2_write(uint8_t v)     {
   if (gate != g_gate) { g_gate = gate; EchoOut(); }
 }
 bool    mcs48_t0() { return (PIND & (1u << T0_HOLD_BIT))  != 0; }
-// With MIDI sync ON the divided MIDI clock replaces the LFO/EXT-CLK on the
-// emulated T1 pin, so the stock ROM's arp/sequencer runs DAW-locked too.
-bool    mcs48_t1() {
+
+// --- T1 (LFO / EXT CLK) edge capture ------------------------------------------
+// The ROM samples T1 once per pass (one JNT1, SH101.asm:768) and calls it a
+// clock when the sample went H->L since the previous pass. On the real chip a
+// pass is 1.5-3.5 ms; here it is 10-30 ms, so a clock above roughly half the
+// pass rate aliases: edges are missed, then bunch up, and the sequencer/arp
+// lurches. The host therefore watches the real T1 (every loop pass and at
+// every ROM read), counts falling edges, and shows the ROM a virtual T1 that
+// hands them out one at a time: a pending edge is delivered as H on one read
+// and L on the next, so every real edge becomes exactly one ROM edge (at
+// most one per two passes; beyond that they queue, capped so a runaway
+// clock cannot leave the sequencer stepping long after it slowed down).
+// On the AVR the pin edges are caught by INT0 (PD0 = T1), so even an EXT CLK
+// pulse shorter than a loop pass counts; the host sim polls the pin instead.
+// With MIDI sync ON the divided MIDI clock (midiclock.h) is the source
+// instead of the pin (polled after midi::Poll, which is what advances it).
+static bool             g_t1Level   = true;   // last source level seen
+static volatile uint8_t g_t1Pending = 0;      // falling edges captured, not yet shown to the ROM
+static bool             g_t1Shown   = true;   // last level returned to the ROM
+static const uint8_t T1_PENDING_MAX = 8;
+
+#ifdef __AVR__
+ISR(INT0_vect) {
+  if (!midiclk::SyncOn() && g_t1Pending < T1_PENDING_MAX) ++g_t1Pending;
+}
+static inline void T1PinEdgeInit() {
+  EICRA = (uint8_t)((EICRA & ~((1u << ISC01) | (1u << ISC00))) | (1u << ISC01)); // falling edge
+  EIFR  = (1u << INTF0);
+  EIMSK |= (1u << INT0);
+}
+#else
+static inline void T1PinEdgeInit() {}
+#define cli() ((void)0)
+#define sei() ((void)0)
+#endif
+
+static inline bool T1Source() {
   if (midiclk::SyncOn()) return midiclk::T1Level();
   return (PIND & (1u << T1_CLOCK_BIT)) != 0;
+}
+static inline void T1Watch() {
+  bool lvl = T1Source();
+#ifdef __AVR__
+  bool countHere = midiclk::SyncOn();     // pin edges arrive via INT0
+#else
+  bool countHere = true;
+#endif
+  if (countHere && g_t1Level && !lvl) {
+    cli();
+    if (g_t1Pending < T1_PENDING_MAX) ++g_t1Pending;
+    sei();
+  }
+  g_t1Level = lvl;
+}
+bool    mcs48_t1() {
+  T1Watch();
+  if (g_t1Pending) {
+    if (g_t1Shown) {                                       // deliver the edge
+      g_t1Shown = false;
+      cli(); --g_t1Pending; sei();
+    } else g_t1Shown = true;                               // set up the next one
+    return g_t1Shown;
+  }
+  g_t1Shown = g_t1Level;
+  return g_t1Shown;
 }
 
 namespace emu101 {
@@ -182,6 +242,7 @@ static void RamPersistTick(uint32_t ms) {
 
 void setup() {
   hw::Init();
+  T1PinEdgeInit();
   midi::Handlers h;
   h.noteOn = MidiNoteOn; h.noteOff = MidiNoteOff;
   h.sysex = OnSysex; h.realtime = OnRealtime;
@@ -238,6 +299,7 @@ void loop() {
 #endif
 
   midi::Poll();   // notes into the matrix, divided clock (emulated T1), SysEx
+  T1Watch();      // catch clock edges the ROM's once-per-pass sample would miss
   RamPersistTick(millis());
 
   // Config-menu combo poll every ~10 ms: scan the buttons ourselves, without
