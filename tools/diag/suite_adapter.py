@@ -558,7 +558,7 @@ class Adapter:
         elif e == "setlen":
             self._ack(0x18, SLOT, self._new_len(case))
         elif e == "randomize":
-            self._ack(0x15, SLOT, 0, 64, 0x39, 0x60)
+            self._ack(0x38, SLOT, 0, 64, 0x39, 0x60)
         elif e == "select":
             self.link.send((0x1D, SLOT_ALT))
             self.link.recv(0x21)
@@ -710,7 +710,7 @@ class Adapter:
             runs = []
             for _ in range(2):
                 ad.setup(case)
-                ad._ack(0x15, SLOT, 0, 64, 0x39, 0x60)
+                ad._ack(0x38, SLOT, 0, 64, 0x39, 0x60)
                 runs.append(ad._read_pattern(SLOT)[1])
             if runs[0] != runs[1]:
                 raise _fail("same seed gave two different patterns")
@@ -723,7 +723,7 @@ class Adapter:
             catch a draw-order slip in either direction."""
             case = dict(length=16, head="start", legato="off", edit="randomize")
             ad.setup(case)
-            ad._ack(0x15, SLOT, 0, 64, 0x39, 0x60)
+            ad._ack(0x38, SLOT, 0, 64, 0x39, 0x60)
             # state_equals diffs DICTS field by field, so the comparison has to
             # be handed named fields, not bare lists.
             ch.state_equals({"steps": ad.model(case)["steps"]},
@@ -735,12 +735,12 @@ class Adapter:
             distribution test cannot pin, and they are exact."""
             case = dict(length=16, head="start", legato="off", edit="randomize")
             ad.setup(case)
-            ad._ack(0x15, SLOT, 0, 0, 0x11, 0x00)
+            ad._ack(0x38, SLOT, 0, 0, 0x11, 0x00)
             got = ad._read_pattern(SLOT)[1]
             ch.uses("state")
             if any(step_kind(s) != STEP_REST for s in got):
                 raise _fail("density 0 left notes in the pattern")
-            ad._ack(0x15, SLOT, 0, 127, 0x11, 0x00)
+            ad._ack(0x38, SLOT, 0, 127, 0x11, 0x00)
             got = ad._read_pattern(SLOT)[1]
             if any(step_kind(s) == STEP_REST for s in got):
                 raise _fail("density 127 left rests in the pattern")

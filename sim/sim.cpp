@@ -716,9 +716,26 @@ static int SelfTest() {
     CHECK(edit({0x16, 5, 1, 0, 56}) == 2, "G4 0x16 lane1 (accent absent) -> ack 2");
     CHECK(edit({0x18, 5, 0}) == 2, "G4 0x18 length 0 -> ack 2");
     uint8_t a[130], b[130];
-    edit({0x15, 5, 0, 64, 57, 96}); int la = readpat(5, a);
-    edit({0x15, 5, 0, 64, 57, 96}); int lb = readpat(5, b);
-    CHECK(la == lb && la > 0 && memcmp(a, b, la) == 0, "G4 0x15 randomize deterministic (same seed)");
+    edit({0x38, 5, 0, 64, 57, 96}); int la = readpat(5, a);
+    edit({0x38, 5, 0, 64, 57, 96}); int lb = readpat(5, b);
+    CHECK(la == lb && la > 0 && memcmp(a, b, la) == 0, "G4 0x38 randomize deterministic (same seed)");
+
+    // THE ECHO HAZARD, asserted rather than assumed (claim-049). RANDOMIZE
+    // moved off 0x15 because this machine EMITS 0x15 every step as its
+    // playhead, so a thru/echo path feeds the device its own notification. The
+    // test is not "0x38 works" but "the exact bytes we emit are INERT coming
+    // back": a real 3-byte SendStep frame, and a 6-byte one long enough to
+    // have been accepted by the old handler. Neither may touch the pattern.
+    uint8_t before[130]; int lbefore = readpat(5, before);
+    CHECK(edit({0x15, 5, 0}) == -1, "0x15 echo (playhead frame) is not acked");
+    uint8_t after[130]; int lafter = readpat(5, after);
+    CHECK(lbefore == lafter && memcmp(before, after, lbefore) == 0,
+          "0x15 echo leaves the pattern untouched");
+    CHECK(edit({0x15, 5, 0, 64, 57, 96}) == -1,
+          "0x15 with a full randomize payload is ignored, not acked");
+    int lafter2 = readpat(5, after);
+    CHECK(lbefore == lafter2 && memcmp(before, after, lbefore) == 0,
+          "0x15 randomize-shaped payload does not randomize");
   }
 
   // G12 combinatorial matrix (claim-031's lesson: single features pass, their
@@ -760,7 +777,7 @@ static int SelfTest() {
         MidiClocks(30);                                    // advance across the pattern (wrap)
         sx({0x16, P, 0, (uint8_t)(L - 1), 55});            // edit the last step (wrap boundary)
         sx({0x18, P, (uint8_t)(li ? lens[li-1] : 1)});     // shrink length under the head
-        sx({0x15, P, 1, 100, 21, 33});                     // randomize notes-only, deterministic
+        sx({0x38, P, 1, 100, 21, 33});                     // randomize notes-only, deterministic
         sx({0x16, P, 3, 0, (uint8_t)(legato ? 0 : 1)});    // toggle a tie
         MidiClocks(12); MidiByte(0xFC);                    // more clock, then stop
         if (!valid(P)) bad++; combos++;

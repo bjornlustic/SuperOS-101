@@ -140,7 +140,28 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
                       if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
       else SendAck(1);
       break;
-    case 0x15:   // RANDOMIZE [pat, scope, density, seed_lo, seed_hi]
+    // RANDOMIZE [pat, scope, density, seed_lo, seed_hi]. On 0x38, NOT 0x15.
+    //
+    // 0x15 inbound is deliberately GONE and must not come back. This machine
+    // EMITS 0x15 as its playhead position on every step change (SendStep
+    // above), and direction is not a property a MIDI cable preserves: with
+    // thru on, a DAW echo, or any host that re-emits unrecognised SysEx, the
+    // 101's own playhead notification arrives back at its input. While that
+    // meant RANDOMIZE, the machine silently randomized its own pattern once
+    // per step -- data loss that accelerates with tempo and points at no
+    // opcode. CORE's call after three machines reported the same collision;
+    // A808 measured the rate at 8 per second at 120 BPM.
+    //
+    // 0x16 SET STEP keeps its number despite being dual-direction too, and the
+    // difference is the blast radius rather than the collision: an echoed 0x16
+    // re-sets a step to the value it already holds and is idempotent, while an
+    // echoed RANDOMIZE destroys the pattern.
+    //
+    // 0x38 confirmed free on this machine in BOTH directions before use, as
+    // CORE required: inbound 0x10 0x12 0x13 0x16 0x18 0x1D 0x1E 0x20 0x22 0x23
+    // 0x25 0x2F 0x3B 0x3D 0x3E 0x40 0x4A 0x4D, outbound 0x11 0x14 0x15 0x21
+    // 0x24 0x3C 0x41, bootloader 0x01 0x02 (0x03 proposed). 0x38 in none.
+    case 0x38:
       if (len >= 6) { uint16_t seed = (uint16_t)(body[4] | ((uint16_t)body[5] << 7));
                       bool ok = g_engine.seq().randomize(body[1], body[2], body[3], seed, (uint8_t)(millis() & 0xFF));
                       if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }

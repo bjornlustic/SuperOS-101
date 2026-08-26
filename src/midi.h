@@ -32,9 +32,12 @@
 //   0x12 <p> <xlo> <xhi> <packed>                     set pattern p  -> 0x14
 //   0x13                  request all patterns        -> 0x11 x NUM_PATTERNS
 //   0x14 <code>           ack: 0 ok, 1 bad length/checksum, 2 out of range
-//   0x15 -- DIRECTIONAL (get/set-like pair, like 0x18):
-//     out: 0x15 <p> <step>                (device) sequencer step position, on change
-//     in:  0x15 <p><scope><density><slo><shi>  RANDOMIZE (gate G4, docs/EDIT_OPCODES.md)
+//   0x15 <p> <step>       OUTBOUND ONLY: sequencer step position, on change.
+//                         There is deliberately NO inbound 0x15. RANDOMIZE used
+//                         to live here and moved to 0x38 (claim-049): this
+//                         machine emits 0x15 every step, and an echoed playhead
+//                         report would have randomized the pattern once per step.
+//   0x38 <p><scope><density><slo><shi>  RANDOMIZE (gate G4, docs/EDIT_OPCODES.md)
 //                           scope 0=whole 1=notes; density 0 clears/127 fills;
 //                           seed=slo|(shi<<7), 0=entropy else deterministic -> 0x14
 //   0x16 <p><lane><step><value>  SET STEP (gate G4): lane 0 note (value=MIDI note,
