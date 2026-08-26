@@ -1,5 +1,26 @@
 # claim-038 G13: the 63:39:0 sign test, run
 
+> **CORRECTION, same day, by the author.** The first version of this document
+> said 63:39:0 was **refuted as a ratio** at 5.4 sigma. **That was wrong and it
+> is withdrawn.** Two defects in my own analysis, both found by running the
+> control I had named in my handoff as the weakest link:
+>
+> 1. **It compared two notes measured through DIFFERENT harmonics** (note 36 via
+>    n=64, note 60 via n=16). Those two harmonics disagree on ABSOLUTE pitch at
+>    that note by ~6 c, far outside their quoted errors, so at least one carries
+>    a systematic. It largely cancels in a single note's shift, which is why the
+>    shifts looked consistent, but it does NOT cancel in a ratio between notes.
+> 2. **The error bars counted only within-run scatter.** Repeating the same cell
+>    with the same harmonic on a different run moves it by more than its own
+>    quoted sem: note 36 via n=16 gave +3.6355 +/- 0.3169 and then +2.9814 +/-
+>    0.1975. The machine is analog and drifts between runs; the sem over
+>    triggers inside one run is not the total uncertainty.
+>
+> Corrected below. **The ratio is consistent with the prediction and 63:39:0 is
+> neither confirmed nor refuted at the precision reached.** The near-vanishing
+> at note 99 survives both defects and is the part I would still defend.
+
+
 Instrument `tools/diag/g13_sign.py run` at `e46bbc4`. Bench unit `0.2 1a6010b`,
 unchanged, no reflash. Artifacts `/tmp/g13-run-<note>-<mode>-<i>.wav`, 16 per
 cell. Capture device `:2` (SSL 18), verified against the live device list by the
@@ -9,31 +30,53 @@ finding 25's muted-microphone capture.
 ## The result
 
 8 MHz arm (`0x3E` mode 1) against the 4 MHz control (mode 0), same note, same
-window placement, 16 triggers per cell. The published quantity is the
-difference, so the machine's absolute tuning, the estimator's bias at that
-harmonic and the envelope shape all cancel.
+onset-locked window, harmonic-referred pitch, 40 triggers per cell. The
+published quantity is the difference, so the machine's absolute tuning, the
+estimator's bias at that harmonic and the envelope shape all cancel.
+
+**Notes 36 and 60 are measured through the SAME harmonic (n=16).** That matters:
+see the correction at the top.
 
 | note | cv | 63 - cv | shift vs control | +/- (sem) |
 |---|---|---|---|---|
-| 36 | 0  | 63 | +3.1489 c | 0.1010 |
-| 60 | 24 | 39 | +2.4602 c | 0.0936 |
+| 36 | 0  | 63 | +2.9814 c | 0.1975 |
+| 60 | 24 | 39 | +2.3758 c | 0.1031 |
 | 99 | 63 | 0  | +0.1872 c | 0.0781 |
 
-    measured    100 : 78.1 : 5.9
-    predicted   100 : 61.9 : 0
+Note 99 is via n=7, the highest harmonic that fits under Nyquist at 2489 Hz. It
+is compared against ZERO rather than entering a ratio, so it does not need to
+match the others' harmonic.
 
-**The shape survives. The law does not.** The shift is large at the bottom and
-all but gone at the top, and the near-vanishing at note 99 is the part that no
-common-mode confounder (clock error, capture-rate error, tuning drift,
-temperature) reproduces: those move every note together. But note 60 comes in at
-78 % of the bottom arm where a shift proportional to `(63 - cv)` requires 62 %,
-and at 0.09 c of standard error that is 5.4 sigma. It is not a rounding matter
-and it is not noise.
+### The ratio, which is the actual test
 
-So `cpl a` producing a pitch error proportional to `63 - cv` is **not** what the
-machine does. Something monotonic in cv, much flatter through the middle of the
-range, is. Note 36's arm is three independent runs (+3.355, +3.134, +3.149), so
-the disagreement is not one bad cell.
+    note60 / note36   measured  0.797 +/- 0.063   (within-run sem only)
+                                0.797 +/- 0.110   (errors inflated 1.75x for
+                                                   the observed between-run drift)
+    predicted                   0.619
+
+**1.6 sigma with the honest error bar. That is consistent, not a refutation.**
+The 1.75x inflation is not a fudge chosen to reach a conclusion: it is the
+factor by which same-harmonic repeats of the same cell actually disagree
+(note 36 at n=16 moved 0.65 c between runs against a combined error of 0.37;
+note 36 at n=64 moved 0.21 c against 0.14).
+
+There is a hint of an excess (the central value sits high, at 0.80 against
+0.62), and it has now leaned the same way in every pairing I have measured. But
+a 1.6-sigma lean is a reason to measure the drift properly, not to publish a
+refutation. **I published one, and this document is the retraction.**
+
+### What survives cleanly
+
+**The shift is real and it is monotonic in cv.** ~+3 c at note 36, ~+2.4 c at
+note 60, consistent with zero at note 99.
+
+**The near-vanishing at the top is the load-bearing observation.** +0.187 +/-
+0.078 c, which is 2.4 sigma from zero on the within-run error and 1.4 sigma on
+the inflated one, against +2.98 c at note 36. No common-mode confounder (clock
+error, capture-rate error, tuning drift, temperature) produces that: those move
+every note together. This survives both of the defects that sank the ratio
+claim, because it involves one note compared against zero rather than two notes
+compared against each other.
 
 ## What is NOT claimed
 
