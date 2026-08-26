@@ -50,7 +50,8 @@ The CPU (block diagram p.2; CPU Program p.3, `asm`) only does digital housekeepi
 2. **Sequencer** — up to **100 steps**, stored in internal RAM (battery-backed).
 3. **Arpeggiator** — UP / DOWN / U&D.
 4. Reads function buttons + RANGE / TRANSPOSE / GATE-TRIG switches.
-5. Drives a **6-bit DAC** (R-2R, buffered by IC7 4050) whose output is **demuxed** by
+5. Drives a **6-bit DAC** (binary-weighted, NOT R-2R: 30.1k/62.5k/125k/250k/500k/1M,
+   buffered by IC7 4050) whose output is **demuxed** by
    IC10 (4052) to one of several sample-&-hold lines (CV-OUT, VCO CV, RANDOM).
 6. Outputs **GATE**, **CLOCK RESET**, **PORTAMENTO-OFF**, and **function-LED** drive.
 7. Reads the **clock** (LFO / EXT-CLK) and generates **random** CV (random LFO / S&H).
@@ -125,7 +126,8 @@ Everything hangs off the 8-bit **BUS port (DB0–DB7)** plus the **P1 input port
 **P2 output port**. There is **no external RAM/ROM** — the BUS is used as GPIO.
 
 ### DAC + route demux (DB0–DB7)
-- **DB0–DB5 = 6-bit DAC** value (0–63) into the R-2R ladder (IC7 4050 buffer).
+- **DB0–DB5 = 6-bit DAC** value (0–63) into the binary-weighted summing network
+  (IC7 4050 buffer; see § the DAC note below — it is not an R-2R ladder).
 - **DB6–DB7 = DAC ROUTE** — which S/H the DAC voltage lands on (IC10 4052):
 
   | DB7 DB6 | route |
@@ -275,7 +277,7 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
 - [x] **Current budget:** the SH-101 +5 V rail has NO headroom for the AVR at full
       speed. The rail is the discrete regulator on the synth board (schematic p.7,
       POWER SUPPLY: op-amp 1b driving PNP pass transistor TR3 through R2 8.2k,
-      reference D4 + VR-1 "+5V (D/A WIDTH)"), and it is also the R-2R DAC reference,
+      reference D4 + VR-1 "+5V (D/A WIDTH)"), and it is also the pitch DAC reference,
       so any sag is a pitch shift (about 57 mV per semitone, lower VCC = higher
       pitch). Measured at the AVR with the SysEx 0x3E bench window (2026-08-15):
       core 16 MHz + USB engine 4.49-4.65 V (out of regulation, C4 played ~G4);

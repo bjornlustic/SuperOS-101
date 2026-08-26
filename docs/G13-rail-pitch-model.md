@@ -59,8 +59,60 @@ is the pitch scale". True, but it hides the part that matters:
 **The pitch DAC is not on the CPU board.** `design.py` is explicit that the stock
 SH-101 CPU "only drives the 6-bit pitch ladder, GATE and LEDs" and that the board
 takes `+5V` straight from socket pin 40 with **no regulator of its own** (only
-local decoupling: C13 10 uF bulk plus 100 nF parts). The R-2R ladder lives on the
-synth board and is driven by the AVR's `PORTC` (BUS DB0-7, socket pins 12-19).
+local decoupling: C13 10 uF bulk plus 100 nF parts). The DAC lives on the synth
+board, fed from the AVR's `PORTC` (BUS DB0-7, socket pins 12-19).
+
+> ### Third correction: read off the schematic, and it is not what we have been saying
+>
+> Everything above this line was written from `design.py` plus reasoning. Reading
+> the Roland SH-101 Service Manual (Nov 1 1982) page 7 directly, `D/A CONV` block,
+> corrects the project's description of this circuit in two ways. Both were in my
+> refuted first model, and one of them is in eight other files in this repo.
+>
+> 1. **It is NOT an R-2R ladder.** It is a **binary-weighted resistor summing
+>    network**: R70 30.1k, R57 62.5k, R58 125k, R59 250k, R60 500k, R61 1M, each
+>    leg double the last, summed into IC9a (TL062) as an **inverting** summing
+>    amp, then through R72 220 to IC10 (4052), the route demux, and on to the
+>    sample-and-hold caps. Corroborated by something the drawing cannot fake:
+>    those are the only precision parts in the block (R57 is 0.1 % MF, R58-R61
+>    0.5 % MF, R70 1 % MF, against 5 % elsewhere), which is what a weighted DAC
+>    needs and an R-2R network does not.
+> 2. **The reference is a CD4050's output-high level, not the CPU's.** The bus
+>    goes through **IC7, a 4050 hex buffer**, which re-drives the network from its
+>    own VDD. So the AVR's own drive strength and V_OH are IRRELEVANT to pitch,
+>    and my first model, which derived the whole error from the AVR's V_OH
+>    scaling the ladder, was wrong about the mechanism as well as the shape.
+>    (`docs/HARDWARE.md` already said "buffered by IC7 4050". I did not read it
+>    before modelling. That is LESSONS L7, "already there", for the third time on
+>    this one claim.)
+>
+> Two consequences that change what a fix would even be:
+>
+> * **The rail that matters is IC7's VDD**, and its local decoupling is **C23,
+>   47 uF/16 V**, read off the same page. A dynamic-wobble fix is therefore
+>   decoupling at IC7, not at the AVR, and 47 uF of electrolytic is already there,
+>   which is evidence against "add local capacitance" being the easy win.
+> * **The summing amp inverts.** A higher rail means more current into a virtual
+>   earth and a more negative output. That is a candidate explanation for the
+>   measured SIGN (lower rail -> sharp) that my V_OH model could not produce, and
+>   it is the first thing a model should try to reproduce. Not asserted: I have
+>   not traced the polarity through the 4052 and the S/H to the CEM3340, so I do
+>   not yet know how many inversions are in the chain.
+>
+> **Also verified on the same page, and worth having exactly:** the +5 V regulator
+> is D4 (zener reference) into IC1b (M5218L) as the error amplifier, feedback
+> divider VR1 / R4 6.8k / R5 20k, compensation R3 10k + C3 0.01u, base drive R2
+> 8.2k into pass transistor TR3. And **VR1 is labelled, on the schematic, "+5V
+> (D/A WIDTH)"**: the rail trim and the DAC full-scale trim are the same
+> adjustment. The project has been asserting "the rail is the pitch scale" from
+> reasoning; Roland wrote it on the drawing.
+>
+> **NOT resolved, and not to be asserted by whoever picks this up:** whether all
+> six bits are buffered by IC7 or only the upper ones. The lower legs appear to
+> come off bus lines carrying series 150 ohm (R53-R56) and 1M to ground
+> (R63-R67), which would make the reference a mix of IC7's VDD and the CPU's own
+> output level. Resolving that needs a careful trace of a 1982 scan or a meter on
+> the board, and guessing it is exactly how the first two models went wrong.
 
 So the chain is:
 
@@ -242,12 +294,18 @@ Per G13, cite the part or say it is a stand-in:
 * **Board decoupling as built**: C13 10 uF bulk plus 100 nF per supply pin, from
   `design.py` (`build_mcu`). This part is exact, because the board is a skidl
   design and can be read rather than guessed.
-* **The R-2R ladder and any post-ladder gain on the synth board**: from the SH-101
-  service manual, not yet extracted. Full-scale works out near 5.25 V against a
-  ~4.9 V ladder output, so there is gain of about 1.07 after it; that should be
-  read off the schematic rather than inferred from my arithmetic above.
-* **V_OH vs load and vs VCC** for the AVR's port pins: datasheet curves. Modelling
-  V_OH as exactly VCC would understate the effect.
+* **The DAC network and any post-DAC gain on the synth board**: NOW EXTRACTED,
+  see the third correction above. Binary-weighted legs R70 30.1k / R57 62.5k /
+  R58 125k / R59 250k / R60 500k / R61 1M into IC9a as an inverting summer, with
+  VR3 "D/A LINEAR" 2k trimming the MSB leg and VR2 "D/A TUNE" 1k the offset. My
+  earlier "~1.07 post-ladder gain" was arithmetic from a full-scale guess and is
+  withdrawn: the gain is set by IC9a's feedback and the trims, which are on the
+  drawing and should be read, not inferred.
+* **V_OH of IC7, the CD4050 that drives the network**: CD4050B datasheet, at its
+  own VDD. NOT the AVR's port curves, which was the previous entry here and is
+  wrong: the AVR drives the 4050's inputs, and the 4050 re-drives the network.
+  A 4050's V_OH under the ~5-50 uA these megohm legs draw sits within millivolts
+  of its VDD, which is why the rail transfers to pitch nearly one-for-one.
 
 ## What a pass would buy
 

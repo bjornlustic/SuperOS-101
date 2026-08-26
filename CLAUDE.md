@@ -39,7 +39,7 @@ and it has eaten hours of diagnosis across this fleet.
 ## Things that look like defects and are not
 
 **4 MHz is a supply-rail fix, not power, not USB, not EMI.** The SH-101's +5 V
-rail is the R-2R DAC's reference, so it *is* the pitch scale. At 8 MHz the rail
+rail is the pitch DAC's reference, so it *is* the pitch scale. At 8 MHz the rail
 sags enough to shift pitch by about 5 cents. The divide is bought on purpose.
 Every other machine in the fleet divides for a different physical reason (the
 606 for EMI, the 808 not at all), so "why is this at 4 MHz" has four different

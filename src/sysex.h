@@ -45,7 +45,7 @@ inline void SendEmuStatus() {
 //   [8] stage the previous boot last reached (boot.cpp)
 //   [9..10] last loop pass us (hi, lo)  [11..12] max pass us since last probe
 //   [13..14] VCC in mV (hi, lo): internal 1.1 V bandgap read against AVCC.
-//            The R-2R DAC's reference is this rail, so it is the pitch scale.
+//            The pitch DAC's reference is this rail, so it is the pitch scale.
 //            A MEAN of 8 samples, and deliberately coarse: read the resolution
 //            note above [114..123] before treating it as a rail measurement.
 

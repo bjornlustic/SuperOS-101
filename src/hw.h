@@ -65,7 +65,7 @@ inline void IdleWaitUs(uint16_t us) { delayMicroseconds(us); }
 #endif
 
 // Settle times. The original's CPU-execution settle is only a few µs; on the analog
-// side the R-2R ladder + 4052 sample/hold RC dominate. MEASURE on the real board and
+// side the weighted DAC network + 4052 sample/hold RC dominate. MEASURE on the real board and
 // raise these to whatever the S/H needs to acquire/settle (TODO in docs/HARDWARE.md).
 // Bench finding (first hardware, 2026-08-14): 10 µs acquire left the S/H
 // caps near 0 V — gate fired but the VCO sat sub-audio ("gate but no note").

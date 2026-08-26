@@ -20,7 +20,7 @@
 // stays the core's business. Called once per loop() pass.
 //
 // SH-101 specific: the PLL and the engine clock are NOT stopped when
-// unplugged. The synth's +5 V regulator (VR-1, "D/A WIDTH") is the R-2R DAC's
+// unplugged. The synth's +5 V regulator (VR-1, "D/A WIDTH") is the pitch DAC's
 // reference and has almost no current headroom with this board: with the
 // core at 16 MHz the USB engine's current alone dropped VCC 4.98 -> 4.5-4.6 V
 // and moved the pitch ~7 semitones (2026-08-15). The cure is the 4 MHz core
