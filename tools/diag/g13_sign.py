@@ -1298,14 +1298,25 @@ def cmd_run(args):
     # WITHIN-RUN differences. These are diagnostic. They are NOT the claim.
     #
     # A single run cannot quote an error on its shift, because the error that
-    # matters is between runs and is about 3x the within-run sem on this
-    # machine (five note-36 h16 measurements of one fixed configuration: sd
-    # 0.691 c against quoted sems of 0.10 to 0.32 c). Every claim-038 error bar
-    # published before this existed was the understating kind, and that plus
-    # mixed harmonics is the whole explanation of the withdrawn 5.4 sigma.
+    # matters is the BETWEEN-REPEAT spread and one run does not have it. That
+    # is the whole reason `pool` exists and refuses under 3 repeats.
+    #
+    # THE "~3x" INFLATION THIS LINE USED TO PRINT IS RETIRED, and the retraction
+    # matters more than the number. It came from five note-36 h16 runs spanning
+    # +2.3749 to +4.0067, sd 0.691 c against sems of 0.10 to 0.32 c, and it was
+    # quoted fleet-wide as this machine's between-run error. Measured on five
+    # CLEAN repeats the between-repeat sd is 0.1901 c, SMALLER than the
+    # within-run sems of 0.2545 / 0.2559 / 0.2868 / 0.3006: there is no
+    # resolvable between-run component at all. The 0.691 was contaminated by
+    # its own bad runs -- two were sequential-order (~1.75 min between the
+    # halves of every difference) and one announced itself with a sem of 1.7501.
+    #
+    # So the honest instruction is "do not quote a one-run number", not "inflate
+    # it 3x". An inflation factor derived from runs that were broken in a way
+    # since fixed is a permanent tax paid for a defect that no longer exists.
     print("\nWITHIN-RUN differences, DIAGNOSTIC ONLY. Do not quote these.")
     print(f"{'note':>5} {'63-cv':>6} {'mode':>5} {'diff c':>10} "
-          f"{'sem c':>8}   (sem understates the real error ~3x)")
+          f"{'sem c':>8}   (one run has no error bar: pool 3+ repeats)")
     for note in notes:
         f_nom = midi_hz(note)
         ctrl = results.get((note, 0)) or []
