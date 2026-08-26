@@ -1,0 +1,22 @@
+claim-038 G13: pooled sign test, run-quality cut applied
+  run n99-r1  harmonic 2  /tmp/g13h2/g13-run-n99-r1.screened.json
+  run n99-r2  harmonic 2  /tmp/g13h2/g13-run-n99-r2.screened.json
+  run n99-r3  harmonic 2  /tmp/g13h2/g13-run-n99-r3.screened.json
+  run n99-r4  harmonic 2  /tmp/g13h2/g13-run-n99-r4.screened.json
+  run n99-r5  harmonic 2  /tmp/g13h2/g13-run-n99-r5.screened.json
+cut: reject a cell whose sd > 3x the median cell sd for its note; 3 surviving repeats required
+
+note 99 (63-cv 0): 10 cells offered
+  median cell sd 0.0700 c, reject above 3x = 0.2100 c
+  mode 1: 5 repeat(s) survive both halves
+    n99-r1   +0.5724 c
+    n99-r2   +0.5949 c
+    n99-r3   +0.6045 c
+    n99-r4   +0.6132 c
+    n99-r5   +0.6090 c
+  SHIFT  +0.5988 +/- 0.0073 c (between-repeat sd 0.0163 over k=5)
+  uncut, for comparison:  +0.5988 c over 5 repeats. A disagreement larger than the error above means the cut is deciding the answer.
+
+PUBLISHABLE ROWS
+ note  63-cv  mode    shift c    +/- c   k
+   99      0     1    +0.5988   0.0073   5
