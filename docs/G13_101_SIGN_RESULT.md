@@ -178,3 +178,104 @@ wrong. The synthetic floor was honest and useless: the suite lacked the one
 property the real signal had. A synthetic validation bounds the estimator, not
 the measurement, and the two were quoted as if they were the same number for
 four rotations.
+
+## Where the scatter comes from, and a second correction to note 99 (2026-08-26)
+
+Instrument `tools/diag/g13_sign.py reanalyse` at `6bbd87c`, artifact
+`artifacts/g13/101-reanalyse-harmonics.txt`, over the 226 preserved captures in
+`artifacts/g13/sign-2026-08-26/`. Host-side, no hardware, no lease. Bench unit
+still `0.2 1a6010b`, nothing flashed.
+
+**Method.** One capture read at two harmonics is one physical event read two
+ways. Anything the MACHINE did is common to both readings and cancels in their
+difference; what survives is the estimator. So `sd(h_a - h_b)` against the
+`sqrt(s_a^2 + s_b^2)` expected from independent estimator noise splits a cell's
+scatter into its two causes without needing to spot an outlier.
+
+### The scatter at note 36 is NOT the estimator, and I predicted that it was
+
+    note 36 mode 0   sd 0.669 c at h16, sd(h16-h32) 0.121 c   ratio 0.13
+    note 36 mode 1   sd 1.055 c at h16, sd(h16-h32) 0.464 c   ratio 0.30
+    note 60          ratio 1.08 and 1.02                      estimator
+    note 99          both requests clamp to harmonic 7        NOT TESTABLE so
+
+At note 36, the note the claim rests on, about 87 % of the within-cell scatter
+is common to both readings. **My handoff put ~70 % on the estimator
+intermittently losing the harmonic. That is wrong.**
+
+**Stated at the precision the test supports:** the scatter is upstream of the
+harmonic referral. Real pitch, window placement and capture are all upstream of
+it, and this test cannot separate them, because both readings share one onset
+window. "The machine" is the likely member of that set, not the measured one.
+
+**What it changes.** The run-quality cut is rejecting runs in which the MACHINE
+was more variable, not runs the estimator fumbled. It is still required, because
+the between-repeat error requirement stands either way, but it must not be
+described as an estimator-failure filter.
+
+### The shift is robust to the harmonic, which kills one confounder
+
+    note 36 mode 1   +2.6523 (h8)  +2.9814 (h16)  +3.1048 (h32)
+    note 60 mode 1   +2.3761       +2.3758        +2.3586
+    note 99 mode 1   +0.5368 (h4)  +0.1872 (h7)
+
+Note 60 agrees to 0.018 c across a harmonic pair whose ABSOLUTE readings sit
+5.04 c apart. A difference measurement is supposed to do exactly that, and here
+it demonstrably does.
+
+### Note 99, tightened again and for an independent reason
+
+**Its shift moves 0.35 c with the harmonic**, against a quoted within-run sem of
+0.0781 c. So the note-99 error must be inflated to at least 0.35 c on estimator
+choice alone, before any between-run inflation, and +0.1872 c sits inside that.
+
+CORE tightened this row once already, from "vanishes" to "consistent with zero".
+It is now consistent with zero for a second, independent reason. **"Not resolved
+by this instrument" is defensible; "measured small" is not.** It must never be
+quoted as a measured null.
+
+### The blocked arms are still blocked, and here is the number
+
+Modes 8 (16 MHz) and 4 (idle-sleep) swing +16.16 c to -2.14 c with the harmonic
+at note 36. Those shifts are estimator-generated at these harmonics, which is
+the band limit already documented in `estimate_f0_harmonic`. **No
+rail-versus-load attribution exists and none is available by this route.**
+
+### Instrument defect, found by the instrument's own output
+
+`pick_harmonic` clamps to Nyquist, so at note 99 a request for h16 and one for
+h32 BOTH resolve to harmonic 7. The decomposition was subtracting a number from
+itself: sd exactly 0.0000, ratio 0.00, and the verdict printed "MACHINE
+dominates" for a comparison that was never made. It now refuses to compare when
+both requests clamp to the same harmonic. This is the fifth defect on this claim
+found by the instrument disagreeing with itself rather than by eyeballing.
+
+## The run-quality cut (2026-08-26)
+
+`tools/diag/g13_sign.py` at `6bbd87c`. **No shift on this claim is publishable
+except through `pool`.**
+
+* a cell whose within-run sd exceeds 3x the median cell sd for its note is
+  REJECTED and printed with its numbers. **Rejection is on spread alone, never
+  on the mean**, so the cut cannot know which way it would move the answer.
+* under 4 cells the cut REFUSES rather than running. A median over two cells is
+  their mean, and one bad cell drags the reference by half its own excess. An
+  underpowered cut is no result, not a weak one (COMMON rule 1).
+* **3 surviving repeats are required** before any shift is printed. Fewer is
+  "not measured", and is not a null.
+* **the error is `sd(per-repeat shifts)/sqrt(k)`**, the between-repeat spread.
+  The within-run sem understates it by about 3x: five note-36 h16 measurements
+  of one fixed configuration gave +3.6355 +2.9814 +3.9122 +2.3749 +4.0067, sd
+  0.691 c, against quoted sems of 0.10 to 0.32 c.
+* `pool` prints the UNCUT shift beside the cut one. **If they disagree by more
+  than the quoted error, the cut is deciding the answer** and the run needs
+  explaining rather than publishing. That is the residual risk the cut cannot
+  rule out on its own: if the shift and the scatter share a cause, dropping the
+  scattered cells biases the survivors.
+* runs write a JSON sidecar; `pool` combines them. Separate invocations because
+  a tool call caps at 10 minutes here and one repeat is ~3.5 minutes.
+
+**`cutcheck`: 8 cases, no hardware, and 3 of them are injections that MUST go
+red** (L9: a suite that has never failed proves nothing). Disabling the cut
+moves case 3 from +3.0000 to +2.6400 c; a wide cell whose MEAN matches the good
+ones is still rejected; two runs at different harmonics refuse to pool.
