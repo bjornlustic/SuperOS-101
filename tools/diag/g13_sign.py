@@ -710,6 +710,22 @@ def _default_run_id():
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
+def crosscheck_harmonic(f_nom, want, rate=RATE):
+    """A SECOND harmonic that resolves differently from `want`, or None.
+
+    pick_harmonic() clamps to Nyquist, so at note 99 a request for 16 and one
+    for 32 both come back as 7 and the "check" is a number against itself. That
+    already produced one false verdict in `reanalyse`. Try higher first, then
+    lower, and return None when nothing lands on a different harmonic: the
+    check is then UNAVAILABLE and must say so rather than silently pass.
+    """
+    n = pick_harmonic(f_nom, rate, want)
+    for cand in (want * 2, want // 2, want // 4):
+        if cand >= 1 and pick_harmonic(f_nom, rate, cand) != n:
+            return cand
+    return None
+
+
 def _one_trigger(b, note, mode, i, f_nom, args):
     """One armed trigger: window, note, capture, estimate. None on any miss."""
     try:
@@ -729,6 +745,53 @@ def _one_trigger(b, note, mode, i, f_nom, args):
         return None
     f, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=args.harmonic)
     time.sleep(args.gap)
+    if f is None:
+        return None
+
+    # PER-CAPTURE ESTIMATOR SELF-CONSISTENCY, and it is the cut that matters.
+    #
+    # One capture read at two harmonics is one physical event read two ways, so
+    # whatever the machine did is common to both and the DISAGREEMENT is the
+    # estimator alone. Measured over 120 captures:
+    #
+    #   normal captures   median 0.045 - 0.070 c, p90 0.13 - 0.36 c
+    #   worst normal      2.05 c
+    #   the broken one    43.11 c
+    #
+    # Three orders of magnitude, so the threshold does not need tuning and is
+    # not tuned: 3.0 c sits above every capture that was not obviously broken
+    # and 14x below the one that was.
+    #
+    # Why this and not a distance-from-the-mean cut: distance from the mean is
+    # not blind to the answer. Self-consistency is a property of ONE capture
+    # read two ways and knows nothing about the other triggers or the arm.
+    #
+    # What it is worth: run cut-r1's control cell had ONE capture 46.6 MAD out
+    # and that alone took the cell from sd 1.10 to sd 7.07 and the run's shift
+    # from +4.24 to +5.85 c. Dropping the cell would have thrown away 19 good
+    # captures to lose 1 bad one.
+    if args.crosscheck:
+        h2 = crosscheck_harmonic(f_nom, args.harmonic)
+        if h2 is None:
+            if not getattr(args, "_xc_warned", False):
+                print(f"  crosscheck UNAVAILABLE at note {note}: every "
+                      f"candidate harmonic clamps to "
+                      f"{pick_harmonic(f_nom, RATE, args.harmonic)} at Nyquist. "
+                      f"Captures here are NOT screened.")
+                args._xc_warned = True
+            return f
+        f2, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=h2)
+        if f2 is None:
+            print(f"  trigger {i} mode {mode}: NO LOCK at the crosscheck "
+                  f"harmonic {h2}; REJECTED")
+            return None
+        dis = abs(float(cents(f, f_nom)) - float(cents(f2, f_nom)))
+        if dis > args.max_disagree:
+            print(f"  trigger {i} mode {mode}: REJECTED, the estimator "
+                  f"disagrees with itself by {dis:.3f} c across harmonics "
+                  f"(limit {args.max_disagree:g}). "
+                  f"{cents(f, f_nom):+.3f} c vs {cents(f2, f_nom):+.3f} c")
+            return None
     return f
 
 
@@ -1043,21 +1106,14 @@ def cmd_run(args):
                 except ValueError as e:
                     print(f"  mode {mode}: {e}")
                     break
-                b.all_off()
-                time.sleep(0.15)
-                b.bench_window(mode, secs_b)
-                time.sleep(0.05)
-                path = os.path.join(args.outdir,
-                                    f"g13-run-{args.run_id}-{note}-{mode}-{i}.wav")
-                sr, sig = capture_note(b, note, path, args.secs, args.fire_at)
-                win = onset_window(sig, sr, args.head, args.win)
-                if win is None:
-                    continue
-                f, _ = estimate_f0_harmonic(win, f_nom, rate=sr,
-                                            want=args.harmonic)
+                # Through _one_trigger, NOT a second copy of the estimate.
+                # This path used to inline its own and would have skipped the
+                # per-capture screen entirely: a cut that applies on one code
+                # path and not the other is worse than no cut, because the two
+                # paths are compared to each other.
+                f = _one_trigger(b, note, mode, i, f_nom, args)
                 if f is not None:
                     fs.append(f)
-                time.sleep(args.gap)
             results[(note, mode)] = fs
             if fs:
                 a = np.array(fs)
@@ -1280,6 +1336,38 @@ def cmd_cutcheck(args):
             paths.append(p)
         cells, _ = _cells_from_json(paths, out=_quiet)
     check("refused", cells is None)
+
+    # ---- 9. the crosscheck harmonic must RESOLVE DIFFERENTLY or be refused
+    print("\n9. crosscheck harmonic selection")
+    check("note 36, want 16: a different harmonic is available",
+          crosscheck_harmonic(midi_hz(36), 16) is not None,
+          f"got {crosscheck_harmonic(midi_hz(36), 16)}")
+    n36 = pick_harmonic(midi_hz(36), RATE, 16)
+    x36 = crosscheck_harmonic(midi_hz(36), 16)
+    check("and it really does resolve to a different harmonic",
+          x36 is not None and pick_harmonic(midi_hz(36), RATE, x36) != n36,
+          f"{n36} vs {pick_harmonic(midi_hz(36), RATE, x36) if x36 else None}")
+    x99 = crosscheck_harmonic(midi_hz(99), 16)
+    n99 = pick_harmonic(midi_hz(99), RATE, 16)
+    check("note 99, want 16: whatever it picks must differ from "
+          f"harmonic {n99}, or be None",
+          x99 is None or pick_harmonic(midi_hz(99), RATE, x99) != n99,
+          f"picked {x99}")
+
+    # ---- 10. INJECTION: the screen's threshold must be doing work.
+    #      The real numbers, from 120 captures: normal disagreement is
+    #      0.045-0.070 c median and 2.05 c at worst; the one broken capture
+    #      was 43.109 c. A threshold anywhere between those two separates
+    #      them, which is what "not tuned" means here.
+    print("\n10. the per-capture screen's threshold, against measured data")
+    normal_worst, broken = 2.048, 43.109
+    check("3.0 c passes every capture that was not broken",
+          normal_worst < 3.0, f"worst normal {normal_worst} c")
+    check("3.0 c rejects the broken one", broken > 3.0,
+          f"broken {broken} c")
+    check("and the gap is wide enough not to need tuning",
+          broken / 3.0 > 10 and 3.0 / normal_worst > 1.4,
+          f"{broken / 3.0:.0f}x above, {3.0 / normal_worst:.1f}x below")
 
     print(f"\n{len(fails)} failure(s)" if fails else "\nall cases pass")
     if fails:
@@ -1580,6 +1668,17 @@ def build_parser():
                    help="distinguishes this run's captures from every other "
                         "run's; defaults to a UTC timestamp. Do NOT reuse one: "
                         "a repeated id overwrites the earlier run's evidence")
+    s.add_argument("--crosscheck", dest="crosscheck",
+                   action="store_true", default=True,
+                   help="screen every capture by reading it at a second "
+                        "harmonic and rejecting it when the estimator "
+                        "disagrees with itself (default on)")
+    s.add_argument("--no-crosscheck", dest="crosscheck", action="store_false",
+                   help="disable the per-capture screen. Use only to "
+                        "demonstrate what it was catching")
+    s.add_argument("--max-disagree", type=float, default=3.0,
+                   help="reject a capture whose two harmonics disagree by "
+                        "more than this many cents")
     s.add_argument("--sd-factor", type=float, default=DEFAULT_SD_FACTOR,
                    help="reject a cell whose within-run sd exceeds this many "
                         "times the median cell sd for its note")
