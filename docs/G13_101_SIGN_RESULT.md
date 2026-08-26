@@ -279,3 +279,60 @@ except through `pool`.**
 red** (L9: a suite that has never failed proves nothing). Disabling the cut
 moves case 3 from +3.0000 to +2.6400 c; a wide cell whose MEAN matches the good
 ones is still rejected; two runs at different harmonics refuse to pool.
+
+## Note 36, measured properly (2026-08-26)
+
+Instrument `tools/diag/g13_sign.py {run,screen,pool}` at `599357d`. Artifact
+`artifacts/g13/101-note36-pooled.txt`. Bench unit `0.2 1a6010b`, not reflashed.
+Five repeats of one fixed configuration: note 36, modes 0 and 1, n=20,
+harmonic 16 throughout, arms interleaved, each screened per capture by the
+uniform host-side pass, pooled with the error from the between-repeat spread.
+
+    cut-r1   +4.2444 c   mode 0 dropped 1 of 20
+    cut-r2   +3.9887 c
+    cut-r3   +3.8583 c
+    cut-r4   +4.0738 c
+    cut-r5   +3.7540 c
+    SHIFT    +3.9838 +/- 0.0850 c   (between-repeat sd 0.1901, k=5)
+
+**The cell-level cut rejected nothing.** All ten cells came in under 3x the
+median cell sd, so the cut and uncut numbers agree to four decimal places and
+this row is the PER-CAPTURE screen's work alone. The cell cut was what the
+handoff asked for and it was not what was needed.
+
+### The between-run error I handed myself was wrong too
+
+**This corrects the second numbered defect in the correction at the top of this
+document.** That note says error bars counted only within-run scatter and that
+the between-run spread is about 3x the within-run sem, from five measurements
+spanning +2.3749 to +4.0067 c with sd 0.691 c.
+
+**Measured on five clean repeats: the between-repeat sd is 0.1901 c, SMALLER
+than the typical within-run sem of 0.21 to 0.30 c.** There is no resolvable
+extra between-run component at all.
+
+**The 0.691 c was contaminated by its own bad runs.** Two of those five were
+taken in sequential order, which puts ~1.75 min between the halves of a
+difference. One (+2.3749) announced itself with a sem of 1.7501, 6x its
+neighbours. The two that were interleaved and not internally scattered were
++3.9122 and +4.0067, which sit on top of today's five; those two pooled with
+today's five give 4.014 +/- sd 0.136.
+
+**What still stands, and what does not.** The retraction of the 5.4 sigma
+stands: the mixed harmonics alone are sufficient for it and are not in doubt.
+**What does not stand is "inflate a within-run error by ~3x".** Anyone doing
+that on this document's authority should stop.
+
+### What is NOT claimed here
+
+**Not that the screen is why the spread collapsed.** Runs r2 through r5 had no
+captures dropped at all and are just as tight as r1 is after screening, so the
+screen cannot be what tightened them. The screen is real and it saved r1 (1.6 c
+from a single capture), and that is the whole of its demonstrated worth.
+
+The honest account is narrower than either story this claim has told: **the bad
+runs were identifiable from their own internal evidence, which is what a cut is
+for**, and at least one of them was a per-capture estimator failure. No cause is
+claimed for the other two.
+
+**Still no ratio.** It needs note 60 at the same precision, which is running.
