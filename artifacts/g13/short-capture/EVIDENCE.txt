@@ -1,0 +1,42 @@
+SHORT BUT NOT COMPRESSED: the capture-duration rule, demonstrated in band
+
+A duration shortfall has two causes that are INDISTINGUISHABLE from
+outside the file:
+  short-and-uncompressed  samples missing from the TAIL. Data good.
+  short-and-compressed    the whole file running fast. Data rescaled,
+                          and every tempo, phase and drift number wrong.
+
+Only an IN-BAND REFERENCE separates them. This file carries one: the
+note it contains has a known nominal pitch, so time compression would
+show up as pitch.
+
+file      artifacts/g13/short-capture/g13-run-60-1-2.wav
+requested ffmpeg -t 3.0 s
+actual    2.3387 s at 48000 Hz -> shortfall 22.0 %
+
+IF the shortfall were time compression, the file would be running
+1.2828x fast and its pitch would read +431.1 cents sharp.
+
+MEASURED via harmonic 16: 261.44772 Hz = -1.1773 c vs nominal 261.6256 Hz
+MEASURED via harmonic 32: 262.41666 Hz = +5.2269 c vs nominal 261.6256 Hz
+
+Measured within a few cents of nominal, against +431.1 c predicted for
+compression. The samples are ABSENT FROM THE TAIL, not rescaled.
+
+The whole population, so this is not one lucky file:
+  226 captures, all requested -t 3.0
+  duration 2.339 to 2.744 s, median 2.411 s
+  ALL 226 are short. Shortfall 8.5 to 22.0 %.
+
+Every one of them reads within a few cents of its nominal pitch, which is
+how claim-038's numbers survive at all: the sign test is a pitch
+comparison and it would have been the first thing to break.
+
+THE RULE. A short capture file is not evidence of a corrupted one.
+Inferring dropped samples from a duration shortfall does not follow.
+Carry an in-band reference and check it: pitch-vs-nominal here,
+onset-spacing-vs-MIDI for the timing bench.
+
+instrument tools/diag/g13_sign.py (estimate_f0_harmonic, onset_window)
+the counterpart artifact, short-AND-compressed, is CORE's
+artifacts/hat606-1787762800.wav, running 1.24x fast.
