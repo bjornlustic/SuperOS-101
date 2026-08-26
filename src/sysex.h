@@ -15,6 +15,12 @@
 #ifndef SUPEROS_VERSION
 #define SUPEROS_VERSION "dev"
 #endif
+// The git sha this image was built from, defined by tools/buildrev.py. A build
+// that reaches this fallback genuinely does not know what it is, and says so:
+// the word carries no hex so it can never be misread as a revision.
+#ifndef SUPEROS_BUILD_REV
+#define SUPEROS_BUILD_REV "unknown"
+#endif
 
 namespace sysex {
 
@@ -26,6 +32,33 @@ inline uint8_t LoadChannel() {
 inline void SaveChannel(uint8_t c) {
   eeprom_update_byte(EE_CFG_MAGIC, EE_CFG_MAGIC_VAL);
   eeprom_update_byte(EE_CFG_CHAN, (uint8_t)(c & 0x0F));
+}
+
+// 0x34 -> 0x35 build identity: "<version> <sha>[*]" in 7-bit ASCII, e.g.
+// "0.2 0642b7f" clean or "0.2 0642b7f*" dirty. Same opcode pair and same
+// string shape as the 606 (its src/midi.cpp:40-41, CMD_REQ_VERSION /
+// CMD_VERSION), which is the G9 answer: one reply a host can parse for all
+// four machines rather than a per-machine dialect.
+//
+// It lives in HandleCommon, NOT in main.cpp's SuperOS-only switch, so the
+// machine answers in EITHER firmware. The emulator build is exactly the case
+// where nobody can tell from outside what is resident, so it is the one that
+// most needs to be able to say.
+inline void SendVersion() {
+  static const char kVer[] = SUPEROS_VERSION;
+  static const char kRev[] = SUPEROS_BUILD_REV;
+  // Same hazard as the 0x3C probe below: midi::SendSysex takes a uint8_t
+  // length, so an over-long body would wrap and send a truncated reply that
+  // still looks well-formed. Fail the build instead.
+  static_assert(1 + sizeof(kVer) + sizeof(kRev) <= 255,
+                "0x35 version body exceeds the uint8_t SysEx length");
+  uint8_t body[1 + sizeof(kVer) + sizeof(kRev)];   // opcode + ver + ' ' + rev
+  uint8_t n = 0;
+  body[n++] = 0x35;
+  for (uint8_t i = 0; kVer[i]; ++i) body[n++] = (uint8_t)(kVer[i] & 0x7F);
+  body[n++] = ' ';
+  for (uint8_t i = 0; kRev[i]; ++i) body[n++] = (uint8_t)(kRev[i] & 0x7F);
+  midi::SendSysex(body, n);
 }
 
 inline void SendEmuStatus() {
@@ -289,6 +322,7 @@ inline uint8_t BenchUbrr(uint32_t coreHz) {
 inline bool HandleCommon(const uint8_t* body, uint8_t len) {
   if (len < 1) return true;
   switch (body[0]) {
+    case 0x34: SendVersion(); return true;   // build identity, both firmwares
     case 0x3B: SendProbe(); return true;
     case 0x3D:   // bench: park the USB engine for body[1] seconds (usb_gate.h)
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)

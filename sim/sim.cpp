@@ -409,6 +409,53 @@ static int g_fails = 0;
     else      { printf("  FAIL  %s\n", msg); ++g_fails; } \
   } while (0)
 
+// 0x34 -> 0x35 build identity. Run against BOTH firmwares, because the reason
+// the handler sits in sysex::HandleCommon rather than in main.cpp's
+// SuperOS-only switch is precisely that the emulator build is the one where
+// nobody can tell from outside what is resident. Asserting it only on the
+// SuperOS side would leave the interesting half untested.
+//
+// What would have to break for this to go red, since a test whose mechanism
+// cannot fail still prints a pass: the third check is the load-bearing one. If
+// tools/buildrev.py throws, or the define is dropped from the sim Makefile (or,
+// on the device, from either extra_scripts list in platformio.ini, which does
+// NOT merge), the firmware falls back to "unknown" and this fails. The sha's
+// value is compared against the macro rather than against a literal, so the
+// test does not go red every time HEAD moves; sim.cpp and main.cpp are built by
+// the same rule with the same flags, so a stale binary is stale in both.
+static void CheckVersionReply(const char* fw) {
+  char msg[192];
+  g_midiOut.clear();
+  for (uint8_t b : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x34, (uint8_t)0xF7}) g_midiQ.push_back(b);
+  RunLoops(1);
+  // Scan for the reply rather than assume it sits at offset 0: this wire also
+  // carries note echoes and the outbound 0x15 step notifications, so the reply
+  // is not always alone in the buffer.
+  std::string s;
+  bool found = false;
+  for (size_t i = 0; i + 3 < g_midiOut.size() && !found; ++i) {
+    if (g_midiOut[i] != 0xF0 || g_midiOut[i + 1] != 0x7D || g_midiOut[i + 2] != 0x35) continue;
+    size_t e = i + 3;
+    while (e < g_midiOut.size() && g_midiOut[e] != 0xF7) ++e;
+    if (e >= g_midiOut.size()) break;              // unterminated: not a reply
+    s.assign(g_midiOut.begin() + i + 3, g_midiOut.begin() + e);
+    found = true;
+  }
+  snprintf(msg, sizeof(msg), "SysEx 0x34 -> 0x35 answered in %s", fw);
+  CHECK(found, msg);
+  if (!found) return;
+
+  bool ascii = !s.empty();
+  for (char c : s) if (c < 0x20 || c > 0x7E) ascii = false;
+  snprintf(msg, sizeof(msg), "0x35 payload is 7-bit printable ASCII in %s (\"%s\")", fw, s.c_str());
+  CHECK(ascii, msg);
+
+  const std::string want = SUPEROS_VERSION " " SUPEROS_BUILD_REV;
+  snprintf(msg, sizeof(msg), "0x35 is \"<version> <rev>\" and carries the build's real revision in %s "
+           "(not the \"unknown\" fallback)", fw);
+  CHECK(s == want && std::string(SUPEROS_BUILD_REV) != "unknown", msg);
+}
+
 static int SelfTest() {
   setenv("SIM_EEPROM", "sim-selftest-eeprom.bin", 1);
   remove("sim-selftest-eeprom.bin");
@@ -562,6 +609,7 @@ static int SelfTest() {
   for (uint8_t b : {0xF0, 0x7D, 0x20, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
   CHECK(g_midiOut.size() > 8 && g_midiOut[0] == 0xF0 && g_midiOut[1] == 0x7D && g_midiOut[2] == 0x21 && g_midiOut[3] == 0,
         "SysEx 0x20 -> 0x21 config reply (fw 0)");
+  CheckVersionReply("SuperOS");
   {
     uint8_t raw[4] = {3, 20, 0x40 | 0, 0x80 | 22};   // len 3: note 20, rest, tie 22
     uint8_t x = 0; for (uint8_t i = 0; i < 4; ++i) x ^= raw[i];
@@ -907,6 +955,7 @@ static int SelfTest() {
     RunLoops(4000);                             // ~2 s virtual of ROM execution
     CHECK(sim::g_sh[1] == 0x18, "ROM writes RANGE 8' CV 0x18 to the VCO S/H");
     CHECK(!GateOn(), "ROM: gate off with no keys");
+    CheckVersionReply("the 80C49 emulator");
     sim::g_keys = 1UL << 0; RunLoops(400);
     CHECK(GateOn(), "ROM: key 0 -> gate on");
     CHECK(sim::g_sh[0] == 17, "ROM: key 0 -> CV 17 (matches SuperOS model)");
