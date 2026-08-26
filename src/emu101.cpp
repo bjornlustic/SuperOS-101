@@ -91,6 +91,25 @@ static volatile uint16_t g_edgeAcc = 0;   // T1 falling edges seen (INT0 / poll)
 //
 // Measured to the FIRST P2 write after a keyboard-bank read and disarmed there,
 // so the LED/function writes later in the same pass cannot stretch it.
+//
+// AND IT REPORTED THE PROBE THAT READ IT, which is the third time this firmware
+// has made an instrument measure its own cost and the second in this counter
+// family. A 0x3B dispatched between the keyboard read and the next P2 write
+// leaves the arm standing across the reply's BLOCKING 257-byte SendSysex, so the
+// ~14.8 ms that combined_pass_skip_next() was written to keep out of the pass
+// max came straight back in here instead. Measured, not reasoned: 30 windows at
+// a 1.15 s probe spacing came back bimodal, 14 at ~4.2 ms and 15 at ~19.9 ms
+// with nothing between; widening the spacing to 5.5 s dropped the high mode to
+// 2/13, and an A/B that injects one extra probe into the measured window put it
+// back (control 0/6 high, median 4256 us; treatment 2/3 high at ~20.26 ms). The
+// 1-in-3 treatment miss is f itself: an injected probe only lands inside the
+// armed window about 60 % of the time.
+//
+// So the fix has to reach every counter the reply can touch, not just the one
+// that was caught first. keyScanAbort() drops the in-flight measurement the same
+// way combined_pass_skip_next() drops the pass. It hides no real latency: a key
+// event during the reply is genuinely late, but that lateness is the telemetry's
+// cost and not the machine's, and the machine is what G5 asks about.
 static uint32_t g_kbdReadUs = 0;
 static bool     g_kbdArmed  = false;
 static uint16_t g_k2gLastUs = 0, g_k2gMaxUs = 0, g_k2gMaxAcc = 0;
@@ -436,6 +455,10 @@ const uint8_t* ram() { return g_cpu.ram; }   // sim / bench inspection
 uint16_t cyclesPerSec100() { return g_cyc100; }
 uint16_t passesPerSec()    { return g_pps; }
 uint16_t keyToGateUs(bool max) { return max ? g_k2gMaxUs : g_k2gLastUs; }
+// Defined here rather than beside g_kbdArmed because that block sits at file
+// scope, ABOVE `namespace emu101 {`: a definition there is ::keyScanAbort and
+// links to nothing the header declares.
+void keyScanAbort() { g_kbdArmed = false; }
 uint16_t t1EdgesPerSec()   { return g_eps; }
 uint16_t t1PollEdgesPerSec() { return g_pollEps; }
 uint16_t t1RejectedPerSec()  { return g_t1Rej; }

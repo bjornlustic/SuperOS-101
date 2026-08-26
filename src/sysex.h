@@ -315,6 +315,15 @@ inline void SendProbe() {
   // would NOT do it: the duration is recorded at the top of the next loop().
   // See combined_pass_skip_next() in boot.cpp.
   combined_pass_skip_next();
+  // The pass counter was not the only counter the reply could reach. If this
+  // 0x3B arrived between the ROM's keyboard read and its next P2 write, the
+  // key-scan measurement is still armed and has just had the whole blocking
+  // reply charged to it: measured bimodal at ~4.2 ms and ~19.9 ms, and an A/B
+  // that injects one probe into the measured window reproduces the high mode on
+  // demand (emu101.cpp, keyScanAbort). Drop it for the same reason and by the
+  // same rule: telemetry may cost the machine time, but it may not then report
+  // that time as the machine's.
+  if (combined_current_fw() == FW_EMU) emu101::keyScanAbort();
 }
 
 // --- 0x3E bench window: which clock it runs at -------------------------------

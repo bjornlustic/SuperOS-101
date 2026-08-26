@@ -25,6 +25,10 @@ uint16_t midiNoteOnsPerSec(); // incoming MIDI note-ons per second (DIN + USB)
 uint16_t keyToGateUs(bool max); // G5: us from the ROM's keyboard read (step 5) to its
                               // next P2/GATE write (step 13). This is f * T_pass, the
                               // second term of the key-to-gate bound (1 + f) * T_pass.
+void keyScanAbort();          // drop any in-flight key-to-gate measurement, so the
+                              // pass that answers a 0x3B does not report the cost of
+                              // the reply as the machine's key-scan latency. Same
+                              // defect and same fix as combined_pass_skip_next().
 uint16_t keysSeenPerSec();    // ROM keyboard-column P1 reads per second with a row low
 uint16_t shChangesPerSec(uint8_t route); // S/H value changes per second: 0 CV-OUT, 1 VCO, 2 RANDOM
 uint16_t btnsSeenPerSec();    // ROM button-column P1 reads per second with a row low
