@@ -55,6 +55,14 @@ from scipy.io import wavfile                               # noqa: E402
 import machines                                            # noqa: E402
 
 RATE = 48000
+
+# The onset detector's two parameters. They anchor EVERY analysis window in
+# this file, and until 2026-08-26 they were literals that nothing could vary,
+# so they contributed zero to every error bar and an unknown amount to every
+# answer (L107). They are module state precisely so `--onset-frac`/`--onset-hop`
+# can move them and the published row can be re-derived at another setting.
+ONSET_FRAC = 0.10
+ONSET_HOP = 0.010
 CH_101 = machines.ORDER.index("101")          # channel index inside the capture
 NOTES = (36, 60, 99)
 CV_OF = 36                                    # MIDI_CV_OFFSET; cv = note - 36
@@ -133,13 +141,15 @@ def capture(path, seconds):
     return sr, data[:, CH_101] if data.ndim > 1 else data
 
 
-def onset_index(sig, rate=RATE, frac=0.10, hop=0.010):
+def onset_index(sig, rate=RATE, frac=None, hop=None):
     """Sample index of the note onset, at `frac` of the signal's OWN peak.
 
     Finding 34's rule: measuring each hit against its own peak is what stops
     the reading moving when one capture is simply louder. Returns None if
     nothing crosses the threshold.
     """
+    frac = ONSET_FRAC if frac is None else frac
+    hop = ONSET_HOP if hop is None else hop
     x = np.abs(np.asarray(sig, dtype=float))
     w = max(1, int(hop * rate))
     env = np.array([x[i:i + w].mean() for i in range(0, len(x) - w, w)])
@@ -181,7 +191,8 @@ def capture_note(b, note, path, secs=3.0, fire_at=1.2):
     return sr, sig
 
 
-def onset_window(sig, rate=RATE, head=0.05, length=0.60):
+def onset_window(sig, rate=RATE, head=0.05, length=0.60,
+                 frac=None, hop=None):
     """The analysis window, placed relative to the onset rather than to t=0.
 
     The 101 does not hold a note at constant level (measured: the gate stays
@@ -191,7 +202,7 @@ def onset_window(sig, rate=RATE, head=0.05, length=0.60):
     every arm, because the 63:39:0 test is a difference between arms at one
     note and a common envelope cancels there.
     """
-    i = onset_index(sig, rate)
+    i = onset_index(sig, rate, frac=frac, hop=hop)
     if i is None:
         return None
     a = i + int(head * rate)
@@ -1991,6 +2002,15 @@ def cmd_screen(args):
 def build_parser():
     p = argparse.ArgumentParser(
         description="claim-038 G13: the 63:39:0 sign test and its instrument.")
+    p.add_argument("--onset-frac", type=float, default=ONSET_FRAC,
+                   help="onset threshold, as a fraction of the capture's OWN "
+                        "peak. Every analysis window in this file is anchored "
+                        "on it, so varying it is how its contribution to the "
+                        "error bar gets measured rather than assumed")
+    p.add_argument("--onset-hop", type=float, default=ONSET_HOP,
+                   help="onset envelope block, s. Also the QUANTUM of the "
+                        "window start: the detected onset lands on a multiple "
+                        "of this, so it bounds the placement below")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("synthetic", help="estimator vs tones of KNOWN f0 "
@@ -2157,7 +2177,13 @@ def build_parser():
 
 
 def main(argv=None):
+    global ONSET_FRAC, ONSET_HOP
     args = build_parser().parse_args(argv)
+    ONSET_FRAC, ONSET_HOP = args.onset_frac, args.onset_hop
+    if (ONSET_FRAC, ONSET_HOP) != (0.10, 0.010):
+        print(f"ONSET DETECTOR MOVED off its default: frac {ONSET_FRAC}, "
+              f"hop {ONSET_HOP} s. Nothing printed below is comparable to a "
+              f"published row without saying so.")
     return args.fn(args)
 
 
