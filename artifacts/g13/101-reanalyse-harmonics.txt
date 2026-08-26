@@ -1,0 +1,149 @@
+claim-038: saved captures re-analysed at several harmonics
+instrument tools/diag/g13_sign.py reanalyse; captures artifacts/g13/sign-2026-08-26/ (403 MB, gitignored)
+host-side only, no hardware, no lease. Generated 2026-08-26T17:31:59Z
+
+=== notes 36 and 60, harmonics 8 16 32 ===
+claim-038: saved captures re-analysed at several harmonics
+112 captures, harmonics [8, 16, 32]
+estimator-vs-machine: a within-cell outlier that AGREES across harmonics
+is the machine; one that disagrees is the estimator.
+
+note 36 mode 0: n=40 at h16, median +7.522 c, MAD 0.5466 c (harmonics used: {8: 8, 16: 16, 32: 32})
+note 36 mode 1: n=40 at h16, median +10.244 c, MAD 0.6053 c (harmonics used: {8: 8, 16: 16, 32: 32})
+note 36 mode 4: n=16 at h16, median +9.216 c, MAD 0.5890 c (harmonics used: {8: 8, 16: 16, 32: 32})
+  idx   6: h16=+5.961 c, 5.5 MAD from the cell median -> ESTIMATOR (harmonics disagree)
+           h8=-15.970  h16=+5.961  h32=+5.897   worst disagreement 21.930 c
+note 36 mode 8: n=16 at h16, median +18.210 c, MAD 21.9542 c (harmonics used: {8: 8, 16: 16, 32: 32})
+
+ESTIMATOR vs MACHINE, by decomposition (independent of outliers)
+a difference across harmonics cancels anything the machine did.
+  note 36 mode 0:
+    h8   n= 40  mean  -32.525 c  sd 3.4614 c
+    h16  n= 40  mean   +7.459 c  sd 0.6685 c
+    h32  n= 40  mean   +7.455 c  sd 0.6896 c
+    h8 - h16: mean  -39.984 c  sd 4.1029 c   vs 3.5253 c expected if the scatter were ALL estimator
+      ratio 1.16 -> ESTIMATOR dominates: the two readings are independent
+    h8 - h32: mean  -39.980 c  sd 4.1386 c   vs 3.5294 c expected if the scatter were ALL estimator
+      ratio 1.17 -> ESTIMATOR dominates: the two readings are independent
+    h16 - h32: mean   +0.004 c  sd 0.1208 c   vs 0.9605 c expected if the scatter were ALL estimator
+      ratio 0.13 -> MACHINE dominates: the two readings move together
+  note 36 mode 1:
+    h8   n= 40  mean  -29.872 c  sd 5.4075 c
+    h16  n= 40  mean  +10.441 c  sd 1.0553 c
+    h32  n= 40  mean  +10.560 c  sd 1.1178 c
+    h8 - h16: mean  -40.313 c  sd 6.0156 c   vs 5.5095 c expected if the scatter were ALL estimator
+      ratio 1.09 -> ESTIMATOR dominates: the two readings are independent
+    h8 - h32: mean  -40.433 c  sd 6.1470 c   vs 5.5218 c expected if the scatter were ALL estimator
+      ratio 1.11 -> ESTIMATOR dominates: the two readings are independent
+    h16 - h32: mean   -0.119 c  sd 0.4635 c   vs 1.5373 c expected if the scatter were ALL estimator
+      ratio 0.30 -> MACHINE dominates: the two readings move together
+  note 36 mode 4:
+    h8   n= 16  mean  -29.242 c  sd 5.2481 c
+    h16  n= 16  mean   +8.852 c  sd 1.1343 c
+    h32  n= 16  mean   +8.729 c  sd 1.1966 c
+    h8 - h16: mean  -38.094 c  sd 6.1536 c   vs 5.3692 c expected if the scatter were ALL estimator
+      ratio 1.15 -> ESTIMATOR dominates: the two readings are independent
+    h8 - h32: mean  -37.971 c  sd 6.2603 c   vs 5.3828 c expected if the scatter were ALL estimator
+      ratio 1.16 -> ESTIMATOR dominates: the two readings are independent
+    h16 - h32: mean   +0.123 c  sd 0.5223 c   vs 1.6488 c expected if the scatter were ALL estimator
+      ratio 0.32 -> MACHINE dominates: the two readings move together
+  note 36 mode 8:
+    h8   n= 16  mean  -16.363 c  sd 56.3958 c
+    h16  n= 16  mean   +6.007 c  sd 31.3908 c
+    h32  n= 16  mean   +5.318 c  sd 14.0260 c
+    h8 - h16: mean  -22.370 c  sd 72.8207 c   vs 64.5435 c expected if the scatter were ALL estimator
+      ratio 1.13 -> ESTIMATOR dominates: the two readings are independent
+    h8 - h32: mean  -21.681 c  sd 62.2964 c   vs 58.1138 c expected if the scatter were ALL estimator
+      ratio 1.07 -> ESTIMATOR dominates: the two readings are independent
+    h16 - h32: mean   +0.689 c  sd 33.6608 c   vs 34.3819 c expected if the scatter were ALL estimator
+      ratio 0.98 -> ESTIMATOR dominates: the two readings are independent
+
+THE SHIFT AT EACH HARMONIC (arm minus the mode 0 control)
+  note 36 mode 1:  h8: +2.6523 c   h16: +2.9814 c   h32: +3.1048 c
+  note 36 mode 4:  h8: +3.2829 c   h16: +1.3924 c   h32: +1.2739 c
+  note 36 mode 8:  h8: +16.1616 c   h16: -1.4528 c   h32: -2.1377 c
+  A shift that MOVES with the harmonic is the estimator's, not the machine's.
+
+outliers beyond 4 MAD: 1
+   estimator: 1
+     machine: 0
+     unclear: 0
+claim-038: saved captures re-analysed at several harmonics
+80 captures, harmonics [8, 16, 32]
+estimator-vs-machine: a within-cell outlier that AGREES across harmonics
+is the machine; one that disagrees is the estimator.
+
+note 60 mode 0: n=40 at h16, median -3.181 c, MAD 0.3752 c (harmonics used: {8: 8, 16: 16, 32: 32})
+note 60 mode 1: n=40 at h16, median -0.847 c, MAD 0.3288 c (harmonics used: {8: 8, 16: 16, 32: 32})
+
+ESTIMATOR vs MACHINE, by decomposition (independent of outliers)
+a difference across harmonics cancels anything the machine did.
+  note 60 mode 0:
+    h8   n= 40  mean   +6.812 c  sd 0.7407 c
+    h16  n= 40  mean   -3.259 c  sd 0.5095 c
+    h32  n= 40  mean   +1.785 c  sd 0.2236 c
+    h8 - h16: mean  +10.071 c  sd 1.1926 c   vs 0.8990 c expected if the scatter were ALL estimator
+      ratio 1.33 -> ESTIMATOR dominates: the two readings are independent
+    h8 - h32: mean   +5.027 c  sd 0.5933 c   vs 0.7737 c expected if the scatter were ALL estimator
+      ratio 0.77 -> MIXED, neither cause dominates
+    h16 - h32: mean   -5.044 c  sd 0.5998 c   vs 0.5564 c expected if the scatter were ALL estimator
+      ratio 1.08 -> ESTIMATOR dominates: the two readings are independent
+  note 60 mode 1:
+    h8   n= 40  mean   +9.188 c  sd 0.9007 c
+    h16  n= 40  mean   -0.883 c  sd 0.4074 c
+    h32  n= 40  mean   +4.144 c  sd 0.3850 c
+    h8 - h16: mean  +10.071 c  sd 1.1453 c   vs 0.9885 c expected if the scatter were ALL estimator
+      ratio 1.16 -> ESTIMATOR dominates: the two readings are independent
+    h8 - h32: mean   +5.045 c  sd 0.5841 c   vs 0.9795 c expected if the scatter were ALL estimator
+      ratio 0.60 -> MIXED, neither cause dominates
+    h16 - h32: mean   -5.027 c  sd 0.5719 c   vs 0.5605 c expected if the scatter were ALL estimator
+      ratio 1.02 -> ESTIMATOR dominates: the two readings are independent
+
+THE SHIFT AT EACH HARMONIC (arm minus the mode 0 control)
+  note 60 mode 1:  h8: +2.3761 c   h16: +2.3758 c   h32: +2.3586 c
+  A shift that MOVES with the harmonic is the estimator's, not the machine's.
+
+outliers beyond 4 MAD: 0
+   estimator: 0
+     machine: 0
+     unclear: 0
+No outliers at this threshold. That is NOT evidence the scatter is absent:
+these captures may simply not contain a rejected run. Say 'not tested'.
+
+=== note 99, harmonics 4 7 (h16/h32 both clamp to 7) ===
+claim-038: saved captures re-analysed at several harmonics
+34 captures, harmonics [4, 7]
+estimator-vs-machine: a within-cell outlier that AGREES across harmonics
+is the machine; one that disagrees is the estimator.
+
+note 99 mode 0: n=16 at h7, median -2.613 c, MAD 0.1693 c (harmonics used: {4: 4, 7: 7})
+note 99 mode 1: n=16 at h7, median -2.514 c, MAD 0.1659 c (harmonics used: {4: 4, 7: 7})
+note 99 mode 8: fewer than 3 locks at h7
+
+ESTIMATOR vs MACHINE, by decomposition (independent of outliers)
+a difference across harmonics cancels anything the machine did.
+  note 99 mode 0:
+    h4   n= 16  mean   -1.890 c  sd 0.2117 c
+    h7   n= 16  mean   -2.671 c  sd 0.1830 c
+    h4 - h7: mean   +0.781 c  sd 0.3250 c   vs 0.2798 c expected if the scatter were ALL estimator
+      ratio 1.16 -> ESTIMATOR dominates: the two readings are independent
+  note 99 mode 1:
+    h4   n= 16  mean   -1.353 c  sd 0.2185 c
+    h7   n= 16  mean   -2.483 c  sd 0.2534 c
+    h4 - h7: mean   +1.130 c  sd 0.1975 c   vs 0.3346 c expected if the scatter were ALL estimator
+      ratio 0.59 -> MIXED, neither cause dominates
+  note 99 mode 8:
+    h4   n=  2  mean   -3.463 c  sd 0.3838 c
+    h7   n=  2  mean   -3.486 c  sd 0.8839 c
+
+THE SHIFT AT EACH HARMONIC (arm minus the mode 0 control)
+  note 99 mode 1:  h4: +0.5368 c   h7: +0.1872 c
+  note 99 mode 8:  h4: -1.5727 c   h7: -0.8149 c
+  A shift that MOVES with the harmonic is the estimator's, not the machine's.
+
+outliers beyond 4 MAD: 0
+   estimator: 0
+     machine: 0
+     unclear: 0
+No outliers at this threshold. That is NOT evidence the scatter is absent:
+these captures may simply not contain a rejected run. Say 'not tested'.

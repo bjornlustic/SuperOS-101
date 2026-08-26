@@ -732,15 +732,234 @@ def _one_trigger(b, note, mode, i, f_nom, args):
     return f
 
 
+def _cell_stats(cs):
+    """n / mean / sd / sem in cents for one cell's per-trigger list."""
+    a = np.asarray(cs, dtype=float)
+    n = len(a)
+    if n == 0:
+        return {"n": 0, "mean": float("nan"), "sd": float("nan"),
+                "sem": float("nan")}
+    sd = float(a.std()) if n > 1 else float("nan")
+    sem = sd / np.sqrt(n) if n > 1 else float("nan")
+    return {"n": n, "mean": float(a.mean()), "sd": sd, "sem": sem}
+
+
 def _report_cell(mode, fs, f_nom):
     if not fs:
         print(f"  mode {mode:>2}: NO LOCKS")
         return
     a = np.array(fs)
     c = cents(a, f_nom)
-    sem = c.std() / np.sqrt(len(a)) if len(a) > 1 else float("nan")
-    print(f"  mode {mode:>2}: n={len(a):>3}  {a.mean():>11.5f} Hz  "
-          f"{c.mean():>+8.3f} c  sd {c.std():.4f}  sem {sem:.4f}")
+    st = _cell_stats(c)
+    print(f"  mode {mode:>2}: n={st['n']:>3}  {a.mean():>11.5f} Hz  "
+          f"{st['mean']:>+8.3f} c  sd {st['sd']:.4f}  sem {st['sem']:.4f}")
+
+
+# ---------------------------------------------------------------- the cut
+
+MIN_CELLS_FOR_CUT = 4          # below this a median is not a reference
+DEFAULT_SD_FACTOR = 3.0
+DEFAULT_MIN_REPEATS = 3
+
+
+def apply_cut(cells, factor=DEFAULT_SD_FACTOR):
+    """Reject cells whose WITHIN-RUN sd exceeds `factor` x the median cell sd.
+
+    `cells` is every cell for ONE note, across repeats and arms. The reference
+    is the median of their sds, which is why this needs several: with two cells
+    the "median" is their mean and one bad cell drags the reference up by half
+    its own excess. Under MIN_CELLS_FOR_CUT the cut REFUSES to run and says so,
+    rather than running underpowered (COMMON rule 1: an instrument that cannot
+    resolve the distinction gives no result, not a weak one).
+
+    Why sd and not the mean: this has to be blind to the answer. Three repeats
+    of one fixed configuration gave +3.9122, +2.3749 and +4.0067 c, and the odd
+    one out announced itself from its own internal scatter (sem 1.7501 against
+    0.2886 and 0.2400, ~6x). Rejecting on spread cannot know which way it would
+    have moved the shift; rejecting on the mean would be fitting the result.
+
+    RESIDUAL RISK, stated because the cut cannot rule it out: if the true shift
+    and the scatter share a cause, dropping the scattered cells biases the
+    survivors. `pool` prints the uncut shift beside the cut one for exactly
+    this reason. If they disagree by more than the quoted error, the cut is
+    doing something and the run needs explaining, not publishing.
+
+    Returns (kept, rejected, ref_sd). ref_sd is None when the cut refused.
+    """
+    usable = [c for c in cells if c["stats"]["n"] > 1
+              and np.isfinite(c["stats"]["sd"])]
+    if len(usable) < MIN_CELLS_FOR_CUT:
+        return list(cells), [], None
+    ref = float(np.median([c["stats"]["sd"] for c in usable]))
+    lim = factor * ref
+    kept, rej = [], []
+    for c in cells:
+        sd = c["stats"]["sd"]
+        if c["stats"]["n"] < 2 or not np.isfinite(sd) or sd > lim:
+            rej.append(c)
+        else:
+            kept.append(c)
+    return kept, rej, ref
+
+
+def pool_shifts(cells, factor=DEFAULT_SD_FACTOR,
+                min_repeats=DEFAULT_MIN_REPEATS, out=print):
+    """The published quantity: per-note, per-arm shift against the mode 0
+    control, cut for run quality and quoted from the BETWEEN-REPEAT spread.
+
+    A repeat contributes a shift only if BOTH its control cell and its arm cell
+    survive the cut, because a difference is no better than its worse half.
+
+    The error is sd(per-repeat shifts) / sqrt(k), NOT the within-run sem. The
+    within-run sem understates it by about 3x on this machine: five note-36
+    h16 measurements of the same quantity gave +3.6355 +2.9814 +3.9122 +2.3749
+    +4.0067, sd 0.691 c, against quoted sems of 0.10 to 0.32 c. Every error bar
+    published for this claim before the cut existed was the understating kind.
+
+    Returns {(note, mode): dict}, empty for anything that did not qualify.
+    """
+    by_note = {}
+    for c in cells:
+        by_note.setdefault(c["note"], []).append(c)
+
+    table = {}
+    for note in sorted(by_note):
+        kept, rej, ref = apply_cut(by_note[note], factor)
+        out(f"\nnote {note} (63-cv {63 - (note - CV_OF)}): "
+            f"{len(by_note[note])} cells offered")
+        if ref is None:
+            out(f"  CUT REFUSED: fewer than {MIN_CELLS_FOR_CUT} cells with a "
+                f"usable sd. A median over this many is not a reference.")
+            out("  Every cell is kept and NOTHING here is publishable.")
+        else:
+            out(f"  median cell sd {ref:.4f} c, reject above "
+                f"{factor:g}x = {factor * ref:.4f} c")
+        for c in rej:
+            st = c["stats"]
+            out(f"  REJECTED run {c['run_id']} mode {c['mode']}: "
+                f"n={st['n']} mean {st['mean']:+.4f} c sd {st['sd']:.4f} "
+                f"sem {st['sem']:.4f}")
+
+        # index the survivors by (run_id, mode); one cell per pair
+        idx = {}
+        for c in kept:
+            idx[(c["run_id"], c["mode"])] = c
+        runs = sorted({c["run_id"] for c in by_note[note]})
+        modes = sorted({c["mode"] for c in by_note[note]} - {0})
+
+        for mode in modes:
+            per, uncut = [], []
+            for r in runs:
+                ctrl, arm = idx.get((r, 0)), idx.get((r, mode))
+                if ctrl and arm:
+                    per.append((r, arm["stats"]["mean"] - ctrl["stats"]["mean"]))
+                cu = {(c["run_id"], c["mode"]): c for c in by_note[note]}
+                c0, c1 = cu.get((r, 0)), cu.get((r, mode))
+                if c0 and c1 and c0["stats"]["n"] and c1["stats"]["n"]:
+                    uncut.append(c1["stats"]["mean"] - c0["stats"]["mean"])
+            k = len(per)
+            out(f"  mode {mode}: {k} repeat(s) survive both halves")
+            for r, d in per:
+                out(f"    {r}  {d:>+8.4f} c")
+            if k < min_repeats:
+                out(f"  NO SHIFT PUBLISHED for mode {mode}: {k} surviving "
+                    f"repeats, {min_repeats} required. This is 'not measured', "
+                    f"not a null.")
+                continue
+            ds = np.array([d for _, d in per], dtype=float)
+            spread = float(ds.std(ddof=1))
+            err = spread / np.sqrt(k)
+            u = np.array(uncut, dtype=float)
+            row = {"note": note, "mode": mode, "k": k,
+                   "shift": float(ds.mean()), "err": err, "spread": spread,
+                   "uncut_shift": float(u.mean()) if len(u) else float("nan"),
+                   "uncut_k": len(u), "ref_sd": ref}
+            table[(note, mode)] = row
+            out(f"  SHIFT {row['shift']:>+8.4f} +/- {err:.4f} c "
+                f"(between-repeat sd {spread:.4f} over k={k})")
+            if len(u) > 1:
+                out(f"  uncut, for comparison: {u.mean():>+8.4f} c over "
+                    f"{len(u)} repeats. A disagreement larger than the error "
+                    f"above means the cut is deciding the answer.")
+    return table
+
+
+def _cells_from_json(paths, out=print):
+    """Load run sidecars into the flat cell list pool_shifts() wants."""
+    import json
+    cells, meta = [], []
+    for p in paths:
+        with open(p) as fh:
+            d = json.load(fh)
+        meta.append((d.get("run_id"), d.get("harmonic"), p))
+        for c in d.get("cells", []):
+            cs = c.get("cents", [])
+            cells.append({"run_id": d.get("run_id"), "note": c["note"],
+                          "mode": c["mode"], "cents": cs,
+                          "stats": _cell_stats(cs)})
+    hs = {h for _, h, _ in meta}
+    if len(hs) > 1:
+        out(f"REFUSING TO POOL: harmonics differ across runs {sorted(hs)}. "
+            f"Mixing harmonics is what produced the withdrawn 5.4 sigma.")
+        return None, meta
+    return cells, meta
+
+
+def cmd_pool(args):
+    """Pool several `run` sidecars: apply the quality cut, publish from the
+    between-repeat spread. This is the ONLY subcommand whose shift is quotable.
+
+    Separate invocations rather than one long one because a tool call caps at
+    10 minutes here and one repeat of a 2-arm note-36 cell is ~3.5 min.
+    """
+    import glob
+    paths = []
+    for pat in args.json:
+        paths.extend(sorted(glob.glob(pat)) or [pat])
+    if not paths:
+        print("no run sidecars given")
+        return 2
+    cells, meta = _cells_from_json(paths)
+    if cells is None:
+        return 2
+    print("claim-038 G13: pooled sign test, run-quality cut applied")
+    for rid, h, p in meta:
+        print(f"  run {rid}  harmonic {h}  {p}")
+    print(f"cut: reject a cell whose sd > {args.sd_factor:g}x the median cell "
+          f"sd for its note; {args.min_repeats} surviving repeats required")
+    table = pool_shifts(cells, args.sd_factor, args.min_repeats)
+    if not table:
+        print("\nNOTHING PUBLISHABLE. Take more repeats.")
+        return 1
+    print("\nPUBLISHABLE ROWS")
+    print(f"{'note':>5} {'63-cv':>6} {'mode':>5} {'shift c':>10} "
+          f"{'+/- c':>8} {'k':>3}")
+    for (note, mode), r in sorted(table.items()):
+        print(f"{note:>5} {63 - (note - CV_OF):>6} {mode:>5} "
+              f"{r['shift']:>+10.4f} {r['err']:>8.4f} {r['k']:>3}")
+
+    for mode in sorted({m for _, m in table}):
+        got = [(63 - (n - CV_OF), r) for (n, m2), r in sorted(table.items())
+               if m2 == m]
+        base = next((r for k, r in got if k == 63), None)
+        if base is None or len(got) < 2:
+            continue
+        print(f"\n  mode {mode}: the 63:39:0 ratio, with HONEST errors")
+        for k, r in got:
+            if k == 63:
+                continue
+            ratio = r["shift"] / base["shift"]
+            # error on a quotient of two independent measurements
+            re_ = abs(ratio) * np.sqrt((r["err"] / r["shift"]) ** 2
+                                       + (base["err"] / base["shift"]) ** 2)
+            pred = k / 63.0
+            sig = abs(ratio - pred) / re_ if re_ > 0 else float("inf")
+            print(f"    63-cv {k:>2}: ratio {ratio:.4f} +/- {re_:.4f} vs "
+                  f"predicted {pred:.4f} -> {sig:.1f} sigma")
+        print("  L79: a systematic that cancels in each half does NOT cancel "
+              "in their\n  ratio. The per-half agreement is what hides it, so "
+              "the quotient is what\n  gets quoted, never the halves.")
+    return 0
 
 
 def cmd_run(args):
@@ -851,10 +1070,40 @@ def cmd_run(args):
                 print(f"  mode {mode:>2}: NO LOCKS")
         print()
 
-    # the differences, which are the actual claim
-    print("SHIFT vs the 4 MHz control, per note. This is the published quantity.")
-    print(f"{'note':>5} {'63-cv':>6} {'mode':>5} {'shift c':>10} {'+/- c':>8}")
-    table = {}
+    # The sidecar. Without it a repeat cannot be pooled with any other, and
+    # the between-repeat spread is the only honest error this claim has.
+    import json
+    side = os.path.join(args.outdir, f"g13-run-{args.run_id}.json")
+    doc = {"run_id": args.run_id, "harmonic": args.harmonic,
+           "interleave": bool(args.interleave), "n": args.n,
+           "notes": notes, "modes": arms,
+           "capture": {"secs": args.secs, "fire_at": args.fire_at,
+                       "head": args.head, "win": args.win,
+                       "window": args.window, "gap": args.gap},
+           "cells": []}
+    for (note, mode), fs in sorted(results.items()):
+        f_nom = midi_hz(note)
+        cs = list(cents(np.array(fs), f_nom)) if fs else []
+        doc["cells"].append({"note": note, "mode": mode,
+                             "nh": pick_harmonic(f_nom, RATE, args.harmonic),
+                             "f_nom": f_nom, "n": len(cs),
+                             "freqs": [float(x) for x in fs],
+                             "cents": [float(x) for x in cs]})
+    with open(side, "w") as fh:
+        json.dump(doc, fh, indent=1)
+    print(f"sidecar written: {side}")
+
+    # WITHIN-RUN differences. These are diagnostic. They are NOT the claim.
+    #
+    # A single run cannot quote an error on its shift, because the error that
+    # matters is between runs and is about 3x the within-run sem on this
+    # machine (five note-36 h16 measurements of one fixed configuration: sd
+    # 0.691 c against quoted sems of 0.10 to 0.32 c). Every claim-038 error bar
+    # published before this existed was the understating kind, and that plus
+    # mixed harmonics is the whole explanation of the withdrawn 5.4 sigma.
+    print("\nWITHIN-RUN differences, DIAGNOSTIC ONLY. Do not quote these.")
+    print(f"{'note':>5} {'63-cv':>6} {'mode':>5} {'diff c':>10} "
+          f"{'sem c':>8}   (sem understates the real error ~3x)")
     for note in notes:
         f_nom = midi_hz(note)
         ctrl = results.get((note, 0)) or []
@@ -871,30 +1120,383 @@ def cmd_run(args):
             ac = cents(np.array(arm), f_nom)
             d = ac.mean() - cc.mean()
             err = np.sqrt(ac.std() ** 2 / len(ac) + cc.std() ** 2 / len(cc))
-            table[(note, mode)] = (d, err)
             print(f"{note:>5} {63 - (note - CV_OF):>6} {mode:>5} "
                   f"{d:>+10.4f} {err:>8.4f}")
 
-    print("\nTHE PREDICTION: the shift is proportional to (63 - cv), so the "
-          "three notes\nshould stand as 63 : 39 : 0, and note 99 should show "
-          "NO shift at all.")
-    for mode in arms:
-        if mode == 0:
+    # The cut, run over this run alone. It will normally REFUSE here: one run
+    # of two arms is two cells and a median over two is not a reference. That
+    # refusal is the point, and it is why this prints the pool command.
+    cells = [{"run_id": args.run_id, "note": n, "mode": m,
+              "cents": list(cents(np.array(fs), midi_hz(n))) if fs else [],
+              "stats": _cell_stats(cents(np.array(fs), midi_hz(n))
+                                   if fs else [])}
+             for (n, m), fs in sorted(results.items())]
+    print("\nrun-quality cut, this run alone:")
+    pool_shifts(cells, args.sd_factor, args.min_repeats)
+
+    print(f"\nTHE SHIFT IS NOT PUBLISHED FROM ONE RUN. Repeat this command "
+          f"{args.min_repeats + 1} or\nmore times with the SAME harmonic, then:"
+          f"\n\n    python3 tools/diag/g13_sign.py pool "
+          f"'{args.outdir}/g13-run-*.json'\n")
+    return 0
+
+
+def _mkcell(run_id, note, mode, mean, sd, n=20, seed=0):
+    """A synthetic cell with a KNOWN mean and within-run sd."""
+    rng = np.random.default_rng(seed)
+    x = rng.normal(0.0, 1.0, n)
+    x = (x - x.mean()) / (x.std() or 1.0) * sd + mean     # exact mean and sd
+    return {"run_id": run_id, "note": note, "mode": mode,
+            "cents": list(x), "stats": _cell_stats(x)}
+
+
+def _quiet(*a, **k):
+    pass
+
+
+def cmd_cutcheck(args):
+    """Break-test the run-quality cut, with no hardware and no bench time.
+
+    L9 and claim-081: a suite that has never failed proves nothing. Every case
+    here has a paired injection that MUST turn it red, and the injections are
+    the ways this cut could be wrong rather than the ways it could be right.
+    """
+    fails = []
+
+    def check(name, cond, detail=""):
+        print(f"  {'ok  ' if cond else 'FAIL'}  {name}"
+              + (f"   {detail}" if detail else ""))
+        if not cond:
+            fails.append(name)
+
+    # ---- 1. clean: five repeats, arm +3.00 c, tight within-run sd
+    print("1. clean data, 5 repeats, true shift +3.0000 c")
+    clean = []
+    for i in range(5):
+        clean.append(_mkcell(f"r{i}", 36, 0, 0.0, 0.30, seed=100 + i))
+        clean.append(_mkcell(f"r{i}", 36, 1, 3.0, 0.30, seed=200 + i))
+    t = pool_shifts(clean, out=_quiet)
+    row = t.get((36, 1))
+    check("a shift is published", row is not None)
+    if row:
+        check("shift is the true +3.0000", abs(row["shift"] - 3.0) < 1e-6,
+              f"got {row['shift']:+.4f}")
+        check("all 5 repeats survive", row["k"] == 5, f"k={row['k']}")
+
+    # ---- 2. THE DEFECT THIS EXISTS FOR: the error must come from the
+    #        between-repeat spread, not the within-run sem. Within-run sd 0.02
+    #        (sem 0.0045), repeat means scattered by 0.691 c, which is the
+    #        measured note-36 number.
+    print("\n2. tight cells, scattered repeat means (the measured 0.691 c)")
+    means = [3.6355, 2.9814, 3.9122, 2.3749, 4.0067]
+    sc = []
+    for i, m in enumerate(means):
+        sc.append(_mkcell(f"r{i}", 36, 0, 0.0, 0.02, seed=300 + i))
+        sc.append(_mkcell(f"r{i}", 36, 1, m, 0.02, seed=400 + i))
+    t = pool_shifts(sc, out=_quiet)
+    row = t.get((36, 1))
+    want_spread = float(np.array(means).std(ddof=1))
+    check("published", row is not None)
+    if row:
+        check("error is the between-repeat spread / sqrt(k)",
+              abs(row["err"] - want_spread / np.sqrt(5)) < 1e-6,
+              f"{row['err']:.4f} vs {want_spread / np.sqrt(5):.4f}")
+        sem = 0.02 / np.sqrt(20)
+        check("error is >> the within-run sem it replaces",
+              row["err"] > 20 * sem,
+              f"{row['err']:.4f} c against sem {sem:.4f} c")
+
+    # ---- 3. one bad repeat: 6x the sd, and it drags the answer
+    print("\n3. one repeat with 6x the sd (the +2.3749 signature)")
+    bad = []
+    for i in range(5):
+        bad.append(_mkcell(f"r{i}", 36, 0, 0.0, 0.30, seed=500 + i))
+        s_ = 1.80 if i == 3 else 0.30
+        m_ = 1.20 if i == 3 else 3.00
+        bad.append(_mkcell(f"r{i}", 36, 1, m_, s_, seed=600 + i))
+    t = pool_shifts(bad, out=_quiet)
+    row = t.get((36, 1))
+    check("published", row is not None)
+    if row:
+        check("the bad repeat is excluded", row["k"] == 4, f"k={row['k']}")
+        check("cut shift is the good value", abs(row["shift"] - 3.0) < 1e-6,
+              f"{row['shift']:+.4f}")
+        check("uncut shift is dragged, and is printed for comparison",
+              abs(row["uncut_shift"] - 3.0) > 0.3,
+              f"uncut {row['uncut_shift']:+.4f} over {row['uncut_k']} repeats")
+
+    # ---- 4. INJECTION: disable the cut. Case 3 must then go wrong.
+    print("\n4. INJECTION: cut disabled (sd-factor 1e9). Case 3 must break.")
+    t = pool_shifts(bad, factor=1e9, out=_quiet)
+    row = t.get((36, 1))
+    check("the bad repeat now survives", row is not None and row["k"] == 5,
+          f"k={row['k'] if row else None}")
+    check("and the shift is now wrong",
+          row is not None and abs(row["shift"] - 3.0) > 0.3,
+          f"{row['shift']:+.4f}" if row else "")
+
+    # ---- 5. too few repeats: not measured, not a null
+    print("\n5. two repeats only: nothing may be published")
+    few = []
+    for i in range(2):
+        few.append(_mkcell(f"r{i}", 36, 0, 0.0, 0.30, seed=700 + i))
+        few.append(_mkcell(f"r{i}", 36, 1, 3.0, 0.30, seed=800 + i))
+    t = pool_shifts(few, out=_quiet)
+    check("no shift published", (36, 1) not in t)
+
+    # ---- 6. under MIN_CELLS_FOR_CUT the cut REFUSES rather than running
+    print(f"\n6. {MIN_CELLS_FOR_CUT - 1} cells: the cut must refuse, not guess")
+    two = [_mkcell("r0", 36, 0, 0.0, 0.30, seed=900),
+           _mkcell("r0", 36, 1, 3.0, 9.00, seed=901),
+           _mkcell("r1", 36, 0, 0.0, 0.30, seed=902)][:MIN_CELLS_FOR_CUT - 1]
+    kept, rej, ref = apply_cut(two)
+    check("cut refused", ref is None)
+    check("nothing rejected while refused", not rej)
+
+    # ---- 7. INJECTION: a cell of pure garbage must not survive on its mean
+    print("\n7. INJECTION: a wide cell whose MEAN looks right must still go")
+    mix = []
+    for i in range(5):
+        mix.append(_mkcell(f"r{i}", 36, 0, 0.0, 0.30, seed=1000 + i))
+        s_ = 2.40 if i == 1 else 0.30
+        mix.append(_mkcell(f"r{i}", 36, 1, 3.00, s_, seed=1100 + i))
+    kept, rej, ref = apply_cut(mix)
+    check("rejected on spread alone, mean identical to the good cells",
+          len(rej) == 1 and rej[0]["run_id"] == "r1",
+          f"{len(rej)} rejected")
+
+    # ---- 8. mixing harmonics must be refused at load, not averaged
+    print("\n8. INJECTION: two runs at different harmonics must not pool")
+    import json
+    import tempfile
+    paths = []
+    with tempfile.TemporaryDirectory() as d:
+        for i, h in enumerate((16, 32)):
+            p = os.path.join(d, f"g13-run-x{i}.json")
+            with open(p, "w") as fh:
+                json.dump({"run_id": f"x{i}", "harmonic": h, "cells": [
+                    {"note": 36, "mode": 0, "cents": [0.0, 0.1]},
+                    {"note": 36, "mode": 1, "cents": [3.0, 3.1]}]}, fh)
+            paths.append(p)
+        cells, _ = _cells_from_json(paths, out=_quiet)
+    check("refused", cells is None)
+
+    print(f"\n{len(fails)} failure(s)" if fails else "\nall cases pass")
+    if fails:
+        for f in fails:
+            print(f"  FAILED: {f}")
+    return 1 if fails else 0
+
+
+def _read_capture(path):
+    sr, data = wavfile.read(path)
+    return sr, (data[:, CH_101] if data.ndim > 1 else data)
+
+
+def cmd_reanalyse(args):
+    """Re-analyse SAVED captures at several harmonics. No hardware, no lease.
+
+    THE QUESTION THIS ANSWERS, and it is the one the quality cut leaves open:
+    is the run-to-run scatter the ESTIMATOR intermittently losing the harmonic,
+    or the MACHINE moving? A cut can reject a bad run either way, but only this
+    says what was rejected.
+
+    The test is per-FILE and therefore immune to the mixed provenance of the
+    pre-run-id captures. For one capture, h16 and h32 read the SAME physical
+    event. If a capture that is an outlier inside its own cell also disagrees
+    with itself across harmonics, the estimator lost it. If every harmonic
+    agrees on that capture and it is still an outlier, the machine moved and no
+    estimator fix will help.
+
+    Trap, from this instrument's own history: a tight spread is not a correct
+    answer. `--harmonic 64` at note 36 once looked like the best cell in the
+    sweep at sd 0.14 c and was locked onto the WRONG harmonic, mean +57 c out.
+    So the cross-harmonic DISAGREEMENT is reported in cents referred to f0,
+    where a lost harmonic shows up as a large offset rather than as noise.
+    """
+    import glob
+    import re
+    paths = []
+    for pat in args.wav:
+        paths.extend(sorted(glob.glob(pat)) or [pat])
+    paths = [p for p in paths if os.path.isfile(p)]
+    if not paths:
+        print("no captures matched")
+        return 2
+
+    hs = args.harmonics
+    print("claim-038: saved captures re-analysed at several harmonics")
+    print(f"{len(paths)} captures, harmonics {hs}")
+    print("estimator-vs-machine: a within-cell outlier that AGREES across "
+          "harmonics\nis the machine; one that disagrees is the estimator.\n")
+
+    rows = []
+    for p in paths:
+        m = re.search(r"-(\d+)-(\d+)-(\d+)\.wav$", os.path.basename(p))
+        if not m:
+            print(f"  skip (cannot parse note/mode/index): {p}")
             continue
-        got = [(63 - (n - CV_OF), table.get((n, mode))) for n in notes]
-        got = [(k, v) for k, v in got if v]
-        if len(got) < 2:
+        note, mode, idx = (int(x) for x in m.groups())
+        f_nom = midi_hz(note)
+        sr, sig = _read_capture(p)
+        win = onset_window(sig, sr, args.head, args.win)
+        if win is None:
+            print(f"  {os.path.basename(p)}: NO ONSET")
             continue
-        base = next((v[0] for k, v in got if k == 63), None)
-        print(f"\n  mode {mode}:")
-        for k, (d, err) in got:
-            rel = "" if not base or base == 0 else f"   {100 * d / base:>6.1f} % of the 63 arm"
-            pred = "" if base is None else f"   predicted {(k / 63.0) * (base or 0):>+7.4f} c"
-            print(f"    63-cv {k:>2}: {d:>+8.4f} +/- {err:.4f} c{rel}{pred}")
-    print("\nA shift that is large at 63, about 62 % of it at 39 and consistent "
-          "with zero at 0\nis the mechanism. Anything else falsifies it, and a "
-          "common-mode confounder\n(clock error, capture-rate error, tuning "
-          "drift, temperature) cannot make that shape.")
+        vals = {}
+        for h in hs:
+            f, nh = estimate_f0_harmonic(win, f_nom, rate=sr, want=h)
+            vals[h] = (float(cents(f, f_nom)) if f is not None else None, nh)
+        rows.append({"path": p, "note": note, "mode": mode, "idx": idx,
+                     "vals": vals})
+
+    if not rows:
+        print("nothing analysed")
+        return 1
+
+    ref = args.reference
+    by_cell = {}
+    for r in rows:
+        by_cell.setdefault((r["note"], r["mode"]), []).append(r)
+
+    verdicts = {"estimator": 0, "machine": 0, "unclear": 0}
+    for (note, mode), rs in sorted(by_cell.items()):
+        base = np.array([r["vals"][ref][0] for r in rs
+                         if r["vals"].get(ref, (None,))[0] is not None])
+        if len(base) < 3:
+            print(f"note {note} mode {mode}: fewer than 3 locks at h{ref}")
+            continue
+        med = float(np.median(base))
+        mad = float(np.median(np.abs(base - med))) or 1e-9
+        print(f"note {note} mode {mode}: n={len(base)} at h{ref}, "
+              f"median {med:+.3f} c, MAD {mad:.4f} c "
+              f"(harmonics used: "
+              f"{ {h: rs[0]['vals'][h][1] for h in hs} })")
+        for r in sorted(rs, key=lambda z: z["idx"]):
+            v = r["vals"].get(ref, (None,))[0]
+            if v is None:
+                continue
+            dev = abs(v - med) / mad
+            if dev < args.outlier_mad:
+                continue
+            others = [r["vals"][h][0] for h in hs
+                      if h != ref and r["vals"][h][0] is not None]
+            if not others:
+                verdicts["unclear"] += 1
+                continue
+            disagree = max(abs(v - o) for o in others)
+            # A capture the estimator handled consistently reads the same at
+            # every harmonic; the cross-harmonic spread of a good capture sets
+            # the scale, so compare against the cell's own MAD.
+            if disagree > args.outlier_mad * mad:
+                verdicts["estimator"] += 1
+                tag = "ESTIMATOR (harmonics disagree)"
+            else:
+                verdicts["machine"] += 1
+                tag = "MACHINE (harmonics agree)"
+            oth = "  ".join(f"h{h}={r['vals'][h][0]:+.3f}" for h in hs
+                            if r["vals"][h][0] is not None)
+            print(f"  idx {r['idx']:>3}: h{ref}={v:+.3f} c, "
+                  f"{dev:.1f} MAD from the cell median -> {tag}")
+            print(f"           {oth}   worst disagreement {disagree:.3f} c")
+
+    # The decomposition, which does not depend on spotting an outlier.
+    #
+    # Each capture is ONE physical event read two ways. Anything the MACHINE
+    # did is common to both readings and cancels in their difference; what
+    # survives is the estimator. So sd(h_a - h_b) against sd(h_ref) splits the
+    # cell's scatter into the two causes directly.
+    #
+    # The one correction that has to be made: if the underlying error is fixed
+    # in absolute Hz, its cents value scales as 1/n, so the two readings do not
+    # carry equal estimator noise and the difference is dominated by the lower
+    # harmonic. The expected difference sd from independent estimator noise
+    # alone is sqrt(s_a^2 + s_b^2); it is printed beside the measured one so
+    # the comparison is against the right number and not against sd(h_ref).
+    print("\nESTIMATOR vs MACHINE, by decomposition (independent of outliers)")
+    print("a difference across harmonics cancels anything the machine did.")
+    for (note, mode), rs in sorted(by_cell.items()):
+        cols = {}
+        for h in hs:
+            v = [r["vals"][h][0] for r in rs if r["vals"][h][0] is not None]
+            cols[h] = np.array(v, dtype=float)
+        print(f"  note {note} mode {mode}:")
+        for h in hs:
+            if len(cols[h]) > 1:
+                print(f"    h{h:<3} n={len(cols[h]):>3}  "
+                      f"mean {cols[h].mean():>+8.3f} c  "
+                      f"sd {cols[h].std():.4f} c")
+        for a, b_ in ((hs[i], hs[j]) for i in range(len(hs))
+                      for j in range(i + 1, len(hs))):
+            pair = [(r["vals"][a][0], r["vals"][b_][0]) for r in rs
+                    if r["vals"][a][0] is not None
+                    and r["vals"][b_][0] is not None]
+            if len(pair) < 3:
+                continue
+            # DEFECT CAUGHT BY ITS OWN OUTPUT: pick_harmonic() clamps to
+            # Nyquist, so at note 99 a request for h16 and one for h32 BOTH
+            # resolve to harmonic 7. The difference is then a number minus
+            # itself: sd exactly 0.0000, ratio 0.00, and this printed "MACHINE
+            # dominates" for a comparison that was never made. Refuse it.
+            nha = rs[0]["vals"][a][1]
+            nhb = rs[0]["vals"][b_][1]
+            if nha == nhb:
+                print(f"    h{a} - h{b_}: NOT A COMPARISON. Both requests "
+                      f"clamp to harmonic {nha} (Nyquist), so this is one "
+                      f"reading minus itself.")
+                continue
+            d = np.array([x - y for x, y in pair], dtype=float)
+            indep = np.sqrt(cols[a].std() ** 2 + cols[b_].std() ** 2)
+            print(f"    h{a} - h{b_}: mean {d.mean():>+8.3f} c  "
+                  f"sd {d.std():.4f} c   vs {indep:.4f} c expected if the "
+                  f"scatter were ALL estimator")
+            if indep > 0:
+                frac = d.std() / indep
+                if frac < 0.5:
+                    verdict = ("MACHINE dominates: the two readings move "
+                               "together")
+                elif frac > 0.85:
+                    verdict = ("ESTIMATOR dominates: the two readings are "
+                               "independent")
+                else:
+                    verdict = "MIXED, neither cause dominates"
+                print(f"      ratio {frac:.2f} -> {verdict}")
+
+    # The shift at each harmonic. The claim is a DIFFERENCE between arms at
+    # one note, so a harmonic's absolute bias cancels here even when it is
+    # large: note 60 reads 5.04 c apart at h16 and h32 and its SHIFT agrees to
+    # 0.017 c. If a shift moved with the harmonic, the estimator would be
+    # generating it, and that is the failure mode the withdrawn 5.4 sigma had.
+    print("\nTHE SHIFT AT EACH HARMONIC (arm minus the mode 0 control)")
+    notes_seen = sorted({n for n, _ in by_cell})
+    for note in notes_seen:
+        modes = sorted({m for n, m in by_cell if n == note})
+        if 0 not in modes:
+            continue
+        for mode in modes:
+            if mode == 0:
+                continue
+            line = []
+            for h in hs:
+                c0 = [r["vals"][h][0] for r in by_cell[(note, 0)]
+                      if r["vals"][h][0] is not None]
+                c1 = [r["vals"][h][0] for r in by_cell[(note, mode)]
+                      if r["vals"][h][0] is not None]
+                if len(c0) > 1 and len(c1) > 1:
+                    line.append(f"h{h}: {np.mean(c1) - np.mean(c0):>+7.4f} c")
+            if line:
+                print(f"  note {note} mode {mode}:  " + "   ".join(line))
+    print("  A shift that MOVES with the harmonic is the estimator's, not the "
+          "machine's.")
+
+    tot = sum(verdicts.values())
+    print(f"\noutliers beyond {args.outlier_mad:g} MAD: {tot}")
+    for k in ("estimator", "machine", "unclear"):
+        print(f"  {k:>10}: {verdicts[k]}")
+    if tot == 0:
+        print("No outliers at this threshold. That is NOT evidence the scatter "
+              "is absent:\nthese captures may simply not contain a rejected "
+              "run. Say 'not tested'.")
     return 0
 
 
@@ -978,7 +1580,38 @@ def build_parser():
                    help="distinguishes this run's captures from every other "
                         "run's; defaults to a UTC timestamp. Do NOT reuse one: "
                         "a repeated id overwrites the earlier run's evidence")
+    s.add_argument("--sd-factor", type=float, default=DEFAULT_SD_FACTOR,
+                   help="reject a cell whose within-run sd exceeds this many "
+                        "times the median cell sd for its note")
+    s.add_argument("--min-repeats", type=int, default=DEFAULT_MIN_REPEATS,
+                   help="surviving repeats required before any shift is "
+                        "printed as a result")
     s.set_defaults(fn=cmd_run)
+
+    s = sub.add_parser("pool", help="pool several runs, apply the quality cut "
+                                    "and publish (no hardware)")
+    s.add_argument("json", nargs="+",
+                   help="run sidecars, or globs of them")
+    s.add_argument("--sd-factor", type=float, default=DEFAULT_SD_FACTOR)
+    s.add_argument("--min-repeats", type=int, default=DEFAULT_MIN_REPEATS)
+    s.set_defaults(fn=cmd_pool)
+
+    s = sub.add_parser("reanalyse", help="re-read SAVED captures at several "
+                                         "harmonics (no hardware)")
+    s.add_argument("wav", nargs="+", help="capture paths or globs")
+    s.add_argument("--harmonics", type=int, nargs="+", default=[8, 16, 32])
+    s.add_argument("--reference", type=int, default=16,
+                   help="the harmonic the published number came from")
+    s.add_argument("--head", type=float, default=0.05)
+    s.add_argument("--win", type=float, default=0.60)
+    s.add_argument("--outlier-mad", type=float, default=4.0,
+                   help="a capture this many MAD from its cell median is an "
+                        "outlier worth attributing")
+    s.set_defaults(fn=cmd_reanalyse)
+
+    s = sub.add_parser("cutcheck", help="break-test the quality cut itself "
+                                        "(no hardware)")
+    s.set_defaults(fn=cmd_cutcheck)
     return p
 
 
