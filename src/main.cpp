@@ -140,24 +140,37 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
                       if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
       else SendAck(1);
       break;
-    // RANDOMIZE [pat, scope, density, seed_lo, seed_hi]. On 0x38, NOT 0x15.
+    // RANDOMIZE [pat, lane, density, seed_lo, seed_hi]. On 0x2E, NOT 0x15.
     //
     // 0x15 inbound is deliberately GONE and must not come back. This machine
     // EMITS 0x15 as its playhead position on every step change (SendStep
     // above), and direction is not a property a MIDI cable preserves: with
     // thru on, a DAW echo, or any host that re-emits unrecognised SysEx, the
-    // 101's own playhead notification arrives back at its input. While that
-    // meant RANDOMIZE, the machine silently randomized its own pattern once
-    // per step -- data loss that accelerates with tempo and points at no
-    // opcode. CORE's call after three machines reported the same collision;
-    // A808 measured the rate at 8 per second at 120 BPM.
+    // 101's own playhead notification arrives back at its input. CORE's call
+    // after three machines reported the same collision.
+    //
+    // WHAT IT ACTUALLY COST ON THIS MACHINE, because the fleet record
+    // overstates it here: SendStep emits THREE bytes, and the old inbound
+    // handler required len >= 6, answering ack 1 below that (see 5e20bf0^).
+    // So an echo could not reach randomize() at all -- it produced one 0x14
+    // ack per step on the editor's own wire. An ACK STORM, not data loss. The
+    // pattern-destroying path needed a SIX-byte inbound 0x15, which this
+    // machine's own three-byte notification cannot produce. A808's "8
+    // randomizes per second at 120 BPM" is the 808's number on the 808's
+    // payload; do not quote it for the 101.
+    //
+    // The move is still right, and NOT because the damage was small: an ack
+    // per step is its own fault, and "safe because the payload lengths
+    // differ" is not a protocol property. It is a coincidence of two
+    // independently chosen layouts, and it stops holding the moment either
+    // one changes.
     //
     // 0x16 SET STEP keeps its number despite being dual-direction too, and the
     // difference is the blast radius rather than the collision: an echoed 0x16
     // re-sets a step to the value it already holds and is idempotent, while an
     // echoed RANDOMIZE destroys the pattern.
     //
-    // ON 0x2E. It was briefly 0x38 here (5e20bf0) and that was withdrawn one
+    // It was briefly 0x38 here (5e20bf0) and that was withdrawn one
     // commit later: 0x38 is CMD_FRAM_PROBE inbound on the 606. Both 0x15 and
     // 0x38 were proposed as "free" and both were taken, each caught by an
     // agent reading its own source AFTER publication. 0x2E is the first byte

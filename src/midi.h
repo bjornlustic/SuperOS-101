@@ -34,9 +34,13 @@
 //   0x14 <code>           ack: 0 ok, 1 bad length/checksum, 2 out of range
 //   0x15 <p> <step>       OUTBOUND ONLY: sequencer step position, on change.
 //                         There is deliberately NO inbound 0x15. RANDOMIZE used
-//                         to live here and moved to 0x38 (claim-049): this
-//                         machine emits 0x15 every step, and an echoed playhead
-//                         report would have randomized the pattern once per step.
+//                         to live here and moved to 0x2E (claim-049/claim-057):
+//                         this machine emits 0x15 every step, so an echoed
+//                         playhead report arrives at its own input. On the 101
+//                         that was an ACK STORM (one 0x14 per step), not data
+//                         loss: the old handler needed len >= 6 and SendStep
+//                         emits 3. Moved anyway -- differing payload lengths are
+//                         a coincidence, not a protocol guarantee.
 //   0x2E <p><lane><density><slo><shi>  RANDOMIZE (gate G4, docs/EDIT_OPCODES.md)
 //                           lane 0x7F=all (time+pitch), 0=pitches only, 3=legato
 //                           only; 1/2 (accent/slide) absent here -> ack 2.
@@ -45,7 +49,14 @@
 //                           NOT 0x38: that is CMD_FRAM_PROBE on the 606.
 //   0x16 <p><lane><step><value>  SET STEP (gate G4): lane 0 note (value=MIDI note,
 //                           0=rest), lane 3 gate (0 normal/1 legato); 1/2 absent -> 0x14
-//   0x18 <p><length>      SET LENGTH (gate G4), 1..MAX_STEPS                  -> 0x14
+//   0x18 <p><length>      SET LENGTH (gate G4), 1..127 over SysEx            -> 0x14
+//                           NOT 1..MAX_STEPS: MAX_STEPS is 128 and setLength
+//                           accepts it, but this field is ONE 7-bit data byte,
+//                           so 128 sets the status bit and truncates the
+//                           message (claim-061). The top step of the longest
+//                           pattern is panel-only. Same limit on 0x16's step
+//                           index. A test that writes 128 is sending a
+//                           malformed message, not exercising a boundary.
 //   0x1D <p>              select pattern p (as PLAY + key on the panel)
 //   0x1E <x>              transport: SuperOS x=1 play / 0 stop; the emulator
 //                         taps its PLAY button (toggle) for any x
