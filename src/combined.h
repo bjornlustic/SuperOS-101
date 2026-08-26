@@ -42,5 +42,6 @@ uint8_t combined_current_fw();
 uint8_t combined_boot_count();  // boots since power-on (survives resets; SysEx 0x3B)
 uint8_t combined_prev_stage();  // where the previous boot ended (SysEx 0x3B)
 uint16_t combined_pass_us(bool clearMax); // loop pass time: last (false) / max since last clear (true)
+void combined_pass_skip_next();  // drop the next recorded pass from the max (the probe's own reply pass)
 void RebootTo(uint8_t fw);   // persist the select byte, then reset the MCU
 void EnterBootloader();      // park BOOT_MAGIC in GPIOR0, jump to 0x1F000

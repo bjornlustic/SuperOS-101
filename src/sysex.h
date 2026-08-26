@@ -277,6 +277,20 @@ inline void SendProbe() {
     raw[123] = g_benchApplied;
   }
   raw[124] = persist::Health();   // store health (flash_persist.h), never mounts
+  // THE PROBE USED TO REPORT ITSELF. combined_pass_us(true) clears the max on
+  // read, and this reply is 257 bytes through the BLOCKING SendSysex (HalWrite
+  // spins when the TX ring fills, midi.h:187), so the pass that answers a probe
+  // is by far the longest pass the firmware runs. Reading the max here and
+  // sending afterwards meant every probe reported the cost of the PREVIOUS
+  // probe's own reply, and it read as a recurring ~14.8 ms hitch in the machine:
+  // 14768 +/- 16 us, far too reproducible for anything but one code path running
+  // once per probe. I reported that to CORE as a G7 defect on a machine that was
+  // acting as a capture control before catching it.
+  //
+  // So: sample here, and have the next recorded pass excluded after the send
+  // (combined_pass_skip_next, below). That does not hide a real hitch, it stops
+  // manufacturing a fake one, and it makes the question decidable: after this, a
+  // 14.8 ms max IS the machine.
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;
 #ifdef __AVR__
@@ -296,6 +310,11 @@ inline void SendProbe() {
   body[0] = 0x3C;
   for (uint8_t i = 0; i < sizeof(raw); ++i) { body[1 + 2 * i] = raw[i] >> 4; body[2 + 2 * i] = raw[i] & 0x0F; }
   midi::SendSysex(body, sizeof(body));
+  // Exclude the pass we just spent answering, so the next probe does not report
+  // this one's 257-byte reply as a hitch in the machine. Clearing the max here
+  // would NOT do it: the duration is recorded at the top of the next loop().
+  // See combined_pass_skip_next() in boot.cpp.
+  combined_pass_skip_next();
 }
 
 // --- 0x3E bench window: which clock it runs at -------------------------------

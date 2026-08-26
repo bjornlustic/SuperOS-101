@@ -95,15 +95,34 @@ static inline void Stage(uint8_t s) { g_stage = s; }
 // stability; the probe (SysEx 0x3B) reports both and clears the max.
 static uint16_t g_passLastUs, g_passMaxUs;
 static uint32_t g_passT0;
+static bool     g_passSkip;    // exclude the next recorded pass from the max
 uint16_t combined_pass_us(bool clearMax) {
   uint16_t m = g_passMaxUs; if (clearMax) g_passMaxUs = 0;
   return clearMax ? m : g_passLastUs;
 }
+// THE PROBE USED TO REPORT ITSELF, and it took a wrong G7 defect report to CORE
+// to notice. The pass that answers a 0x3B sends 257 bytes through the BLOCKING
+// SendSysex (HalWrite spins when the TX ring fills, midi.h:187), so it is by far
+// the longest pass this firmware runs. combined_pass_us(true) clears the max on
+// read, so every probe returned the cost of the PREVIOUS probe's own reply: a
+// rock-steady 14768 +/- 16 us that reads exactly like a periodic hitch in the
+// machine, on a unit that was serving as a capture control at the time.
+//
+// Clearing the max inside SendProbe does NOT fix it, and that was my first
+// attempt: the duration is recorded at the TOP of the next loop(), not at the
+// end of the pass it describes, so the probe's own pass is folded in after any
+// clear SendProbe could do. It has to be suppressed at the point of record.
+//
+// This drops a cost that exists only because someone asked for telemetry. It
+// hides no real hitch and it makes the question decidable: after this, a large
+// max IS the machine.
+void combined_pass_skip_next() { g_passSkip = true; }
 #else
 uint8_t combined_boot_count() { return 0; }
 uint8_t combined_prev_stage() { return 0; }
 static inline void Stage(uint8_t) {}
 uint16_t combined_pass_us(bool) { return 0; }
+void combined_pass_skip_next() {}
 #endif
 
 #ifdef __AVR__
@@ -255,7 +274,8 @@ void loop() {
     uint32_t now = micros();
     uint32_t d = now - g_passT0; g_passT0 = now;
     g_passLastUs = d > 0xFFFF ? 0xFFFF : (uint16_t)d;
-    if (g_passLastUs > g_passMaxUs) g_passMaxUs = g_passLastUs;
+    if (g_passSkip) g_passSkip = false;   // the pass that answered a probe
+    else if (g_passLastUs > g_passMaxUs) g_passMaxUs = g_passLastUs;
   }
 #endif
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
