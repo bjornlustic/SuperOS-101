@@ -1588,6 +1588,115 @@ def cmd_reanalyse(args):
     return 0
 
 
+def cmd_screen(args):
+    """Rebuild sidecars from their SAVED captures, applying the per-capture
+    estimator screen. No hardware, no lease.
+
+    Why this exists rather than trusting the in-run screen: runs taken before
+    the screen existed would otherwise be screened differently from runs taken
+    after it, and those runs get compared to each other. One host-side pass
+    over every run's captures removes the asymmetry: same code, same threshold,
+    same harmonics, every run. The in-run screen keeps its job (it tells the
+    operator a capture was lost while the bench is still set up), but the
+    PUBLISHED numbers come from here.
+
+    Writes `<sidecar>.screened.json` and never overwrites the original.
+    """
+    import glob
+    import json
+    import re
+    paths = []
+    for pat in args.json:
+        paths.extend(sorted(glob.glob(pat)) or [pat])
+    paths = [q for q in paths if os.path.isfile(q)
+             and not q.endswith(".screened.json")]
+    if not paths:
+        print("no sidecars matched")
+        return 2
+
+    print("claim-038: per-capture estimator screen over saved captures")
+    print(f"reject a capture whose two harmonics disagree by more than "
+          f"{args.max_disagree:g} c\n")
+    rc = 0
+    for sc in paths:
+        with open(sc) as fh:
+            doc = json.load(fh)
+        rid = doc.get("run_id")
+        outdir = args.capture_dir or os.path.dirname(sc)
+        print(f"run {rid}  (captures in {outdir}/)")
+        total_drop = 0
+        for cell in doc.get("cells", []):
+            note, mode = cell["note"], cell["mode"]
+            f_nom = cell.get("f_nom") or midi_hz(note)
+            h2 = crosscheck_harmonic(f_nom, doc.get("harmonic", 16))
+            if h2 is None:
+                print(f"  note {note} mode {mode}: screen UNAVAILABLE, every "
+                      f"candidate harmonic clamps to Nyquist. UNSCREENED.")
+                cell["screened"] = False
+                continue
+            kept_c, kept_f, dropped = [], [], []
+            for i in range(len(cell.get("cents", []))):
+                wav = os.path.join(
+                    outdir, f"g13-run-{rid}-{note}-{mode}-{i}.wav")
+                if not os.path.isfile(wav):
+                    # A capture that no longer exists cannot be screened, and
+                    # keeping it would mean publishing an unscreened value
+                    # inside a screened cell. Drop it and say how many.
+                    dropped.append((i, cell["cents"][i], None))
+                    continue
+                sr, sig = _read_capture(wav)
+                win = onset_window(sig, sr, doc["capture"]["head"],
+                                   doc["capture"]["win"])
+                if win is None:
+                    dropped.append((i, cell["cents"][i], None))
+                    continue
+                fa, _ = estimate_f0_harmonic(win, f_nom, rate=sr,
+                                             want=doc.get("harmonic", 16))
+                fb, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=h2)
+                if fa is None or fb is None:
+                    dropped.append((i, cell["cents"][i], None))
+                    continue
+                ca, cb = float(cents(fa, f_nom)), float(cents(fb, f_nom))
+                dis = abs(ca - cb)
+                if dis > args.max_disagree:
+                    dropped.append((i, ca, dis))
+                else:
+                    kept_c.append(ca)
+                    kept_f.append(float(fa))
+            before = _cell_stats(cell.get("cents", []))
+            after = _cell_stats(kept_c)
+            cell["cents"] = kept_c
+            cell["freqs"] = kept_f
+            cell["n"] = len(kept_c)
+            cell["screened"] = True
+            cell["crosscheck_harmonic"] = h2
+            cell["dropped"] = [{"i": i, "cents": c, "disagree": d}
+                               for i, c, d in dropped]
+            total_drop += len(dropped)
+            print(f"  note {note} mode {mode}: n {before['n']} -> "
+                  f"{after['n']}   mean {before['mean']:+.4f} -> "
+                  f"{after['mean']:+.4f} c   sd {before['sd']:.4f} -> "
+                  f"{after['sd']:.4f} c   (crosscheck h{h2})")
+            for i, c, d in dropped:
+                why = (f"disagrees by {d:.3f} c" if d is not None
+                       else "no capture or no lock")
+                print(f"    dropped trigger {i}: {c:+.4f} c, {why}")
+        frac = total_drop / max(1, sum(len(c.get("cents", [])) + len(
+            c.get("dropped", [])) for c in doc["cells"]))
+        if frac > args.max_drop_frac:
+            print(f"  RUN FLAGGED: the screen dropped {100 * frac:.0f} % of "
+                  f"this run's captures, over the {100 * args.max_drop_frac:.0f} "
+                  f"% limit. A screen doing that much work is not cleaning a "
+                  f"run, it is telling you the run is broken.")
+            doc["flagged"] = True
+            rc = 1
+        out = sc[:-5] + ".screened.json" if sc.endswith(".json") else sc + ".screened.json"
+        with open(out, "w") as fh:
+            json.dump(doc, fh, indent=1)
+        print(f"  -> {out}\n")
+    return rc
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         description="claim-038 G13: the 63:39:0 sign test and its instrument.")
@@ -1707,6 +1816,18 @@ def build_parser():
                    help="a capture this many MAD from its cell median is an "
                         "outlier worth attributing")
     s.set_defaults(fn=cmd_reanalyse)
+
+    s = sub.add_parser("screen", help="re-screen saved runs per capture "
+                                      "(no hardware)")
+    s.add_argument("json", nargs="+", help="run sidecars, or globs of them")
+    s.add_argument("--max-disagree", type=float, default=3.0)
+    s.add_argument("--capture-dir", default=None,
+                   help="where the .wav files are; defaults to the sidecar's "
+                        "own directory")
+    s.add_argument("--max-drop-frac", type=float, default=0.10,
+                   help="flag a run whose screen drops more than this "
+                        "fraction of its captures")
+    s.set_defaults(fn=cmd_screen)
 
     s = sub.add_parser("cutcheck", help="break-test the quality cut itself "
                                         "(no hardware)")
