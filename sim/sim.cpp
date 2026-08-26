@@ -15,6 +15,7 @@
 #include <Arduino.h>  // sim/shim — registers, BusPort, setup()/loop()
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <cstdlib>
 #include <cstring>
 #include <csetjmp>
@@ -1462,6 +1463,30 @@ int Main() {
 
   printf("\nmatched %d   diverged %d   UNTESTED %d   of %d behaviours\n",
          matched, dAny, untested, N_BEHAVIOURS);
+  // A303's check, and it caught a real hole here. Their accent channel was
+  // constant 0 on both sides across 400 cases, so its "0 divergences" carried
+  // no information at all. Count the DISTINCT values each stream actually took
+  // across every behaviour and BOTH subjects: a stream that never varies
+  // cannot report a divergence and must not be quoted as scope.
+  {
+    std::set<int> vc, vg, vv;
+    for (int i = 0; i < N_BEHAVIOURS; ++i)
+      for (int k = 0; k < 2; ++k) {
+        const std::vector<Ev>& t = k ? g_emu[i] : g_sos[i];
+        for (size_t j = 0; j < t.size(); ++j) {
+          vc.insert(t[j].o.cv);
+          vg.insert(t[j].o.gate ? 1 : 0);
+          vv.insert(t[j].o.vco);
+        }
+      }
+    printf("stream information (distinct values over all behaviours, both subjects):\n"
+           "  cv %zu   gate %zu   vco %zu\n", vc.size(), vg.size(), vv.size());
+    if (vv.size() < 2)
+      printf("  WARNING: vco is CONSTANT across every case. Its 0 divergences\n"
+             "  carry NO information and it must not be counted as covered.\n");
+    if (vc.size() < 2) printf("  WARNING: cv is CONSTANT, same caveat.\n");
+    if (vg.size() < 2) printf("  WARNING: gate is CONSTANT, same caveat.\n");
+  }
   printf("by stream:  cv %d   gate %d   order %d   vco %d\n",
          dCv, dGate, dOrder, dVco);
   printf("\nNOT COVERED HERE, and not counted either way:\n");
