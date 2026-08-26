@@ -36,6 +36,7 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 import time
 
 import numpy as np
@@ -130,6 +131,115 @@ def capture(path, seconds):
     subprocess.run(cmd, check=True)
     sr, data = wavfile.read(path)
     return sr, data[:, CH_101] if data.ndim > 1 else data
+
+
+def onset_index(sig, rate=RATE, frac=0.10, hop=0.010):
+    """Sample index of the note onset, at `frac` of the signal's OWN peak.
+
+    Finding 34's rule: measuring each hit against its own peak is what stops
+    the reading moving when one capture is simply louder. Returns None if
+    nothing crosses the threshold.
+    """
+    x = np.abs(np.asarray(sig, dtype=float))
+    w = max(1, int(hop * rate))
+    env = np.array([x[i:i + w].mean() for i in range(0, len(x) - w, w)])
+    if not len(env) or env.max() <= 0:
+        return None
+    hits = np.flatnonzero(env >= frac * env.max())
+    return int(hits[0] * w) if len(hits) else None
+
+
+def capture_note(b, note, path, secs=3.0, fire_at=1.2):
+    """Capture with the note fired DURING the recording, not before it.
+
+    This exists because `capture()` starts ffmpeg and ffmpeg's startup latency
+    is variable and of order a second. Sending note-on first and assuming the
+    recording begins at the note put the analysis window somewhere different in
+    the envelope on every run: two `sustain` runs minutes apart reported peaks
+    4.5x apart for that reason alone. Firing inside the capture and locking the
+    window to the DETECTED onset removes the host's timing from the
+    measurement entirely.
+    """
+    err = []
+
+    def fire():
+        try:
+            time.sleep(fire_at)
+            b.note(note, True)
+        except Exception as e:                      # noqa: BLE001
+            err.append(e)
+
+    t = threading.Thread(target=fire)
+    t.start()
+    try:
+        sr, sig = capture(path, secs)
+    finally:
+        t.join()
+        b.note(note, False)
+    if err:
+        raise err[0]
+    return sr, sig
+
+
+def onset_window(sig, rate=RATE, head=0.05, length=0.60):
+    """The analysis window, placed relative to the onset rather than to t=0.
+
+    The 101 does not hold a note at constant level (measured: the gate stays
+    asserted for the whole hold, but the VCA envelope decays with LFO wobble
+    and reaches the noise floor about 2.2 s after onset). So the window has to
+    sit where there is still signal, and it has to sit in the SAME place in
+    every arm, because the 63:39:0 test is a difference between arms at one
+    note and a common envelope cancels there.
+    """
+    i = onset_index(sig, rate)
+    if i is None:
+        return None
+    a = i + int(head * rate)
+    b_ = a + int(length * rate)
+    return sig[a:b_] if b_ <= len(sig) and b_ > a else None
+
+
+def pick_harmonic(f0, rate=RATE, want=16, ceiling=0.40):
+    """Highest harmonic <= `want` that stays below `ceiling` * rate.
+
+    Measuring harmonic N and dividing by N divides the CENTS error by N when
+    the underlying error is fixed in absolute Hz, which is what this machine
+    shows: the repeat spread is ~0.5-1.2 Hz at every note, so it reads as
+    11.7 c at note 36 and 0.87 c at note 99. Note 99's harmonics run out of
+    Nyquist quickly, which is fine: note 99 is the note that needs the help
+    least.
+    """
+    n = int((ceiling * rate) / f0) if f0 > 0 else 1
+    return max(1, min(want, n))
+
+
+def estimate_f0_harmonic(sig, f_nom, rate=RATE, want=16, span=0.06):
+    """f0 via a harmonic, referred back to the fundamental.
+
+    Returns (f0_estimate, harmonic_used). The search is bounded around
+    `f_nom * N` by the same +/-span as the direct estimator, so a harmonic
+    cannot be confused with its neighbours: they are a whole f0 apart, which
+    at span 6 % is far outside the band.
+    """
+    # The band MUST shrink with n: harmonics sit one f0 apart, so a fixed
+    # +/-6 % band around n*f0 spans +/-0.06*n harmonics, already +/-3.8 of them
+    # at n=16. Left at 6 % this locks onto a NEIGHBOURING harmonic and returns
+    # a tight, confident, WRONG answer: measured, n=64 at note 36 gave sd
+    # 0.14 c with the mean shifted +57 c, and n=32 at note 60 gave sd 21.6 c.
+    #
+    # KNOWN LIMIT, and it decides which arms this may be used on. The band is
+    # centred on the NOMINAL pitch, so it holds only while the machine's real
+    # pitch is inside +/-0.4/n of nominal: 0.625 % at n=64. The 8 MHz arm
+    # shifts 0.19 % and is safely inside. The 16 MHz arm shifts far more, sits
+    # on the edge, and intermittently misses: it came back sd 6.56 c against
+    # the control's 0.32 c. A ladder that re-centres each rung on the previous
+    # one was tried and is WORSE (sd 74 c), because rung 1 is the fundamental
+    # and the fundamental is the noisy thing this exists to avoid. So: do not
+    # use this on an arm whose shift approaches 0.4/n until that is solved.
+    n = pick_harmonic(f_nom, rate, want)
+    span_eff = min(span, 0.4 / n)
+    f = estimate_f0(sig, rate=rate, expect=f_nom * n, span=span_eff)
+    return (None, n) if f is None else (f / n, n)
 
 
 def steady(sig, rate=RATE, head=0.35, tail=0.10):
@@ -476,6 +586,14 @@ def cmd_sustain(args):
     path = args.wav or "/tmp/g13-sustain.wav"
     b.all_off()
     time.sleep(0.2)
+    # Measure the NOISE FLOOR first, with nothing sounding. Without it this
+    # test cannot tell a held note from silence: a tail sitting at the floor
+    # is perfectly flat, and the first version of this function passed a note
+    # that had decayed 56 dB because it judged flatness alone. That is L59 on
+    # my own instrument, so the floor is now a required control, not an extra.
+    _, quiet = capture(args.wav_floor or "/tmp/g13-sustain-floor.wav",
+                       args.floor_secs)
+    floor = float(np.sqrt(np.mean(quiet.astype(float) ** 2))) if len(quiet) else 0.0
     b.note(args.note, True)
     try:
         sr, sig = capture(path, args.secs)
@@ -504,36 +622,68 @@ def cmd_sustain(args):
     # judge the LAST two thirds, so the attack is not counted as decay
     tail = slices[len(slices) // 3:]
     fall = 20 * np.log10(tail[-1] / tail[0]) if tail[0] > 0 else -np.inf
-    print(f"\npeak rms {peak:.6f}")
-    print(f"sustain segment (last 2/3): {fall:+.2f} dB end-to-start")
-    held = abs(fall) <= args.tol_db
-    print(f"\n{'HELD' if held else 'DECAYS'}: envelope moves {fall:+.2f} dB "
-          f"over {len(tail) * 0.1:.1f} s, tolerance +/-{args.tol_db:.1f} dB.")
+    level = float(np.median(tail))
+    rel = 20 * np.log10(level / peak) if level > 0 and peak > 0 else -np.inf
+    snr = 20 * np.log10(level / floor) if level > 0 and floor > 0 else -np.inf
+
+    print(f"\npeak rms {peak:.6f}   noise floor rms {floor:.6f} "
+          f"({args.floor_secs:.1f} s, nothing sounding)")
+    print(f"sustain segment (last 2/3), three conditions, ALL required:")
+    print(f"  flat    {fall:+8.2f} dB end-to-start   need |x| <= {args.tol_db:.1f}")
+    print(f"  level   {rel:+8.2f} dB rel peak        need >= {-args.min_level_db:.1f}")
+    print(f"  SNR     {snr:+8.2f} dB over floor      need >= {args.min_snr_db:.1f}")
+
+    ok_flat, ok_level, ok_snr = (abs(fall) <= args.tol_db,
+                                 rel >= -args.min_level_db,
+                                 snr >= args.min_snr_db)
+    held = ok_flat and ok_level and ok_snr
+    print(f"\n{'HELD' if held else 'NOT HELD'}: "
+          f"flat={'ok' if ok_flat else 'NO'} "
+          f"level={'ok' if ok_level else 'NO'} "
+          f"snr={'ok' if ok_snr else 'NO'}")
     if not held:
+        if ok_flat and not (ok_level and ok_snr):
+            print("The tail is FLAT because it is SILENT, which is exactly the "
+                  "reading flatness alone cannot distinguish from a held note.")
         print("The 63:39:0 method assumes a steady tone. It does not have one.")
     return 0 if held else 1
 
 
 def cmd_selftest(args):
     """Repeat spread on the REAL signal. Precision, not bias: --synthetic
-    covers bias, and a repeat spread cannot see it."""
+    covers bias, and a repeat spread cannot see it.
+
+    RETRIGGERS the note for every repeat and windows relative to the detected
+    onset. The first version held one note and took its captures from +1.0 s
+    to +4.0 s, which on this machine is entirely noise floor: the VCA envelope
+    is down ~50 dB by then. `estimate_f0` is given an `expect` band, so it
+    would have locked onto the loudest noise bin in that band and printed a
+    perfectly respectable repeat spread for a measurement of silence.
+    """
     b = Bench()
     f_nom = midi_hz(args.note)
     b.all_off()
     time.sleep(0.2)
-    b.note(args.note, True)
     fs = []
     try:
-        time.sleep(args.settle)
         for i in range(args.n):
             path = f"/tmp/g13-selftest-{i}.wav"
-            sr, sig = capture(path, args.secs)
-            f = estimate_f0(steady(sig, sr), rate=sr, expect=f_nom)
+            sr, sig = capture_note(b, args.note, path, args.secs, args.fire_at)
+            win = onset_window(sig, sr, args.head, args.win)
+            if win is None:
+                print(f"  {i}: NO ONSET (nothing crossed 10% of its own peak)")
+                time.sleep(args.gap)
+                continue
+            f, nh = estimate_f0_harmonic(win, f_nom, rate=sr,
+                                         want=args.harmonic)
             if f is None:
                 print(f"  {i}: NO LOCK")
+                time.sleep(args.gap)
                 continue
             fs.append(f)
-            print(f"  {i}: {f:>11.5f} Hz  {cents(f, f_nom):>+9.3f} c vs nominal")
+            print(f"  {i}: {f:>11.5f} Hz  {cents(f, f_nom):>+9.3f} c vs nominal"
+                  f"   (via harmonic {nh})")
+            time.sleep(args.gap)
     finally:
         b.note(args.note, False)
         b.all_off()
@@ -545,12 +695,136 @@ def cmd_selftest(args):
     c = cents(fs, fs.mean())
     print(f"\nn={len(fs)}  mean {fs.mean():.5f} Hz  "
           f"({cents(fs.mean(), f_nom):+.3f} c vs nominal)")
+    print(f"window: onset +{args.head:.2f} s, {args.win:.2f} s long, retriggered")
     print(f"repeat spread: sd {c.std():.4f} c, range {c.max() - c.min():.4f} c")
     print(f"\nThis bounds PRECISION only. Bias is --synthetic's job.")
+    print(f"The offset vs nominal is NOT an error: the 101's absolute tuning is "
+          f"a physical TUNE trim and the claim is a DIFFERENCE at one note.")
     print(f"needed for the claim: <= {args.need:.3f} c")
     ok = c.std() <= args.need
     print(f"{'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
+
+
+def cmd_run(args):
+    """The 63:39:0 sign test itself.
+
+    For each note, and for each 0x3E arm, retrigger the note N times and take a
+    harmonic-referred, onset-locked pitch estimate per trigger. The published
+    quantity is the DIFFERENCE between an arm and the 4 MHz control at the SAME
+    note, so anything common to both cancels: the machine's absolute tuning,
+    the estimator's bias at that harmonic, and the envelope shape.
+
+    Why N triggers rather than one long note: the 101 does not sustain (the
+    gate is held for the whole hold, measured, but the VCA envelope decays to
+    the noise floor about 2.2 s after onset), and the per-trigger repeat spread
+    is 0.41 / 0.12 / 0.08 c at notes 36 / 60 / 99 with the harmonics chosen
+    below. Averaging N brings the mean's error down as sd/sqrt(N).
+
+    The confounder that argues FOR holding one note per trigger rather than
+    playing a pattern: at a clock the app was not compiled for, hw.h's
+    IdleWaitUs dwells come out short and the S/H acquisition is incomplete. For
+    a HELD note the S/H is refreshed to the same value every pass, so an
+    incomplete acquisition converges to zero steady-state error.
+    """
+    b = Bench()
+    notes = args.notes or list(NOTES)
+    arms = args.modes or [0, 1, 8, 4]
+    if 0 not in arms:
+        print("mode 0 is the CONTROL and every difference is taken against it.")
+        return 2
+
+    print("claim-038 G13: the 63:39:0 sign test")
+    print(f"arms: {', '.join(f'{m} ({MODES.get(m, chr(63))})' for m in arms)}")
+    print(f"notes: {notes}   {args.n} triggers per cell\n")
+
+    results = {}                       # (note, mode) -> list of f0
+    for note in notes:
+        f_nom = midi_hz(note)
+        nh = pick_harmonic(f_nom, RATE, args.harmonic)
+        print(f"note {note} ({f_nom:.2f} Hz, cv {note - CV_OF}, "
+              f"63-cv = {63 - (note - CV_OF)}), via harmonic {nh}")
+        for mode in arms:
+            fs = []
+            for i in range(args.n):
+                # Arm the window BEFORE the note and make it long enough to
+                # cover the whole capture, then send nothing until it closes.
+                try:
+                    secs_b, scale = window_byte(mode, args.window)
+                except ValueError as e:
+                    print(f"  mode {mode}: {e}")
+                    break
+                b.all_off()
+                time.sleep(0.15)
+                b.bench_window(mode, secs_b)
+                time.sleep(0.05)
+                path = f"/tmp/g13-run-{note}-{mode}-{i}.wav"
+                sr, sig = capture_note(b, note, path, args.secs, args.fire_at)
+                win = onset_window(sig, sr, args.head, args.win)
+                if win is None:
+                    continue
+                f, _ = estimate_f0_harmonic(win, f_nom, rate=sr,
+                                            want=args.harmonic)
+                if f is not None:
+                    fs.append(f)
+                time.sleep(args.gap)
+            results[(note, mode)] = fs
+            if fs:
+                a = np.array(fs)
+                c = cents(a, f_nom)
+                sem = c.std() / np.sqrt(len(a)) if len(a) > 1 else float("nan")
+                print(f"  mode {mode:>2}: n={len(a):>3}  "
+                      f"{a.mean():>11.5f} Hz  {c.mean():>+8.3f} c  "
+                      f"sd {c.std():.4f}  sem {sem:.4f}")
+            else:
+                print(f"  mode {mode:>2}: NO LOCKS")
+        print()
+
+    # the differences, which are the actual claim
+    print("SHIFT vs the 4 MHz control, per note. This is the published quantity.")
+    print(f"{'note':>5} {'63-cv':>6} {'mode':>5} {'shift c':>10} {'+/- c':>8}")
+    table = {}
+    for note in notes:
+        f_nom = midi_hz(note)
+        ctrl = results.get((note, 0)) or []
+        if len(ctrl) < 2:
+            print(f"{note:>5}  control has fewer than two locks; no differences")
+            continue
+        cc = cents(np.array(ctrl), f_nom)
+        for mode in arms:
+            if mode == 0:
+                continue
+            arm = results.get((note, mode)) or []
+            if len(arm) < 2:
+                continue
+            ac = cents(np.array(arm), f_nom)
+            d = ac.mean() - cc.mean()
+            err = np.sqrt(ac.std() ** 2 / len(ac) + cc.std() ** 2 / len(cc))
+            table[(note, mode)] = (d, err)
+            print(f"{note:>5} {63 - (note - CV_OF):>6} {mode:>5} "
+                  f"{d:>+10.4f} {err:>8.4f}")
+
+    print("\nTHE PREDICTION: the shift is proportional to (63 - cv), so the "
+          "three notes\nshould stand as 63 : 39 : 0, and note 99 should show "
+          "NO shift at all.")
+    for mode in arms:
+        if mode == 0:
+            continue
+        got = [(63 - (n - CV_OF), table.get((n, mode))) for n in notes]
+        got = [(k, v) for k, v in got if v]
+        if len(got) < 2:
+            continue
+        base = next((v[0] for k, v in got if k == 63), None)
+        print(f"\n  mode {mode}:")
+        for k, (d, err) in got:
+            rel = "" if not base or base == 0 else f"   {100 * d / base:>6.1f} % of the 63 arm"
+            pred = "" if base is None else f"   predicted {(k / 63.0) * (base or 0):>+7.4f} c"
+            print(f"    63-cv {k:>2}: {d:>+8.4f} +/- {err:.4f} c{rel}{pred}")
+    print("\nA shift that is large at 63, about 62 % of it at 39 and consistent "
+          "with zero at 0\nis the mechanism. Anything else falsifies it, and a "
+          "common-mode confounder\n(clock error, capture-rate error, tuning "
+          "drift, temperature) cannot make that shape.")
+    return 0
 
 
 def build_parser():
@@ -581,6 +855,13 @@ def build_parser():
     s.add_argument("--secs", type=float, default=6.0)
     s.add_argument("--tol-db", type=float, default=1.0)
     s.add_argument("--wav")
+    s.add_argument("--floor-secs", type=float, default=1.0,
+                   help="silence captured before the note, for the noise floor")
+    s.add_argument("--wav-floor", default=None)
+    s.add_argument("--min-level-db", type=float, default=12.0,
+                   help="tail must be within this many dB of the peak")
+    s.add_argument("--min-snr-db", type=float, default=20.0,
+                   help="tail must exceed the measured noise floor by this")
     s.set_defaults(fn=cmd_sustain)
 
     s = sub.add_parser("selftest", help="repeat spread on the real signal "
@@ -590,7 +871,34 @@ def build_parser():
     s.add_argument("--secs", type=float, default=3.0)
     s.add_argument("--settle", type=float, default=1.0)
     s.add_argument("--need", type=float, default=0.10)
+    s.add_argument("--fire-at", type=float, default=1.2,
+                   help="seconds into the capture at which the note is fired")
+    s.add_argument("--head", type=float, default=0.05,
+                   help="window start, seconds after the DETECTED onset")
+    s.add_argument("--win", type=float, default=0.60, help="window length, s")
+    s.add_argument("--harmonic", type=int, default=16,
+                   help="measure this harmonic and refer it back to f0; the "
+                        "highest one that fits under Nyquist is used. 1 = the "
+                        "fundamental, which is what the first version did")
+    s.add_argument("--gap", type=float, default=0.4,
+                   help="silence between repeats, so each is a fresh trigger")
     s.set_defaults(fn=cmd_selftest)
+
+    s = sub.add_parser("run", help="the 63:39:0 sign test itself (hardware)")
+    s.add_argument("--notes", type=int, nargs="*", default=None)
+    s.add_argument("--modes", type=int, nargs="*", default=None,
+                   help="0x3E arms; 0 is the control and is required")
+    s.add_argument("--n", type=int, default=20, help="triggers per cell")
+    s.add_argument("--secs", type=float, default=3.0, help="capture length")
+    s.add_argument("--window", type=float, default=6.0,
+                   help="0x3E window in REAL seconds; window_byte() rescales "
+                        "it for the arm's clock, which millis() does not")
+    s.add_argument("--fire-at", type=float, default=1.2)
+    s.add_argument("--head", type=float, default=0.05)
+    s.add_argument("--win", type=float, default=0.60)
+    s.add_argument("--harmonic", type=int, default=16)
+    s.add_argument("--gap", type=float, default=0.3)
+    s.set_defaults(fn=cmd_run)
     return p
 
 
