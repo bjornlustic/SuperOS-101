@@ -131,6 +131,56 @@ class Sequencer {
     return true;
   }
 
+  // Live host edits (SysEx 0x16/0x18/0x15, docs/EDIT_OPCODES.md), atomic in place
+  // so an edit under clock does not rewrite the whole pattern (gate G4). The 101
+  // is mono: lane 0 = note (value = MIDI note, 0 = rest), lane 3 = gate (0 normal
+  // retrigger, 1 legato/tie); lanes 1/2 (accent/slide) do not exist here. Any
+  // out-of-range pat/lane/step/value returns false -> SysEx ack status 2.
+  bool setStep(uint8_t p, uint8_t lane, uint8_t idx, uint8_t value) {
+    if (p >= NUM_PATTERNS || idx >= len_[p]) return false;   // grow with 0x18 first
+    uint8_t s = step_[p][idx];
+    if (lane == 0) {                                         // note field
+      if (value == 0) s = StepByte(0, STEP_REST);
+      else { int16_t cv = (int16_t)value - MIDI_CV_OFFSET;
+             if (cv < 0) cv = 0; else if (cv > CV_MAX) cv = CV_MAX;
+             s = StepByte((uint8_t)cv, STEP_NOTE); }         // a note edit clears legato
+    } else if (lane == 3) {                                  // gate/legato field
+      if (StepKind(s) == STEP_REST) return false;            // no gate on a rest
+      s = StepByte(StepCv(s), value ? STEP_LEGATO : STEP_NOTE);
+    } else return false;                                     // lanes 1/2 absent
+    step_[p][idx] = s; dirty_ |= (uint8_t)(1u << p);
+    if (p == cur_) stepChanged_ = true;
+    return true;
+  }
+  bool setLength(uint8_t p, uint8_t len) {
+    if (p >= NUM_PATTERNS || len < 1 || len > MAX_STEPS) return false;
+    for (uint8_t i = len_[p]; i < len; ++i) step_[p][i] = StepByte(0, STEP_REST);
+    len_[p] = len; dirty_ |= (uint8_t)(1u << p);
+    if (p == cur_ && pos_ >= len) rewind();
+    return true;
+  }
+  // scope 0 = whole pattern (note+rest), 1 = note VALUES only (keep the rest/note
+  // layout). density 0 clears, 127 fills, else P(note)=density/127. seed 14-bit:
+  // 0 = entropy, nonzero = deterministic (seeded xorshift) so a G4 capture repeats.
+  bool randomize(uint8_t p, uint8_t scope, uint8_t density, uint16_t seed, uint8_t entropy) {
+    if (p >= NUM_PATTERNS || len_[p] == 0) return false;
+    uint16_t st = seed ? seed : (uint16_t)(entropy | 0x100);           // never 0
+    auto rnd = [&st]() -> uint8_t { st ^= st << 7; st ^= st >> 9; st ^= st << 8; return (uint8_t)(st & 0x7F); };
+    for (uint8_t i = 0; i < len_[p]; ++i) {
+      uint8_t r = rnd();
+      bool on = density >= 127 ? true : (density == 0 ? false : (r < density));
+      if (scope == 1) {                                                // note values only
+        if (StepKind(step_[p][i]) == STEP_REST) continue;
+        step_[p][i] = StepByte(rnd() & CV_MAX, StepKind(step_[p][i]));
+      } else {
+        step_[p][i] = on ? StepByte(rnd() & CV_MAX, STEP_NOTE) : StepByte(0, STEP_REST);
+      }
+    }
+    dirty_ |= (uint8_t)(1u << p);
+    if (p == cur_) stepChanged_ = true;
+    return true;
+  }
+
   // advance one step on a clock edge; returns true if a NON-legato note
   // started (caller pulses PORTAMENTO OFF).
   bool advance() {

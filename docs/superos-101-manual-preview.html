@@ -943,8 +943,8 @@ body{margin:0;background:#fff;}
       <strong>Note</strong>
       MIDI arrives through the panel MIDI breakout. While sync is on and the transport is stopped
       (or no clock is arriving), the arpeggiator and sequencer wait; turn sync off to clock from
-      the LFO again. The noise LFO waveform is analog and cannot be synced. MIDI note input/output
-      is not yet implemented.
+      the LFO again. The noise LFO waveform is analog and cannot be synced. MIDI notes play the
+      synth and its own notes are echoed on MIDI OUT: see &#8220;Playing over MIDI&#8221; above.
     </div>
   </section>
 
@@ -1090,8 +1090,13 @@ body{margin:0;background:#fff;}
         currently writes ties while recording; hold works fully in 80C49 mode).</li>
       <li>The function-LED display during normal superOS play (the LEDs work in the Config Menu).</li>
       <li>Exact portamento and clock-reset timing fidelity.</li>
-      <li>MIDI notes in/out (MIDI clock sync is implemented; note handling is next).</li>
     </ul>
+    <p class="docs-p">
+      MIDI notes in/out <em>are</em> implemented, in both firmwares; an earlier edition of this
+      manual said otherwise and was wrong. Notes 53&#8230;84 play the keyboard, notes outside that
+      range play as a mono override, and the synth&#8217;s own note and gate are echoed on MIDI OUT.
+      Confirmed on hardware.
+    </p>
   </section>
 
   <section id="quick-reference" class="docs-section">

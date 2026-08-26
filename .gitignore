@@ -10,6 +10,8 @@ src/rom101_data.h
 sim/superos101-sim
 sim/sim-eeprom.bin
 sim/sim-selftest-eeprom.bin
+sim/sim-flash.bin
+sim/sim-selftest-flash.bin
 # host MIDI tool binaries (build from tools/*.c)
 tools/recvsyx
 tools/sendsyx

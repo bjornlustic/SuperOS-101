@@ -128,6 +128,24 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     }
     case 0x1D: if (len >= 2) { g_engine.selectPattern(body[1]); SendConfig(); } break;
     case 0x1E: if (len >= 2) { g_engine.setPlaying(body[1] != 0); } break;   // transport from the editor
+    // Live-edit opcodes (docs/EDIT_OPCODES.md, gate G4). Atomic in place; 0x13
+    // stays REQUEST-ALL (above). ack 0x14: 0 ok, 1 bad length, 2 out of range.
+    case 0x16:   // SET STEP [pat, lane, step, value]
+      if (len >= 5) { bool ok = g_engine.seq().setStep(body[1], body[2], body[3], body[4]);
+                      if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
+      else SendAck(1);
+      break;
+    case 0x18:   // SET LENGTH [pat, length]
+      if (len >= 3) { bool ok = g_engine.seq().setLength(body[1], body[2]);
+                      if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
+      else SendAck(1);
+      break;
+    case 0x15:   // RANDOMIZE [pat, scope, density, seed_lo, seed_hi]
+      if (len >= 6) { uint16_t seed = (uint16_t)(body[4] | ((uint16_t)body[5] << 7));
+                      bool ok = g_engine.seq().randomize(body[1], body[2], body[3], seed, (uint8_t)(millis() & 0xFF));
+                      if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
+      else SendAck(1);
+      break;
     case 0x20: SendConfig(); break;
     case 0x23: SendCvConfig(); break;
     case 0x25: {   // set CV DAC config; the editor gets the applied values back

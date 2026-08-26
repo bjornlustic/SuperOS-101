@@ -513,6 +513,88 @@ static int SelfTest() {
     CHECK(k == 4 && buf[0] == 3 && buf[3] == (0x80 | 22), "pattern 5 flushed to the flash arena");
   }
 
+  // Live-edit opcodes (gate G4): 0x16 set step, 0x18 set length, 0x15 randomize.
+  {
+    auto edit = [&](std::vector<uint8_t> body) -> int {   // F0 7D <body> F7 -> ack status or -1
+      g_midiOut.clear();
+      g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+      for (uint8_t b : body) g_midiQ.push_back(b);
+      g_midiQ.push_back(0xF7); RunLoops(1);
+      return (g_midiOut.size() >= 5 && g_midiOut[2] == 0x14) ? (int)g_midiOut[3] : -1;
+    };
+    auto readpat = [&](uint8_t p, uint8_t *out) -> int {  // returns len, fills out[] with step bytes
+      g_midiOut.clear();
+      for (uint8_t b : {(uint8_t)0xF0,(uint8_t)0x7D,(uint8_t)0x10,p,(uint8_t)0xF7}) g_midiQ.push_back(b); RunLoops(1);
+      uint8_t raw[130] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(g_midiOut.size()-7), raw, sizeof(raw));
+      if (m < 1) return -1; for (uint8_t i = 0; i < raw[0]; i++) out[i] = raw[i+1]; return raw[0];
+    };
+    uint8_t st[130];
+    CHECK(edit({0x18, 5, 4}) == 0 && readpat(5, st) == 4, "G4 0x18 set length 5->4");
+    CHECK(edit({0x16, 5, 0, 0, 56}) == 0, "G4 0x16 set step note ack 0");
+    readpat(5, st);
+    CHECK(st[0] == (56 - 36) && (st[0] >> 6) == 0, "G4 0x16 step0 = note cv20");
+    CHECK(edit({0x16, 5, 3, 0, 1}) == 0, "G4 0x16 lane3 gate ack 0");
+    readpat(5, st);
+    CHECK((st[0] >> 6) == 2, "G4 0x16 lane3 -> legato, cv kept");
+    CHECK(edit({0x16, 9, 0, 0, 56}) == 2, "G4 0x16 bad pat -> ack 2");
+    CHECK(edit({0x16, 5, 1, 0, 56}) == 2, "G4 0x16 lane1 (accent absent) -> ack 2");
+    CHECK(edit({0x18, 5, 0}) == 2, "G4 0x18 length 0 -> ack 2");
+    uint8_t a[130], b[130];
+    edit({0x15, 5, 0, 64, 57, 96}); int la = readpat(5, a);
+    edit({0x15, 5, 0, 64, 57, 96}); int lb = readpat(5, b);
+    CHECK(la == lb && la > 0 && memcmp(a, b, la) == 0, "G4 0x15 randomize deterministic (same seed)");
+  }
+
+  // G12 combinatorial matrix (claim-031's lesson: single features pass, their
+  // COMBINATIONS corrupt). The 101 is mono with no chain/accent, so the axes that
+  // interact are: length boundary x legato/tie present x edit type, exercised in
+  // combination. Invariant after every edit: the pattern reads back clean --
+  // length in 1..128, every step byte a valid cv(<=63)+type(<=2). State channel.
+  {
+    auto sx = [&](std::vector<uint8_t> body) {
+      g_midiOut.clear(); g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+      for (uint8_t b : body) g_midiQ.push_back(b);
+      g_midiQ.push_back(0xF7); RunLoops(1);
+      return (g_midiOut.size() >= 5 && g_midiOut[2] == 0x14) ? (int)g_midiOut[3] : -1;
+    };
+    auto valid = [&](uint8_t p) -> bool {                  // read back and check no corruption
+      g_midiOut.clear();
+      for (uint8_t b : {(uint8_t)0xF0,(uint8_t)0x7D,(uint8_t)0x10,p,(uint8_t)0xF7}) g_midiQ.push_back(b); RunLoops(1);
+      if (g_midiOut.size() < 8 || g_midiOut[2] != 0x11) return false;
+      uint8_t raw[130] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(g_midiOut.size()-7), raw, sizeof(raw));
+      if (m < 1) return false;
+      uint8_t len = raw[0];
+      if (len < 1 || len > 128 || m < (uint8_t)(len + 1)) return false;
+      for (uint8_t i = 0; i < len; i++) { if ((raw[1+i] & 0x3F) > 63) return false; if ((raw[1+i] >> 6) > 2) return false; }
+      return true;
+    };
+    const uint8_t P = 6;                                   // scratch slot
+    const uint8_t lens[] = {1, 2, 16, 128};
+    int combos = 0, bad = 0;
+    for (uint8_t li = 0; li < 4; li++) {
+      for (uint8_t legato = 0; legato < 2; legato++) {
+        // build: length L, alternate note/rest, optionally set some legato
+        sx({0x18, P, lens[li]});
+        uint8_t L = lens[li];
+        for (uint8_t i = 0; i < L; i++) sx({0x16, P, 0, i, (uint8_t)((i & 1) ? 0 : (uint8_t)(40 + (i & 7)))});
+        if (legato) for (uint8_t i = 0; i < L; i += 4) if ((i & 1) == 0) sx({0x16, P, 3, i, 1});
+        if (!valid(P)) bad++; combos++;
+        // now COMBINE edits at length/wrap boundaries while "playing" (advance the head)
+        sx({0x1D, P}); MidiByte(0xFA);                     // select + start: head at wrap
+        MidiClocks(30);                                    // advance across the pattern (wrap)
+        sx({0x16, P, 0, (uint8_t)(L - 1), 55});            // edit the last step (wrap boundary)
+        sx({0x18, P, (uint8_t)(li ? lens[li-1] : 1)});     // shrink length under the head
+        sx({0x15, P, 1, 100, 21, 33});                     // randomize notes-only, deterministic
+        sx({0x16, P, 3, 0, (uint8_t)(legato ? 0 : 1)});    // toggle a tie
+        MidiClocks(12); MidiByte(0xFC);                    // more clock, then stop
+        if (!valid(P)) bad++; combos++;
+      }
+    }
+    CHECK(bad == 0, "G12 matrix: length x legato x combined edits never corrupt the pattern");
+    if (bad) printf("   %d/%d combos corrupted\n", bad, combos);
+    sx({0x1D, 0}); MidiByte(0xFC); RunLoops(2);   // restore: pattern 0, transport stopped
+  }
+
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY back on (pattern 0)
 
   // Firmware invariant: a scan must never corrupt a held S/H (route 11 only).
