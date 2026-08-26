@@ -10,6 +10,7 @@
 #include "emu101.h"
 #include "usb_gate.h"
 #include "hw.h"      // P2Observer: the SuperOS LED/gate probe words
+#include "flash_persist.h"   // persist::Health: the probe's store-health byte
 
 #ifndef SUPEROS_VERSION
 #define SUPEROS_VERSION "dev"
@@ -159,6 +160,10 @@ inline uint16_t MeasureVccMv() {
 //   [122]      the CLKPS the window actually applied: 0 = 16 MHz, 1 = 8 MHz,
 //              2 = 4 MHz. Reported because it was assumed once and wrong.
 //   [123]      the bench mode byte as applied
+//   [124]      store health (flash_persist.h Health): bit0 SPM service answered,
+//              bit1 mount attempted, bit2 arena mounted and writable. A606's
+//              claim-036: the 606 acked every write from a RAM cache while
+//              nothing reached flash, and only a reboot exposed it.
 // [13..16] answer in millivolts and cannot answer claim-038. The bandgap is
 // read against AVCC, so one ADC code near 5 V is 22 mV (226 -> 4984 mV,
 // 227 -> 4962 mV), and on this machine 57 mV is a semitone: one code is 39
@@ -180,7 +185,7 @@ extern uint8_t  g_benchClkps;    // boot.cpp: prescale actually in force
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[124] = {0};
+  uint8_t raw[125] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -225,6 +230,7 @@ inline void SendProbe() {
     raw[122] = g_benchClkps;
     raw[123] = g_benchApplied;
   }
+  raw[124] = persist::Health();   // store health (flash_persist.h), never mounts
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;
 #ifdef __AVR__

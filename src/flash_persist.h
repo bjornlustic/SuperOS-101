@@ -41,11 +41,36 @@ inline FlashEeprom& Store() { static FlashEeprom fe; return fe; }
 // Mount the arena. Returns false when the SPM service is missing (bootloader
 // without flash_service.c): the store then reads empty and writes fail, and
 // the firmware keeps running with RAM-only patterns.
+//
+// The mount result is kept at namespace scope rather than inside Begin() so a
+// diagnostic can ASK whether the store is live without mounting it as a side
+// effect. That matters because of A606's claim-036: on the 606 nothing was
+// reaching flash at all while the RAM cache answered every read-back, so the
+// writes acked and looked correct and only a reboot exposed it. The real fix
+// there was observability, and a health bit nobody can read is not one.
+inline bool& MountAttempted() { static bool v = false; return v; }
+inline bool& MountOk()        { static bool v = false; return v; }
 inline bool Begin() {
-  static bool ok = false, done = false;
-  if (!done) { done = true; ok = ServicePresent() && Store().begin(ProgramHook, ReadHook); }
-  return ok;
+  if (!MountAttempted()) {
+    MountAttempted() = true;
+    MountOk() = ServicePresent() && Store().begin(ProgramHook, ReadHook);
+  }
+  return MountOk();
 }
 inline bool Available() { return Begin(); }
+
+// Store health for the 0x3B probe. Read-only: never mounts.
+//   bit0 the bootloader's SPM service answered
+//   bit1 a mount has been attempted
+//   bit2 the arena is mounted and writable
+// The 101 cannot lose its service the way the 606 did: flash_service.c is
+// inside this machine's OWN bootloader (it keeps its own, claim-005), and an
+// app .syx cannot reach the boot section. Reported anyway, because "cannot
+// happen by construction" is what the 606 believed too.
+inline uint8_t Health() {
+  return (uint8_t)((ServicePresent() ? 1 : 0) |
+                   (MountAttempted() ? 2 : 0) |
+                   (MountAttempted() && MountOk() ? 4 : 0));
+}
 
 } // namespace persist

@@ -531,7 +531,17 @@ static int SelfTest() {
     };
     uint8_t raw[128] = {0};
     int n = probe(raw, sizeof(raw));
-    CHECK(n >= 124, "0x3C carries the SuperOS LED/gate words and the rail set (>= 124 bytes)");
+    CHECK(n >= 125, "0x3C carries the SuperOS LED/gate words, the rail set and store health");
+    // Store health (A606's claim-036, fleet warning): on the 606 every write
+    // acked out of a RAM cache while nothing reached flash, and only a reboot
+    // exposed it. By this point the self-test has already flushed patterns to
+    // the arena and read them back, so a store reporting anything less than
+    // "mounted and writable" here would mean those passes were cache echoes.
+    // Honest limit: on the host ServicePresent() is a constant true, so bit0 is
+    // only a wiring check here and the real one is the hardware probe. bit2 is
+    // load-bearing in both: it comes from an actual mount of the arena.
+    CHECK((raw[124] & 0x01) != 0, "probe store health: SPM service answered");
+    CHECK((raw[124] & 0x04) != 0, "probe store health: arena mounted and writable");
     // The rail set (claim-038). Nothing has run a bench window, so the set is
     // empty and raw[121] must say so: a host that reads the sum without
     // checking the count would read 0 as "0 mV" instead of "never measured".
