@@ -28,7 +28,7 @@
 // Combined-build hooks (src/combined.h / boot.cpp / emu101.h / midiclock.h)
 uint8_t combined_current_fw();
 void RebootTo(uint8_t fw);
-namespace emu101 { bool available(); const uint8_t* ram(); }
+namespace emu101 { bool available(); const uint8_t* ram(); uint8_t romP2(); }
 #include "midiclock.h"   // inline; resolved via -I ../src
 #include "midi.h"
 #include "usbmidi_codec.h"
@@ -1031,6 +1031,439 @@ static int SelfTest() {
   return g_fails ? 1 : 0;
 }
 
+
+// ===========================================================================
+// G14 Phase 0 (claim-096): the divergence list, engine.h vs the mask ROM
+// ===========================================================================
+// The subject is src/engine.h running natively. The ORACLE is the genuine
+// 80C49 mask ROM running under the emulator. Both are in this one binary and
+// both write the same observable surface, which is the whole reason this is
+// affordable: sim::g_sh[0] is the CV-OUT sample/hold the pitch DAC follows,
+// sim::g_sh[1] the VCO range S/H, sim_portf bit7 the GATE (LOW = on) and bit4
+// CLOCK RESET (active-LOW pulse). Nothing here reads either implementation's
+// internals; if a behaviour can only be compared by looking inside, it is
+// reported UNTESTED rather than matched.
+//
+// THREE THINGS THIS HARNESS DOES NOT DO, stated so they are not read as
+// coverage:
+//
+//  1. It drives by VIRTUAL TIME, not by loop passes. A SuperOS pass and a ROM
+//     pass differ by more than an order of magnitude, so `RunLoops(40)` means
+//     two different amounts of machine time to the two subjects and any
+//     comparison built on it compares the harness with itself. RunUs() is the
+//     only stepping primitive here.
+//  2. It compares an ORDERED SEQUENCE of observable changes, not per-pass
+//     samples. The two subjects reach the same state at different instants by
+//     construction; requiring them to reach it in the same order is the
+//     strongest thing that is true.
+//  3. The SOUND channel has no pass condition (CLEANROOM.md), so nothing here
+//     claims one. Edge placement in microseconds is recorded and printed, and
+//     is NOT scored.
+//
+// Everything SuperOS has that the ROM never had (SysEx, the 8-pattern flash
+// store, host edits, MIDI clock division) is an EXTENSION, not a divergence.
+// Extensions are listed separately and are not counted either way.
+namespace g14 {
+
+struct Obs {
+  uint8_t cv, vco;
+  bool gate, clkrst;
+  bool rawGate;   // emulator only: the gate bit the ROM itself wrote (emu101.h
+                  // romP2()), before this firmware's gate shaping. In SuperOS
+                  // it mirrors `gate`, so the stream is only meaningful on the
+                  // oracle side and is used to ATTRIBUTE a gate divergence to
+                  // the ROM or to our shaping, never to score the subject.
+  bool operator==(const Obs& o) const {
+    return cv == o.cv && vco == o.vco && gate == o.gate && clkrst == o.clkrst
+        && rawGate == o.rawGate;
+  }
+};
+struct Ev { uint64_t us; Obs o; };
+
+static std::vector<Ev> g_trace;
+static bool     g_recording = false;
+static Obs      g_last{0, 0, false, false, false};
+static bool     g_haveLast = false;
+static uint64_t g_t0 = 0;
+static int      g_break = 0;     // deliberate subject damage; 0 = none
+
+static Obs Sample() {
+  Obs o;
+  o.cv     = sim::g_sh[0];
+  o.vco    = sim::g_sh[1];
+  o.gate   = !(sim_portf & 0x80);
+  o.clkrst = (sim_portf & 0x10) == 0;
+  o.rawGate = combined_current_fw() == SIM_FW_EMU
+              ? !(emu101::romP2() & (1u << P2_GATE)) : o.gate;
+  // --- deliberate damage, applied at the OBSERVATION point on the SUBJECT
+  // only. The comparator must be seen to go red before an empty divergence
+  // list means anything (CLEANROOM Phase 0 red condition, claim-081). Doing
+  // it here rather than in engine.h keeps the shipped engine untouched while
+  // still proving the comparator can fail.
+  if (g_break && combined_current_fw() != SIM_FW_EMU) {
+    if (g_break == 1) o.cv = (uint8_t)((o.cv + 1) & 0x3F);   // pitch off by one
+    if (g_break == 2) o.gate = !o.gate;                       // gate inverted
+    if (g_break == 3) o.vco = (uint8_t)((o.vco + 8) & 0x3F);  // wrong VCO range
+  }
+  return o;
+}
+
+static void Poll() {
+  if (!g_recording) return;
+  Obs o = Sample();
+  if (!g_haveLast || !(o == g_last)) {
+    g_trace.push_back(Ev{sim::g_virtualUs - g_t0, o});
+    g_last = o; g_haveLast = true;
+  }
+}
+
+// Step the firmware for `us` of VIRTUAL time, sampling after every pass.
+static void RunUs(uint64_t us) {
+  const uint64_t end = sim::g_virtualUs + us;
+  int guard = 0;
+  while (sim::g_virtualUs < end) {
+    const uint64_t before = sim::g_virtualUs;
+    loop();
+    Poll();
+    if (sim::g_virtualUs == before && ++guard > 2000000) break;   // no-time pass
+  }
+}
+
+// One clock pulse on T1, in real time rather than in passes: the ROM's loop is
+// ~3.5 ms, so a pulse shorter than that is invisible to it and a comparison
+// driven in passes would report the ROM as deaf to a clock SuperOS heard.
+static void ClockPulseUs(uint64_t highUs, uint64_t lowUs) {
+  sim::g_clock = true;  RunUs(highUs);
+  sim::g_clock = false; RunUs(lowUs);
+}
+
+static void Quiet() {
+  sim::g_keys = 0; sim::g_buttons = 0; sim::g_pedalHold = false;
+  sim::g_clock = false;
+  RunUs(300000);
+}
+static void Tap(uint8_t bit) {
+  sim::g_buttons = (uint8_t)(1u << bit); RunUs(120000);
+  sim::g_buttons = 0;                    RunUs(120000);
+}
+
+// Record a BASELINE event before the body runs. Without it the first event of
+// each trace is whatever each subject happened to reach inside its own first
+// pass, which differ by an order of magnitude, and that alone made 9 of the
+// first 18 behaviours read as divergences on the harness's own start-up. Both
+// subjects genuinely carry the previous CV across the gap (the ROM in the S/H,
+// engine.h in lastCv_); that is only comparable if the starting point is in
+// the trace.
+static void Begin() { g_trace.clear(); g_haveLast = false; g_recording = true;
+                      g_t0 = sim::g_virtualUs; Poll(); }
+static std::vector<Ev> End() { g_recording = false; return g_trace; }
+
+// --- the behaviours -------------------------------------------------------
+// Each is a plain function run identically against both subjects. Adding one
+// here is the whole cost of extending coverage.
+typedef void (*Body)();
+
+static void B_key_single()  { sim::g_keys = 1UL << 0; RunUs(400000);
+                              sim::g_keys = 0;        RunUs(400000); }
+static void B_key_high()    { sim::g_keys = 1UL << 20; RunUs(400000);
+                              sim::g_keys = 0;         RunUs(400000); }
+static void B_key_priority(){ sim::g_keys = 1UL << 10; RunUs(300000);
+                              sim::g_keys |= 1UL << 0; RunUs(300000);   // lower joins
+                              sim::g_keys = 1UL << 10; RunUs(300000);   // lower leaves
+                              sim::g_keys = 0;         RunUs(300000); }
+static void B_key_legato()  { sim::g_keys = 1UL << 4;  RunUs(300000);
+                              sim::g_keys |= 1UL << 8; RunUs(300000);
+                              sim::g_keys = 1UL << 8;  RunUs(300000);
+                              sim::g_keys = 0;         RunUs(300000); }
+// A panel switch and a key release in the same instant are two stimuli the two
+// subjects sample in a different order. They are separated in time here. That
+// is the harness being fair, not the test being loosened: the switch is still
+// exercised, just not simultaneously with a second event.
+static void B_octave_up()   { sim::g_octave = 1;  RunUs(200000);
+                              sim::g_keys = 1UL << 0; RunUs(400000);
+                              sim::g_keys = 0;        RunUs(300000);
+                              sim::g_octave = 0;      RunUs(200000); }
+static void B_octave_down() { sim::g_octave = -1; RunUs(200000);
+                              sim::g_keys = 1UL << 12; RunUs(400000);
+                              sim::g_keys = 0;         RunUs(300000);
+                              sim::g_octave = 0;       RunUs(200000); }
+static void B_range_16()    { sim::g_rangeFeet = 16; RunUs(500000);
+                              sim::g_rangeFeet = 8;  RunUs(500000); }
+static void B_range_4()     { sim::g_rangeFeet = 4;  RunUs(500000);
+                              sim::g_rangeFeet = 8;  RunUs(500000); }
+static void B_range_2()     { sim::g_rangeFeet = 2;  RunUs(500000);
+                              sim::g_rangeFeet = 8;  RunUs(500000); }
+static void B_arp_up()      { Tap(4); sim::g_keys = (1UL<<0)|(1UL<<4)|(1UL<<7);
+                              RunUs(200000);
+                              for (int i = 0; i < 8; ++i) ClockPulseUs(6000, 6000);
+                              sim::g_keys = 0; RunUs(200000); Tap(4); }
+static void B_arp_down()    { Tap(2); sim::g_keys = (1UL<<0)|(1UL<<4)|(1UL<<7);
+                              RunUs(200000);
+                              for (int i = 0; i < 8; ++i) ClockPulseUs(6000, 6000);
+                              sim::g_keys = 0; RunUs(200000); Tap(2); }
+static void B_arp_updown()  { Tap(3); sim::g_keys = (1UL<<0)|(1UL<<4)|(1UL<<7);
+                              RunUs(200000);
+                              for (int i = 0; i < 10; ++i) ClockPulseUs(6000, 6000);
+                              sim::g_keys = 0; RunUs(200000); Tap(3); }
+static void B_arp_keychange(){Tap(4); sim::g_keys = (1UL<<0)|(1UL<<4);
+                              RunUs(200000);
+                              for (int i = 0; i < 4; ++i) ClockPulseUs(6000, 6000);
+                              sim::g_keys = (1UL<<0)|(1UL<<4)|(1UL<<9);
+                              for (int i = 0; i < 6; ++i) ClockPulseUs(6000, 6000);
+                              sim::g_keys = 0; RunUs(200000); Tap(4); }
+// The arp gate result below turns on the ROM holding the gate high across
+// steps. That could be a property of the T1 duty cycle the harness happens to
+// use rather than of the ROM, so it is driven at three duties. If the ROM's
+// gate behaviour is the same at 8%, 50% and 92%, duty is not the explanation.
+static void B_arp_narrow()  { Tap(4); sim::g_keys = (1UL<<0)|(1UL<<4)|(1UL<<7);
+                              RunUs(200000);
+                              for (int i = 0; i < 8; ++i) ClockPulseUs(1000, 11000);
+                              sim::g_keys = 0; RunUs(200000); Tap(4); }
+static void B_arp_wide()    { Tap(4); sim::g_keys = (1UL<<0)|(1UL<<4)|(1UL<<7);
+                              RunUs(200000);
+                              for (int i = 0; i < 8; ++i) ClockPulseUs(11000, 1000);
+                              sim::g_keys = 0; RunUs(200000); Tap(4); }
+static void B_hold_pedal()  { sim::g_pedalHold = true;  sim::g_keys = 1UL << 2;
+                              RunUs(300000);
+                              sim::g_keys = 0;          RunUs(400000);
+                              sim::g_pedalHold = false; RunUs(300000); }
+static void B_hold_button() { Tap(5); sim::g_keys = 1UL << 2; RunUs(300000);
+                              sim::g_keys = 0;               RunUs(400000);
+                              Tap(5);                        RunUs(200000); }
+static void B_seq_record()  { Tap(0);                                    // LOAD
+                              sim::g_keys = 1UL<<0; RunUs(200000); sim::g_keys = 0; RunUs(200000);
+                              sim::g_keys = 1UL<<4; RunUs(200000); sim::g_keys = 0; RunUs(200000);
+                              sim::g_keys = 1UL<<7; RunUs(200000); sim::g_keys = 0; RunUs(200000);
+                              Tap(0);                                    // LOAD: done
+                              Tap(1);                                    // PLAY
+                              for (int i = 0; i < 9; ++i) ClockPulseUs(6000, 6000);
+                              Tap(1); RunUs(200000); }
+static void B_seq_rest()    { Tap(0);
+                              sim::g_keys = 1UL<<0; RunUs(200000); sim::g_keys = 0; RunUs(200000);
+                              Tap(7);                                    // KEY-TRANS = rest
+                              sim::g_keys = 1UL<<7; RunUs(200000); sim::g_keys = 0; RunUs(200000);
+                              Tap(0); Tap(1);
+                              for (int i = 0; i < 9; ++i) ClockPulseUs(6000, 6000);
+                              Tap(1); RunUs(200000); }
+static void B_clock_reset() { sim::g_adsr = 1;                            // ADSR = LFO
+                              sim::g_keys = 1UL << 0; RunUs(400000);
+                              sim::g_keys = 0;        RunUs(300000);
+                              sim::g_adsr = 0;        RunUs(200000); }
+
+struct Behaviour { const char* name; const char* channel; Body fn; };
+static const Behaviour BEHAVIOURS[] = {
+  {"keyboard: single key on/off",            "state", B_key_single},
+  {"keyboard: key near the top of the range","state", B_key_high},
+  {"keyboard: note priority, lower key joins and leaves", "state", B_key_priority},
+  {"keyboard: second key while one is held", "state", B_key_legato},
+  {"panel: OCTAVE up",                       "state", B_octave_up},
+  {"panel: OCTAVE down",                     "state", B_octave_down},
+  {"panel: RANGE 16'",                       "state", B_range_16},
+  {"panel: RANGE 4'",                        "state", B_range_4},
+  {"panel: RANGE 2'",                        "state", B_range_2},
+  {"arp UP over three keys, 8 clocks",       "time",  B_arp_up},
+  {"arp DOWN over three keys, 8 clocks",     "time",  B_arp_down},
+  {"arp UP&DOWN over three keys, 10 clocks", "time",  B_arp_updown},
+  {"arp: key added mid-run",                 "time",  B_arp_keychange},
+  {"arp UP, narrow clock (8% duty)",         "time",  B_arp_narrow},
+  {"arp UP, wide clock (92% duty)",          "time",  B_arp_wide},
+  {"HOLD pedal latches a key",               "state", B_hold_pedal},
+  {"HOLD button latches a key",              "state", B_hold_button},
+  {"sequencer: record 3 notes, play 9 clocks","time", B_seq_record},
+  {"sequencer: a rest recorded with KEY-TRANSPOSE", "time", B_seq_rest},
+  {"CLOCK RESET pulse on a new key (ADSR=LFO)", "state", B_clock_reset},
+};
+static const int N_BEHAVIOURS = (int)(sizeof(BEHAVIOURS) / sizeof(BEHAVIOURS[0]));
+
+// Extensions: SuperOS has these and the original never did, so they are
+// outside 1:1 by construction. Listed so the reader can see they were
+// considered and excluded on purpose rather than forgotten.
+static const char* EXTENSIONS[] = {
+  "SysEx (0x10..0x4D): the ROM has no host protocol at all",
+  "8 flash-backed patterns of up to 128 steps: the ROM has one battery-RAM pattern",
+  "MIDI clock division table (midiclock.h): the ROM has only the T1 pin",
+  "live host edits under clock (0x16/0x18/0x2E, gate G4)",
+  "USB-MIDI, the bench probe (0x3B) and the 0x3E bench window",
+};
+static const int N_EXTENSIONS = (int)(sizeof(EXTENSIONS) / sizeof(EXTENSIONS[0]));
+
+// --- the comparison -------------------------------------------------------
+// Three DERIVED streams, not one, because a single root cause otherwise gets
+// counted once per behaviour and the list stops being a list of causes:
+//
+//   cv     the ordered distinct CV-OUT values (what pitch, in what order)
+//   gate   the CV in force at each gate RISE (what you would hear retriggered)
+//   order  the raw interleave of the two (whether CV leads the gate or not)
+//
+// A behaviour whose cv and gate streams match but whose order stream does not
+// has ONE divergence, in edge ordering, and saying that is worth more than
+// eight rows saying "diverges".
+//
+// The BASELINE event (index 0) is excluded from all three. It is the CV each
+// subject was holding when the behaviour started, which is inherited from
+// whatever ran before, so once any behaviour diverges every later baseline
+// differs too and the list fills with cascade. It is printed, never scored,
+// and "does CV persist after the gate closes" is its own row instead.
+static std::vector<std::string> CvSeq(const std::vector<Ev>& t) {
+  std::vector<std::string> v; std::string prev;
+  for (size_t i = 1; i < t.size(); ++i) {
+    char b[16]; snprintf(b, sizeof(b), "%u", t[i].o.cv);
+    if (b != prev) { v.push_back(b); prev = b; }
+  }
+  return v;
+}
+static std::vector<std::string> GateSeq(const std::vector<Ev>& t) {
+  std::vector<std::string> v; bool prev = t.empty() ? false : t[0].o.gate;
+  for (size_t i = 1; i < t.size(); ++i) {
+    if (t[i].o.gate && !prev) { char b[16];
+      snprintf(b, sizeof(b), "%u", t[i].o.cv); v.push_back(b); }
+    prev = t[i].o.gate;
+  }
+  return v;
+}
+static std::vector<std::string> OrderSeq(const std::vector<Ev>& t) {
+  std::vector<std::string> v; std::string prev;
+  for (size_t i = 1; i < t.size(); ++i) {
+    char b[32]; snprintf(b, sizeof(b), "%u/%c", t[i].o.cv, t[i].o.gate ? 'G' : '.');
+    if (b != prev) { v.push_back(b); prev = b; }
+  }
+  return v;
+}
+// The gate stream as the ROM wrote it, before shaping. Same shape as GateSeq.
+static std::vector<std::string> RawGateSeq(const std::vector<Ev>& t) {
+  std::vector<std::string> v; bool prev = t.empty() ? false : t[0].o.rawGate;
+  for (size_t i = 1; i < t.size(); ++i) {
+    if (t[i].o.rawGate && !prev) { char b[16];
+      snprintf(b, sizeof(b), "%u", t[i].o.cv); v.push_back(b); }
+    prev = t[i].o.rawGate;
+  }
+  return v;
+}
+static std::vector<std::string> VcoSeq(const std::vector<Ev>& t) {
+  std::vector<std::string> v; std::string prev;
+  for (size_t i = 1; i < t.size(); ++i) {
+    char b[16]; snprintf(b, sizeof(b), "%u", t[i].o.vco);
+    if (b != prev) { v.push_back(b); prev = b; }
+  }
+  return v;
+}
+static std::string Join(const std::vector<std::string>& v, size_t cap = 22) {
+  std::string s;
+  for (size_t i = 0; i < v.size() && i < cap; ++i) { if (i) s += " "; s += v[i]; }
+  if (v.size() > cap) s += " ...";
+  return s;
+}
+
+static std::vector<std::vector<Ev> > g_sos, g_emu;
+
+static void RunAll(std::vector<std::vector<Ev> >& into) {
+  into.clear();
+  for (int i = 0; i < N_BEHAVIOURS; ++i) {
+    Quiet();
+    Begin();
+    BEHAVIOURS[i].fn();
+    into.push_back(End());
+    Quiet();
+  }
+}
+
+int Main() {
+  const char* bs = getenv("G14_BREAK");
+  g_break = bs ? atoi(bs) : 0;
+  setenv("SIM_EEPROM", "sim-g14-eeprom.bin", 1);
+  setenv("SIM_FLASH",  "sim-g14-flash.bin",  1);
+  remove("sim-g14-eeprom.bin");
+  remove("sim-g14-flash.bin");
+
+  if (!emu101::available()) {
+    puts("G14 Phase 0: NO MASK ROM EMBEDDED. There is no oracle, so there is");
+    puts("no divergence list. This is not a green result.");
+    return 2;
+  }
+  printf("G14 Phase 0 -- claim-096, the 101's divergence list\n");
+  printf("subject: src/engine.h native   oracle: 80C49 mask ROM under emu101\n");
+  if (g_break)
+    printf("\n*** RED-CONDITION RUN: subject deliberately damaged (break %d).\n"
+           "    Divergences here are the harness working, not the engine failing.\n"
+           "    A CLEAN result under a break is a defect in the comparator. ***\n",
+           g_break);
+
+  g_rebootArmed = true;
+  if (setjmp(g_rebootJmp) == 0) setup(); else setup();
+  RunAll(g_sos);
+
+  if (setjmp(g_rebootJmp) == 0) { RebootTo(1); } else { setup(); }
+  if (combined_current_fw() != SIM_FW_EMU) {
+    puts("failed to reach emulator mode; no comparison possible");
+    return 2;
+  }
+  RunAll(g_emu);
+
+  int matched = 0, untested = 0;
+  int dCv = 0, dGate = 0, dOrder = 0, dVco = 0, dAny = 0;
+  printf("\n%-3s %-6s %-46s %s\n", "#", "chan", "behaviour", "cv gate order vco");
+  for (int i = 0; i < N_BEHAVIOURS; ++i) {
+    std::vector<std::string> ac = CvSeq(g_sos[i]),  bc = CvSeq(g_emu[i]);
+    std::vector<std::string> ag = GateSeq(g_sos[i]), bg = GateSeq(g_emu[i]);
+    std::vector<std::string> ao = OrderSeq(g_sos[i]), bo = OrderSeq(g_emu[i]);
+    std::vector<std::string> av = VcoSeq(g_sos[i]),  bv = VcoSeq(g_emu[i]);
+    bool empty = ao.empty() && bo.empty();
+    bool okc = ac == bc, okg = ag == bg, oko = ao == bo, okv = av == bv;
+    if (empty) { ++untested;
+      printf("%-3d %-6s %-46s %s\n", i + 1, BEHAVIOURS[i].channel,
+             BEHAVIOURS[i].name, "UNTESTED: no observable change in EITHER");
+      continue; }
+    if (!okc) ++dCv;
+    if (!okg) ++dGate;
+    if (!oko) ++dOrder;
+    if (!okv) ++dVco;
+    bool all = okc && okg && oko && okv;
+    if (all) ++matched; else ++dAny;
+    printf("%-3d %-6s %-46s %s %s %s %s\n", i + 1, BEHAVIOURS[i].channel,
+           BEHAVIOURS[i].name,
+           okc ? "ok " : "CV ", okg ? "ok  " : "GATE", oko ? "ok   " : "ORDER",
+           okv ? "ok " : "VCO");
+    if (!all) {
+      if (!okc) { printf("        cv    engine %s\n", Join(ac).c_str());
+                  printf("        cv    ROM    %s\n", Join(bc).c_str()); }
+      if (!okg) { printf("        gate  engine %s\n", Join(ag).c_str());
+                  printf("        gate  ROM    %s   (physical pin)\n", Join(bg).c_str());
+                  std::vector<std::string> br = RawGateSeq(g_emu[i]);
+                  printf("        gate  ROM    %s   (RAW, pre-shaping)\n", Join(br).c_str());
+                  printf("        ATTRIBUTION: %s\n",
+                         br == ag ? "the RAW ROM gate MATCHES engine.h. The divergence is "
+                                    "in this firmware's own gate shaping (emu101.cpp), NOT "
+                                    "in the original."
+                                  : "the raw ROM gate differs from engine.h too, so the "
+                                    "divergence is not shaping alone."); }
+      if (okc && okg && !oko) {
+                  printf("        order engine %s\n", Join(ao).c_str());
+                  printf("        order ROM    %s\n", Join(bo).c_str()); }
+      if (!okv) { printf("        vco   engine %s\n", Join(av).c_str());
+                  printf("        vco   ROM    %s\n", Join(bv).c_str()); }
+      printf("        baseline cv engine %u, ROM %u (inherited, not scored)\n",
+             g_sos[i].empty() ? 0 : g_sos[i][0].o.cv,
+             g_emu[i].empty() ? 0 : g_emu[i][0].o.cv);
+    }
+  }
+
+  printf("\nmatched %d   diverged %d   UNTESTED %d   of %d behaviours\n",
+         matched, dAny, untested, N_BEHAVIOURS);
+  printf("by stream:  cv %d   gate %d   order %d   vco %d\n",
+         dCv, dGate, dOrder, dVco);
+  printf("\nNOT COVERED HERE, and not counted either way:\n");
+  printf("  sound channel  -- no pass condition exists (CLEANROOM.md); edge\n");
+  printf("                    placement is recorded but NOT scored\n");
+  printf("  %d SuperOS extensions the original never had:\n", N_EXTENSIONS);
+  for (int i = 0; i < N_EXTENSIONS; ++i) printf("    - %s\n", EXTENSIONS[i]);
+  printf("\nRED CONDITION: re-run with G14_BREAK=1 (pitch off by one), 2 (gate\n");
+  printf("inverted) or 3 (wrong VCO range). If those do not turn this list red,\n");
+  printf("a clean list means nothing (claim-081).\n");
+  return 0;
+}
+
+} // namespace g14
+
 int main(int argc, char** argv) {
   // Line-buffer stdout. A terminal gives us this for free, a PIPE does not: C
   // stdio switches to 4 kB full buffering the moment stdout is not a tty, so
@@ -1041,6 +1474,7 @@ int main(int argc, char** argv) {
   // so this line is load-bearing for the sim transport, not a tidy-up.
   setvbuf(stdout, nullptr, _IOLBF, 0);
   if (argc > 1 && !strcmp(argv[1], "--test")) return SelfTest();
+  if (argc > 1 && !strcmp(argv[1], "--g14"))  return g14::Main();
   Repl();
   return 0;
 }

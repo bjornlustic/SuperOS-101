@@ -6,6 +6,13 @@ bool available();   // true when the mask ROM is embedded (rom101_data.h)
 void setup();
 void loop();
 const uint8_t* ram();   // the emulated 80C49's 128 B RAM (inspection only)
+// The LAST P2 BYTE THE ROM ITSELF WROTE, before this firmware's gate shaping
+// (emu101.cpp "gate gap shaping"). Inspection only, and it exists because the
+// two are not the same signal: the shaping holds the pin high across arp steps
+// and pulses PORTAMENTO OFF instead, so a comparison against the physical pin
+// measures engine.h against ROM+shaping. G14 Phase 0 needs to tell those apart
+// before attributing a divergence to the original (sim.cpp, g14::).
+uint8_t romP2();
 // Speed telemetry (SysEx 0x3B probe), refreshed once a second:
 uint16_t cyclesPerSec100(); // emulated machine cycles per second / 100 (real chip = 4000)
 uint16_t passesPerSec();    // ROM program passes per second (CV-OUT S/H writes)

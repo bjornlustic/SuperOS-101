@@ -452,6 +452,7 @@ namespace emu101 {
 
 bool available() { return ROM101_PRESENT != 0; }
 const uint8_t* ram() { return g_cpu.ram; }   // sim / bench inspection
+uint8_t romP2() { return g_p2Rom; }          // pre-shaping, see emu101.h
 uint16_t cyclesPerSec100() { return g_cyc100; }
 uint16_t passesPerSec()    { return g_pps; }
 uint16_t keyToGateUs(bool max) { return max ? g_k2gMaxUs : g_k2gLastUs; }
