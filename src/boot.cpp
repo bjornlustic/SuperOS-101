@@ -56,13 +56,23 @@ uint32_t g_usbHoldUntil = 0;   // usb_gate.h bench hold-off
 bool     g_usbBenchOff = false; // usb_gate.h: bench engine-off (SysEx 0x3E bit1)
 #endif
 uint16_t g_vccParkedMv = 0;    // sysex.h probe: VCC seen while USB was parked
+sysex::VccSamples g_vccParkedSet = {0, 0, 0, 0};   // the 0x3E rail set
 // Bench load experiment (SysEx 0x3E <mode> <s>, sysex.h): for s seconds run
-// with bit0 CPU clock /2, bit1 USB engine fully off (PLL stopped, clock
-// frozen), bit2 idle-sleep at the end of every pass. VCC is sampled in the
-// last second into g_vccParkedMv. Timekeeping runs off millis(), so with
-// bit0 the window is 2x longer in real time.
+// with bit0 core /2 (8 MHz), bit1 USB engine fully off (PLL stopped, clock
+// frozen), bit2 idle-sleep at the end of every pass, bit3 core /1 (16 MHz,
+// wins over bit0). The rail is sampled through the last second into
+// g_vccParkedSet. Timekeeping runs off millis(), so a window at a clock other
+// than the app's own runs correspondingly longer or shorter in real time, and
+// hw.h's IdleWaitUs scales its S/H dwells from the compile-time F_CPU, so
+// those dwells come out short at 8 and 16 MHz. Both are part of the load the
+// window is there to create, not defects in it.
 uint8_t  g_benchMode = 0;
+uint8_t  g_benchApplied = 0;   // what is in force, for the probe to report
+uint8_t  g_benchClkps = 0;     // set to the app's own divide in setup()
 uint32_t g_benchUntil = 0;
+#ifdef __AVR__
+static uint8_t g_baseClkps = 0;
+#endif
 
 #ifdef __AVR__
 // Boot counter that survives watchdog/brown-out resets (RAM is not cleared by
@@ -189,6 +199,14 @@ void RebootTo(uint8_t fw) {
 
 void setup() {
 #ifdef __AVR__
+  // The divide the app itself runs at, read from the hardware rather than
+  // assumed (the Teensy core sets CLKPR from F_CPU before setup(), so /4 here).
+  // The bench window restores exactly this; assuming /1 instead is what used to
+  // leave the machine at 16 MHz, with the UART divisor still computed for
+  // 4 MHz, after every /2 window. 16 MHz is the condition the divide exists to
+  // avoid (platformio.ini [env:app]), so that leak was not cosmetic.
+  g_baseClkps = CLKPR & 0x0F;
+  g_benchClkps = g_baseClkps;
   // Permanent 8 s watchdog, petted every loop() pass (also from the switch
   // lockout in RebootTo). 303 root-cause evidence: after a fast firmware swap
   // the host's USB port can come up hosed and the CPU intermittently froze a
@@ -249,24 +267,49 @@ void loop() {
 #ifdef __AVR__
   // Bench load experiment window (see g_benchMode).
   {
+    const uint8_t base = g_baseClkps;   // the app's own divide (setup())
     static uint8_t applied = 0;
+    static bool collecting = false;
     const bool active = g_benchUntil && (int32_t)(millis() - g_benchUntil) < 0;
     const uint8_t want = active ? g_benchMode : 0;
     if (want != applied) {
+      const uint8_t clkps = sysex::BenchClkps(want, base);
+      const uint32_t hz = sysex::BenchCoreHz(F_CPU, base, clkps);
       cli();
-      if ((want ^ applied) & 1) {
-        CLKPR = 0x80; CLKPR = (want & 1) ? 0x01 : 0x00;
-        UBRR1L = (uint8_t)(F_CPU / ((want & 1) ? 2 : 1) / 16 / 31250 - 1);
+      if (clkps != g_benchClkps) {
+        CLKPR = 0x80; CLKPR = clkps;
+        UBRR1L = sysex::BenchUbrr(hz);
       }
       sei();
+      g_benchClkps = clkps;
 #ifdef SUPEROS_USB_MIDI
       g_usbBenchOff = (want & 2) != 0;   // gate parks the engine / brings it back
 #endif
       applied = want;
+      g_benchApplied = want;
     }
     if (active) {
-      if ((int32_t)(millis() - (g_benchUntil - 1000)) > 0) g_vccParkedMv = sysex::MeasureVccMv();
-    } else if (g_benchUntil) g_benchUntil = 0;
+      // Gather the rail set across the last second's passes. A full 256-sample
+      // set is ~27 ms of ADC time; taking it in one burst would stall the pass
+      // that refreshes the S/H caps and move the rail we are trying to read.
+      if ((int32_t)(millis() - (g_benchUntil - 1000)) > 0) {
+        if (!collecting) {
+          g_vccParkedSet = sysex::VccSamples{0, 0, 0, 0};
+          sysex::VccSampleBegin(sysex::BenchCoreHz(F_CPU, base, g_benchClkps));
+          collecting = true;
+        }
+        if (g_vccParkedSet.n < 256) {
+          sysex::VccSampleStep(g_vccParkedSet, 4);
+          if (g_vccParkedSet.n >= 256) {
+            sysex::VccSampleEnd();
+            g_vccParkedMv = sysex::VccCodeToMv((uint16_t)(g_vccParkedSet.sum / g_vccParkedSet.n));
+          }
+        }
+      }
+    } else if (g_benchUntil) {
+      if (collecting) { sysex::VccSampleEnd(); collecting = false; }
+      g_benchUntil = 0;
+    }
   }
 #endif
   if (menu::Active()) { menu::Poll(); return; }

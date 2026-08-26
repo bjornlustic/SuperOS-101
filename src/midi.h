@@ -60,9 +60,13 @@
 //                         cause, USB regs, boot count, previous boot stage)
 //   0x3D <s>              bench: park the USB engine for s seconds
 //   0x3E <mode> <s>       bench: rail-load experiment for s seconds (boot.cpp):
-//                         bit0 core clock /2, bit1 USB engine + PLL off,
-//                         bit2 idle-sleep every pass; VCC in the last second
-//                         lands in the 0x3C "parked" slot
+//                         bit0 core /2 (8 MHz), bit1 USB engine + PLL off,
+//                         bit2 idle-sleep every pass, bit3 core /1 (16 MHz,
+//                         wins over bit0). mode 0 keeps the app's own 4 MHz,
+//                         so it is the control rather than a no-op. The last
+//                         second's rail samples land in the 0x3C parked slot
+//                         as a raw ADC set (sum/min/max), and 0x3C reports the
+//                         prescale that was APPLIED, not the one requested.
 //   0x40                  emulator status request     -> 0x41 (emulator only)
 //   0x41 <1> <version ascii...>
 //   0x4D                  switch to SuperOS (reboots)

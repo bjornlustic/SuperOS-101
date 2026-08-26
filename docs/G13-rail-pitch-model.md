@@ -171,12 +171,54 @@ USB detached against configured, which the `0x3E` bench modes already toggle).
   honest fix is calibration or a supply change, and SPICE tells us nothing we
   cannot get from a DC load line
 
-Nobody has run that comparison, and the whole value of a model hangs on it. It is
-headless, and the firmware already has the instrumentation for it: `0x3B` reports
-VCC in mV, and `0x3E <mode> <s>` runs the rail-load experiment with the parked
-sample landing in the `0x3C` reply. So the rail half needs **no audio lease at
-all**. Only the pitch half needs a capture, and only to confirm what the millivolts
-already imply.
+Nobody has run that comparison, and the whole value of a model hangs on it.
+
+> ### Second correction: I ran it, and the instrument could not answer
+>
+> I wrote here that the firmware "already has the instrumentation for it" and told
+> CORE the rail half needed no audio lease. **That was wrong**, in two independent
+> ways, and both were properties of the instrument rather than of the machine
+> (LESSONS L14, the shape I keep repeating).
+>
+> 1. **The published number was 8x too coarse.** `0x3B` answered in millivolts,
+>    from a mean of 8 samples of the 1.1 V bandgap against AVCC. Near 5 V one ADC
+>    code is 22 mV, so the instrument's step was 39 cents against a question about
+>    5. Six bench windows all returned 4984 mV except one 4962: two adjacent codes,
+>    which is dither, not a signal. And no mean, at any precision, can show ripple.
+> 2. **The window could not produce the load.** `0x3E` changes the clock, but the
+>    SuperOS loop sits in DAC settle waits (~350 us a pass, `hw.h`), so it is not
+>    CPU-bound and the 410 mV droop did not reproduce at all. The 2026-08-15 data
+>    says the variable is load and not clock outright: at 8 MHz the **emulator**
+>    read 4.96 V while **SuperOS** read 4.98 V.
+>
+> Both are now closed in firmware rather than escalated (rule 7):
+>
+> * the probe publishes the **raw ADC set** for the parked window, `[114..121]`:
+>   the sum of 256 codes plus the **min and max** across them. Min/max is the
+>   ripple, measured directly. The sum reaches below one code only if the rail
+>   carries a code of noise to dither with, so **min == max is a bound (ripple
+>   under ~22 mV), not a measurement**, and the probe now publishes enough for the
+>   host to tell those two apart. This bound is a real possible outcome of the
+>   sweep below and is to be reported as one.
+> * the ADC divider is chosen from the **running** core clock, not from `F_CPU`.
+>   The old code ran the ADC at 250 kHz during a 16 MHz window, outside the
+>   50-200 kHz the datasheet requires for ten bits, in the one condition this
+>   question is asked in.
+> * the window **restores the app's own divide** and can be asked for 16 MHz
+>   explicitly (`bit3`). It previously restored a hard `/1`, so a `/2` window left
+>   the machine at 16 MHz with the UART divisor still computed for 4 MHz, and with
+>   no way to request 16 MHz the "16 MHz" rows of the 2026-08-25 sweep were that
+>   leak rather than the mode asked for. The probe now reports the prescale that
+>   was **applied** (`[122]`), so a row cannot be labelled with a clock the
+>   machine was not running.
+>
+> The load still has to be CPU-bound, and the honest way to get that is the
+> emulator itself rather than a synthetic burn: switch with `0x2F`, run the
+> windows, switch back with `0x4D`. That reproduces the 2026-08-15 configuration
+> exactly, which is the point.
+
+So the rail half needs **no audio lease**. Only the pitch half needs a capture,
+and only to confirm what the millivolts already imply.
 
 ## What the model needs, and what would be a substitute
 

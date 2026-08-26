@@ -35,6 +35,7 @@ namespace emu101 { bool available(); const uint8_t* ram(); }
 #include "flash_persist.h"
 #include "cvdac.h"
 #include "pins.h"        // P2_GATE et al: the probe's P2 image is decoded by bit name
+#include "sysex.h"       // the 0x3E bench-window clock helpers, pinned below
 static const uint8_t SIM_FW_EMU = 1;
 extern uint16_t g_simCvCode[2];   // last MCP4822 code per channel (sim_cvdac_write, below)
 
@@ -530,7 +531,11 @@ static int SelfTest() {
     };
     uint8_t raw[128] = {0};
     int n = probe(raw, sizeof(raw));
-    CHECK(n >= 114, "0x3C carries the SuperOS LED/gate words (>= 114 bytes)");
+    CHECK(n >= 124, "0x3C carries the SuperOS LED/gate words and the rail set (>= 124 bytes)");
+    // The rail set (claim-038). Nothing has run a bench window, so the set is
+    // empty and raw[121] must say so: a host that reads the sum without
+    // checking the count would read 0 as "0 mV" instead of "never measured".
+    CHECK(raw[121] == 0, "probe rail set: sample count 0 before any 0x3E window");
     // raw[97] is the live P2 image. The gate bit is INVERTED (0 = gate on), so
     // a resting pattern-0 machine with no note must read it high.
     CHECK((raw[97] & (1u << P2_GATE)) != 0, "probe P2 image: gate bit high = gate off at rest");
@@ -574,6 +579,39 @@ static int SelfTest() {
     CHECK(ledSel() == 4, "probe P2 image: arp UP&DOWN lights select 4");
     tap(3);   // second press leaves the arp -> keyboard, all off
     CHECK(ledSel() == 0, "probe P2 image: back to keyboard lights no function LED");
+  }
+
+  // 0x3E bench window clock select (gate G13, claim-038). This is the rail
+  // instrument, so the thing it must never get wrong is which clock it ran at.
+  // It got it wrong twice: the window "restored" CLKPR to /1 rather than to the
+  // app's own /4, so a /2 window left the machine at 16 MHz with the UART
+  // divisor still computed for 4 MHz, and since nothing could REQUEST 16 MHz,
+  // the 16 MHz rows of the 2026-08-25 sweep were that leak instead of the mode
+  // asked for. Two of those six rows were labelled with a clock the machine was
+  // not running. Every check below fails against the previous logic.
+  {
+    puts("bench window clock (0x3E):");
+    const uint8_t app = 2;                        // the app's divide, /4
+    CHECK(sysex::BenchClkps(0, app) == app, "0x3E mode 0 leaves the app's own divide (the 4 MHz control)");
+    CHECK(sysex::BenchClkps(1, app) == 1, "0x3E bit0 selects /2 = 8 MHz");
+    CHECK(sysex::BenchClkps(8, app) == 0, "0x3E bit3 selects /1 = 16 MHz");
+    CHECK(sysex::BenchClkps(9, app) == 0, "0x3E bit3 wins over bit0");
+    CHECK(sysex::BenchClkps(6, app) == app, "0x3E USB-off + sleep alone do not move the clock");
+    CHECK(sysex::BenchCoreHz(4000000UL, app, app) == 4000000UL, "0x3E core Hz at the app divide = 4 MHz");
+    CHECK(sysex::BenchCoreHz(4000000UL, app, 1) == 8000000UL, "0x3E core Hz at /2 = 8 MHz");
+    CHECK(sysex::BenchCoreHz(4000000UL, app, 0) == 16000000UL, "0x3E core Hz at /1 = 16 MHz");
+    // The UART divisor has to follow the real core clock or DIN MIDI comes out
+    // at the wrong baud for the rest of the session, silently.
+    CHECK(sysex::BenchUbrr(4000000UL) == 7, "0x3E UBRR1L 4 MHz -> 7");
+    CHECK(sysex::BenchUbrr(8000000UL) == 15, "0x3E UBRR1L 8 MHz -> 15");
+    CHECK(sysex::BenchUbrr(16000000UL) == 31, "0x3E UBRR1L 16 MHz -> 31");
+    // The ADC needs 50-200 kHz for ten honest bits. Choosing the divider from
+    // the compile-time F_CPU ran it at 250 kHz during a 16 MHz window, i.e. out
+    // of spec in the one condition claim-038 cares about.
+    for (uint32_t hz : {4000000UL, 8000000UL, 16000000UL}) {
+      uint32_t adcHz = hz >> sysex::AdcPrescaleBits(hz);
+      CHECK(adcHz >= 50000UL && adcHz <= 200000UL, "ADC clock stays in 50-200 kHz at every bench clock");
+    }
   }
 
   // Live-edit opcodes (gate G4): 0x16 set step, 0x18 set length, 0x15 randomize.

@@ -52,7 +52,9 @@ Realtime clock/start/stop drive the sync (config menu or editor). SysEx protocol
 read/write (0x10..0x14), step position (0x15), select/transport (0x1D/0x1E), config
 (0x20..0x22), firmware switch (0x2F/0x4D), bench probe (0x3B/0x3C: reset cause,
 USB registers, boots since power-on, where the previous boot ended, loop pass time,
-VCC) and bench windows (0x3D park USB, 0x3E rail-load experiment), emulator status
+VCC in mV plus the raw ADC set behind it) and bench windows (0x3D park USB,
+0x3E rail-load experiment: bit0 8 MHz, bit1 USB engine off, bit2 idle sleep,
+bit3 16 MHz, mode 0 = the app's own 4 MHz as the control), emulator status
 (0x40/0x41), bootloader (0x4A). Host tools: `tools/sendsyx` / `tools/recvsyx` (macOS CoreMIDI, build from
 the `.c` files).
 

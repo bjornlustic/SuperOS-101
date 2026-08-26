@@ -45,21 +45,69 @@ inline void SendEmuStatus() {
 //   [9..10] last loop pass us (hi, lo)  [11..12] max pass us since last probe
 //   [13..14] VCC in mV (hi, lo): internal 1.1 V bandgap read against AVCC.
 //            The R-2R DAC's reference is this rail, so it is the pitch scale.
+//            A MEAN of 8 samples, and deliberately coarse: read the resolution
+//            note above [114..123] before treating it as a rail measurement.
+
+// The ADC wants 50-200 kHz to deliver all ten bits (AT90USB1286 datasheet
+// 24.4), and on this machine the core clock is NOT a compile-time constant:
+// the 0x3E bench window changes it at runtime. Choosing the divider from
+// F_CPU therefore under-clocks the ADC at 4 MHz and runs it at 250 kHz, out
+// of spec, during a 16 MHz window -- which is the one condition the rail
+// question is actually asked in. Pick the smallest divider that stays at or
+// under 200 kHz for the clock we are really running at.
+inline uint8_t AdcPrescaleBits(uint32_t coreHz) {
+  uint8_t bits = 1;                       // ADPS 0 and 1 both mean /2
+  while (bits < 7 && (coreHz >> bits) > 200000UL) ++bits;
+  return bits;
+}
+
+// One set of raw bandgap samples. Raw ADC codes, not millivolts: the
+// conversion to mV is lossy and the host can do it better than we can.
+struct VccSamples {
+  uint32_t sum;      // sum of `n` 10-bit codes
+  uint16_t min, max; // the extremes across the set: this IS the ripple
+  uint16_t n;
+};
+
+inline uint16_t VccCodeToMv(uint16_t adc) {
+  return adc ? (uint16_t)((1100UL * 1024UL) / adc) : 0;
+}
+
+#ifdef __AVR__
+// Open the bandgap channel and let it settle. Leaves the ADC powered and
+// selected so a set can be collected a few samples at a time.
+inline void VccSampleBegin(uint32_t coreHz) {
+  PRR0 &= (uint8_t)~(1 << PRADC);
+  ADMUX  = (1 << REFS0) | 0x1E;           // AVCC ref, 1.1 V bandgap in
+  ADCSRA = (uint8_t)((1 << ADEN) | AdcPrescaleBits(coreHz));
+  delayMicroseconds(400);                 // bandgap settle (~70 us typ)
+  ADCSRA |= (1 << ADSC); while (ADCSRA & (1 << ADSC)) {}   // discard the first
+}
+inline void VccSampleEnd() { ADCSRA = 0; PRR0 |= (1 << PRADC); }
+
+// Take up to `count` conversions into `s`. A full set of 256 costs ~27 ms of
+// ADC time, which is far longer than a loop pass, and stalling the pass would
+// starve the S/H refresh and move the very rail under test. So the set is
+// gathered across passes instead of in one blocking burst.
+inline void VccSampleStep(VccSamples& s, uint8_t count) {
+  while (count--) {
+    ADCSRA |= (1 << ADSC); while (ADCSRA & (1 << ADSC)) {}
+    uint16_t v = ADC;
+    if (!s.n || v < s.min) s.min = v;
+    if (!s.n || v > s.max) s.max = v;
+    s.sum += v; ++s.n;
+  }
+}
+#endif
+
 inline uint16_t MeasureVccMv() {
 #ifdef __AVR__
-  uint8_t prr = PRR0; PRR0 &= (uint8_t)~(1 << PRADC);
-  ADMUX  = (1 << REFS0) | 0x1E;                       // AVCC ref, 1.1 V bandgap in
-  // ADC clock 50-200 kHz: /128 at 8-16 MHz, /64 below
-  ADCSRA = (uint8_t)((1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (F_CPU >= 8000000UL ? (1 << ADPS0) : 0));
-  delayMicroseconds(400);                             // bandgap settle
-  uint32_t acc = 0;
-  for (uint8_t i = 0; i < 9; ++i) {                   // discard first, average 8
-    ADCSRA |= (1 << ADSC); while (ADCSRA & (1 << ADSC)) {}
-    if (i) acc += ADC;
-  }
-  ADCSRA = 0; PRR0 = prr;
-  uint16_t adc = (uint16_t)(acc / 8);
-  return adc ? (uint16_t)((1100UL * 1024UL) / adc) : 0;
+  uint8_t prr = PRR0;
+  VccSampleBegin(F_CPU);
+  VccSamples s = {0, 0, 0, 0};
+  VccSampleStep(s, 8);
+  VccSampleEnd(); PRR0 = prr;
+  return VccCodeToMv((uint16_t)(s.sum / 8));
 #else
   return 0;
 #endif
@@ -102,13 +150,37 @@ inline uint16_t MeasureVccMv() {
 //            indicator tracks incoming MIDI clock, and a rate is the thing
 //            that claim actually makes. The 101 has no dedicated tempo LED
 //            (claim-022), so its indicator is KEY-TRANSPOSE, bit 6.
+//
+// The rail set, and why it is raw codes rather than millivolts (claim-038, G13):
+//   [114..116] sum of the parked set's 10-bit ADC codes (hi..lo, 24-bit)
+//   [117..118] the set's MINIMUM code   [119..120] its MAXIMUM code
+//   [121]      samples in the set / 16 (256 -> 16). 0 = the set never completed
+//              and every word above it is meaningless.
+//   [122]      the CLKPS the window actually applied: 0 = 16 MHz, 1 = 8 MHz,
+//              2 = 4 MHz. Reported because it was assumed once and wrong.
+//   [123]      the bench mode byte as applied
+// [13..16] answer in millivolts and cannot answer claim-038. The bandgap is
+// read against AVCC, so one ADC code near 5 V is 22 mV (226 -> 4984 mV,
+// 227 -> 4962 mV), and on this machine 57 mV is a semitone: one code is 39
+// cents. The claim is about ~2.85 mV of ripple, so the published mean is 8x
+// too coarse, and a mean of ANY precision cannot show ripple at all.
+// So publish the set instead. MIN and MAX bound the ripple directly. The SUM
+// recovers detail below one code only if the rail carries at least a code of
+// noise to dither with, so if min == max the honest reading is "ripple is
+// under one code", a BOUND and not a measurement. Publishing min and max
+// beside the sum is what lets the host tell those two apart, which the mean
+// could not, and it is why a single 4962 in the last sweep was one LSB of
+// dither rather than a signal.
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
+extern sysex::VccSamples g_vccParkedSet;   // boot.cpp: the 0x3E parked set
 extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
+extern uint8_t  g_benchApplied;  // boot.cpp: mode actually in force
+extern uint8_t  g_benchClkps;    // boot.cpp: prescale actually in force
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[114] = {0};
+  uint8_t raw[124] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -144,6 +216,15 @@ inline void SendProbe() {
     raw[97] = o.last;
     for (uint8_t b = 0; b < 8; ++b) { raw[98 + 2 * b] = o.togPerSec[b] >> 8; raw[99 + 2 * b] = o.togPerSec[b] & 0xFF; }
   }
+  {   // the 0x3E parked rail set (claim-038)
+    const VccSamples& s = g_vccParkedSet;
+    raw[114] = (uint8_t)(s.sum >> 16); raw[115] = (uint8_t)(s.sum >> 8); raw[116] = (uint8_t)s.sum;
+    raw[117] = s.min >> 8; raw[118] = s.min & 0xFF;
+    raw[119] = s.max >> 8; raw[120] = s.max & 0xFF;
+    raw[121] = (uint8_t)(s.n >> 4);
+    raw[122] = g_benchClkps;
+    raw[123] = g_benchApplied;
+  }
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;
 #ifdef __AVR__
@@ -163,6 +244,39 @@ inline void SendProbe() {
   body[0] = 0x3C;
   for (uint8_t i = 0; i < sizeof(raw); ++i) { body[1 + 2 * i] = raw[i] >> 4; body[2 + 2 * i] = raw[i] & 0x0F; }
   midi::SendSysex(body, sizeof(body));
+}
+
+// --- 0x3E bench window: which clock it runs at -------------------------------
+// The window's job is to change the machine's load and clock for a few seconds
+// so the rail can be read under each, so the ONE thing it must never get wrong
+// is what clock it actually selected. The first version got it wrong twice:
+// it assumed the app runs undivided, so it "restored" CLKPR to /1 and left the
+// machine at 16 MHz after any /2 window, with the UART divisor still computed
+// for 4 MHz; and with no way to ask for 16 MHz at all, the 16 MHz rows in the
+// 2026-08-25 claim-038 sweep were that leak rather than the mode requested.
+// These are pure so the sim can pin them (sim.cpp, G12).
+//
+//   bit0 0x01  core /2  -> 8 MHz
+//   bit1 0x02  USB engine fully off (PLL stopped, clock frozen)
+//   bit2 0x04  idle-sleep at the end of every pass
+//   bit3 0x08  core /1  -> 16 MHz (wins over bit0)
+//
+// mode 0 leaves the app's own divide, which makes it the 4 MHz control rather
+// than a no-op. The probe reports the clock that was APPLIED ([122]), so a
+// row can no longer be labelled with a clock the machine was not running.
+inline uint8_t BenchClkps(uint8_t mode, uint8_t baseClkps) {
+  if (mode & 0x08) return 0;              // /1
+  if (mode & 0x01) return 1;              // /2
+  return baseClkps;                       // the app's own divide
+}
+// The app's F_CPU is the core clock at baseClkps, and each step of CLKPS below
+// that doubles the real one.
+inline uint32_t BenchCoreHz(uint32_t baseHz, uint8_t baseClkps, uint8_t clkps) {
+  return clkps <= baseClkps ? (baseHz << (baseClkps - clkps))
+                            : (baseHz >> (clkps - baseClkps));
+}
+inline uint8_t BenchUbrr(uint32_t coreHz) {
+  return (uint8_t)(coreHz / 16 / 31250 - 1);   // 31250 baud, U2X off
 }
 
 // Returns true if the command was handled here.
