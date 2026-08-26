@@ -481,6 +481,19 @@ static int SelfTest() {
   CHECK(sim::g_sh[0] == 17, "lowest-note priority holds key 0 over key 10");
   sim::g_keys = 0; RunLoops(1);
   CHECK(!GateOn() && sim::g_sh[0] == 17, "release -> gate off, CV held");
+  // The check above passes under BOTH lowest-note and first-note priority,
+  // because the key pressed first is also the lower one. claim-096 D2 is the
+  // gesture that separates them: take the HIGH key first, then add a lower.
+  // Lowest-note priority must move to the lower key and give it back on
+  // release; first-note priority never moves. This was red before the
+  // engine.h:295 fix and is the only case in the suite that could catch it.
+  sim::g_keys = 1UL << 10; RunLoops(1);
+  CHECK(sim::g_sh[0] == 27, "key 10 alone -> CV 27");
+  sim::g_keys |= 1UL << 0; RunLoops(1);
+  CHECK(sim::g_sh[0] == 17, "lower key joining takes priority (D2)");
+  sim::g_keys = 1UL << 10; RunLoops(1);
+  CHECK(sim::g_sh[0] == 27, "releasing the lower key gives it back (D2)");
+  sim::g_keys = 0; RunLoops(1);
   sim::g_octave = 1; sim::g_keys = 1UL << 0; RunLoops(1);
   CHECK(sim::g_sh[0] == 29, "octave UP -> CV 17+12");
   sim::g_octave = 0; sim::g_keys = 0; RunLoops(1);

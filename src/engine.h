@@ -292,12 +292,18 @@ class NoteEngine {
     int v = key + (int)p.octaveOffset + keyShift_ + CV_BASE;
     return (uint8_t)(v < 0 ? 0 : (v > CV_MAX ? CV_MAX : v));
   }
+  // The 101 is LOWEST-note priority unless the panel selects last-note.
+  // claim-096 D2: the old middle arm kept heldKey_ whenever it was still in
+  // the mask, which is FIRST-note priority, not lowest: hold key 10 and add
+  // key 0 and the engine never moved, where the ROM takes the lower key and
+  // gives it back on release. Only the last-note path may keep a held key.
   int8_t pickKey(uint32_t mask, const controls::Panel& p) {
     if (!mask) return -1;
+    if (!p.lastNotePriority) { heldKey_ = lowestKey(mask); return heldKey_; }
     uint32_t fresh = mask & ~prevMask_;
-    if (p.lastNotePriority && fresh)            heldKey_ = lowestKey(fresh);
-    else if (heldKey_ >= 0 && (mask & (1UL << heldKey_))) { /* keep */ }
-    else                                         heldKey_ = lowestKey(mask);
+    if (fresh)                                            heldKey_ = lowestKey(fresh);
+    else if (heldKey_ >= 0 && (mask & (1UL << heldKey_))) { /* keep the last key */ }
+    else                                                  heldKey_ = lowestKey(mask);
     return heldKey_;
   }
   void selectMode(controls::Buttons& b, uint32_t rawKeys) {
