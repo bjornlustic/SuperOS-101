@@ -264,6 +264,19 @@ void setup() {
   if (menu::PowerOnComboHeld()) menu::Enter();
   if (g_fw == FW_EMU) emu101::setup(); else superos_setup();
   Stage(2);
+#ifdef __AVR__
+  // Prime the pass timer, or the FIRST recorded pass is the whole of setup().
+  // g_passT0 is zero-initialised, so loop()'s first `micros() - g_passT0` is
+  // time-since-boot, which saturates the uint16_t and makes every first probe
+  // after a boot report a 65535 us max. Observed on the unit on each of three
+  // reflashes today. That is a third reading in the same family as the two
+  // probe-reports-itself defects, and it is the same failure to ask what the
+  // instrument costs: 65535 reads as a 65 ms hitch and there is no hitch.
+  // Skip the first pass as well as priming, because the interval from here to
+  // the top of loop() is not a pass either.
+  g_passT0 = micros();
+  g_passSkip = true;
+#endif
 }
 
 void loop() {
