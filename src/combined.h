@@ -22,18 +22,58 @@
 #pragma once
 #include <stdint.h>
 
-#define EE_EMU_MAGIC ((uint8_t*)0x100)
-#define EE_EMU_RAM   ((uint8_t*)0x101)
+// The EEPROM map. Addresses are INTEGER constants and the pointers are derived
+// from them, because a cast from a pointer to an integer is not a constant
+// expression and every static_assert below silently failed to compile as one.
+//
+// Why the asserts are here at all: A808 measured two record overlaps in one
+// instrument on 2026-08-26, one of them rewriting the first five bytes of the
+// emulator pattern store every four seconds. Silent by construction, because
+// nothing reads back what it did not write, so an overlap looks exactly like
+// data that was never saved.
+//
+// The 101 is CLEAN today and has no EEPROM-published telemetry at all: its
+// probe is live SysEx 0x3B and src/diag/ touches no EEPROM. These exist so the
+// NEXT record cannot be added without the map being checked, which is the part
+// that was missing rather than the part that was wrong.
+static const uint16_t EE_A_FW_SELECT = 0x000;
+static const uint16_t EE_A_CFG_MAGIC = 0x001;
+static const uint16_t EE_A_CFG_FLAGS = 0x002;
+static const uint16_t EE_A_CFG_DIV   = 0x003;
+static const uint16_t EE_A_CFG_CHAN  = 0x004;
+static const uint16_t EE_CFG_END     = 0x005;   // one past EE_A_CFG_CHAN
+static const uint16_t EE_CV_FIRST    = 0x010;   // cvdac.h's EE_CV_MAGIC
+static const uint16_t EE_FREE_FIRST  = 0x020;
+static const uint16_t EE_A_EMU_MAGIC = 0x100;
+static const uint16_t EE_A_EMU_RAM   = 0x101;
+// Named EE_TOTAL_BYTES, not EE_SIZE: sim/sim.cpp already has an EE_SIZE of
+// 4096 for the same quantity and the two collided on type. Same value, and the
+// collision is the sim confirming the number rather than contradicting it.
+static const uint16_t EE_TOTAL_BYTES = 0x1000;  // E2END + 1, AT90USB1286
+
+#define EE_EMU_MAGIC ((uint8_t*)EE_A_EMU_MAGIC)
+#define EE_EMU_RAM   ((uint8_t*)EE_A_EMU_RAM)
+#define EE_FW_SELECT ((uint8_t*)EE_A_FW_SELECT)
+#define EE_CFG_MAGIC ((uint8_t*)EE_A_CFG_MAGIC)
+#define EE_CFG_FLAGS ((uint8_t*)EE_A_CFG_FLAGS)
+#define EE_CFG_DIV   ((uint8_t*)EE_A_CFG_DIV)
+#define EE_CFG_CHAN  ((uint8_t*)EE_A_CFG_CHAN)
+
 static const uint8_t EE_EMU_MAGIC_VAL = 0x49;   // '8049'
 static const uint8_t EMU_RAM_FIRST    = 0x1C;   // first persisted 80C49 RAM byte
 static const uint8_t EMU_RAM_COUNT    = 0x80 - 0x1C;   // 100 bytes
+static const uint8_t EE_CFG_MAGIC_VAL = 0x4D;   // 'M'
 
-#define EE_FW_SELECT ((uint8_t*)0x000)
-#define EE_CFG_MAGIC ((uint8_t*)0x001)
-#define EE_CFG_FLAGS ((uint8_t*)0x002)
-#define EE_CFG_DIV   ((uint8_t*)0x003)
-#define EE_CFG_CHAN  ((uint8_t*)0x004)
-static const uint8_t  EE_CFG_MAGIC_VAL = 0x4D;   // 'M'
+static_assert(EE_A_CFG_CHAN + 1 == EE_CFG_END, "the CFG block moved");
+static_assert(EE_CFG_END <= EE_CV_FIRST, "the CFG block runs into the CV block");
+static_assert(EE_FREE_FIRST <= EE_A_EMU_MAGIC,
+              "the free arena runs into the emulator RAM image");
+static_assert(EE_A_EMU_RAM == EE_A_EMU_MAGIC + 1,
+              "the emulator RAM image must follow its magic byte");
+// The emulator image is the LAST record, so this is the one bound with nothing
+// after it to catch an overrun.
+static_assert(EE_A_EMU_RAM + EMU_RAM_COUNT <= EE_TOTAL_BYTES,
+              "the emulator RAM image runs past the end of EEPROM");
 
 static const uint8_t FW_SUPEROS = 0;   // also 0xFF (virgin EEPROM)
 static const uint8_t FW_EMU     = 1;

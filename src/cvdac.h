@@ -46,6 +46,8 @@
 #pragma once
 #include <Arduino.h>
 #include <avr/eeprom.h>   // settings at 0x010.. (map documented in combined.h)
+#include "combined.h"     // the EEPROM map, so the bounds below are not
+                          // dependent on some other header including it first
 
 namespace cvdac {
 
@@ -105,10 +107,19 @@ struct Settings {
 };
 
 // EEPROM map (combined.h: 0x010.. free).
-#define EE_CV_MAGIC ((uint8_t*)0x010)
-#define EE_CV_BASE  ((uint8_t*)0x011)        // CFG_LEN bytes, Pack() order
+static const uint16_t EE_A_CV_MAGIC = 0x010;
+static const uint16_t EE_A_CV_BASE  = 0x011;
+#define EE_CV_MAGIC ((uint8_t*)EE_A_CV_MAGIC)
+#define EE_CV_BASE  ((uint8_t*)EE_A_CV_BASE)        // CFG_LEN bytes, Pack() order
 static const uint8_t EE_CV_MAGIC_VAL = 0x5E;   // 0x5C/0x5D = earlier layouts (reset to defaults)
 static const uint8_t CFG_LEN = 12;
+
+// The CV block's own bound, asserted next to the constant that sets it rather
+// than in combined.h, because CFG_LEN is what moves. See the EEPROM map there.
+static_assert(EE_A_CV_MAGIC == EE_CV_FIRST,
+              "the CV magic moved out of the slot the map reserves");
+static_assert(EE_A_CV_BASE + CFG_LEN <= EE_FREE_FIRST,
+              "CFG_LEN grew and the CV block now runs into the free arena");
 
 struct State {
   Settings s;
