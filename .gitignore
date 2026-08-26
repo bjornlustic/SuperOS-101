@@ -20,3 +20,5 @@ tools/sendsyx
 # too, not only in sim/. It is a run artifact: never a tracked file.
 sim-eeprom.bin
 sim-selftest-eeprom.bin
+artifacts/g13/sign-*/
+*.wav

@@ -706,6 +706,10 @@ def cmd_selftest(args):
     return 0 if ok else 1
 
 
+def _default_run_id():
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
 def cmd_run(args):
     """The 63:39:0 sign test itself.
 
@@ -727,6 +731,8 @@ def cmd_run(args):
     a HELD note the S/H is refreshed to the same value every pass, so an
     incomplete acquisition converges to zero steady-state error.
     """
+    if not args.run_id:
+        args.run_id = _default_run_id()
     b = Bench()
     notes = args.notes or list(NOTES)
     arms = args.modes or [0, 1, 8, 4]
@@ -734,7 +740,15 @@ def cmd_run(args):
         print("mode 0 is the CONTROL and every difference is taken against it.")
         return 2
 
+    # A run id in the path, because without one this destroyed its own
+    # evidence. The path used to be keyed on cell and trigger index ONLY, so
+    # any later run silently overwrote an earlier one's captures: CORE went to
+    # re-derive a published row and found the files behind it had been replaced
+    # by my own next run, still being written while they looked. A result whose
+    # captures no longer exist rests on the author's arithmetic alone.
+    os.makedirs(args.outdir, exist_ok=True)
     print("claim-038 G13: the 63:39:0 sign test")
+    print(f"run id {args.run_id}, captures under {args.outdir}/")
     print(f"arms: {', '.join(f'{m} ({MODES.get(m, chr(63))})' for m in arms)}")
     print(f"notes: {notes}   {args.n} triggers per cell\n")
 
@@ -758,7 +772,8 @@ def cmd_run(args):
                 time.sleep(0.15)
                 b.bench_window(mode, secs_b)
                 time.sleep(0.05)
-                path = f"/tmp/g13-run-{note}-{mode}-{i}.wav"
+                path = os.path.join(args.outdir,
+                                    f"g13-run-{args.run_id}-{note}-{mode}-{i}.wav")
                 sr, sig = capture_note(b, note, path, args.secs, args.fire_at)
                 win = onset_window(sig, sr, args.head, args.win)
                 if win is None:
@@ -898,6 +913,12 @@ def build_parser():
     s.add_argument("--win", type=float, default=0.60)
     s.add_argument("--harmonic", type=int, default=16)
     s.add_argument("--gap", type=float, default=0.3)
+    s.add_argument("--outdir", default="/tmp/g13",
+                   help="where captures are written")
+    s.add_argument("--run-id", default=None,
+                   help="distinguishes this run's captures from every other "
+                        "run's; defaults to a UTC timestamp. Do NOT reuse one: "
+                        "a repeated id overwrites the earlier run's evidence")
     s.set_defaults(fn=cmd_run)
     return p
 
