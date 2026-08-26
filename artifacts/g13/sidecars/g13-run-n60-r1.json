@@ -1,0 +1,41 @@
+{
+ "run_id": "n60-r1",
+ "harmonic": 16,
+ "interleave": true,
+ "n": 20,
+ "notes": [
+  60
+ ],
+ "modes": [
+  0,
+  1
+ ],
+ "capture": {
+  "secs": 3.0,
+  "fire_at": 1.2,
+  "head": 0.05,
+  "win": 0.6,
+  "window": 6.0,
+  "gap": 0.3
+ },
+ "cells": [
+  {
+   "note": 60,
+   "mode": 0,
+   "nh": 16,
+   "f_nom": 261.6255653005986,
+   "n": 0,
+   "freqs": [],
+   "cents": []
+  },
+  {
+   "note": 60,
+   "mode": 1,
+   "nh": 16,
+   "f_nom": 261.6255653005986,
+   "n": 0,
+   "freqs": [],
+   "cents": []
+  }
+ ]
+}

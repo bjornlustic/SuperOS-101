@@ -1,0 +1,83 @@
+claim-038: note 60 and the ratio, five screened repeats each
+instrument tools/diag/g13_sign.py {run,screen,pool}; bench 0.2 1a6010b, not reflashed
+generated 2026-08-26T18:06:38Z
+
+claim-038: per-capture estimator screen over saved captures
+reference: the NOTE's own median harmonic disagreement, not zero.
+
+note 60: 200 captures, median disagreement -4.6144 c, MAD 0.4209 c -> reject beyond 2.5253 c from the median
+  (that median is a per-note SYSTEMATIC of -4.614 c between h16 and its crosscheck. It cancels in a difference and is NOT a reason to drop captures.)
+
+run n60-r1
+  note 60 mode 0: n 0 -> 20   mean +nan -> -2.6711 c   sd nan -> 0.4066 c   (crosscheck h32)
+  note 60 mode 1: n 0 -> 20   mean +nan -> +0.0690 c   sd nan -> 0.3288 c   (crosscheck h32)
+  -> /tmp/g13cut/g13-run-n60-r1.screened.json
+
+run n60-r2
+  note 60 mode 0: n 20 -> 20   mean -3.0387 -> -3.0387 c   sd 0.5209 -> 0.5209 c   (crosscheck h32)
+  note 60 mode 1: n 20 -> 20   mean +0.1976 -> +0.1976 c   sd 0.3675 -> 0.3675 c   (crosscheck h32)
+  -> /tmp/g13cut/g13-run-n60-r2.screened.json
+
+run n60-r3
+  note 60 mode 0: n 20 -> 20   mean -2.8997 -> -2.8997 c   sd 0.5038 -> 0.5038 c   (crosscheck h32)
+  note 60 mode 1: n 20 -> 20   mean -0.0267 -> -0.0267 c   sd 0.4048 -> 0.4048 c   (crosscheck h32)
+  -> /tmp/g13cut/g13-run-n60-r3.screened.json
+
+run n60-r4
+  note 60 mode 0: n 20 -> 18   mean -2.6116 -> -2.8576 c   sd 0.8011 -> 0.3213 c   (crosscheck h32)
+    dropped trigger 6: -0.1939 c, disagreement -0.461 c, 4.154 from the note's median
+    dropped trigger 17: -0.6011 c, disagreement -1.101 c, 3.513 from the note's median
+  note 60 mode 1: n 20 -> 20   mean +0.0892 -> +0.0892 c   sd 0.4255 -> 0.4255 c   (crosscheck h32)
+  -> /tmp/g13cut/g13-run-n60-r4.screened.json
+
+run n60-r5
+  note 60 mode 0: n 20 -> 20   mean -2.6768 -> -2.6768 c   sd 0.4327 -> 0.4327 c   (crosscheck h32)
+  note 60 mode 1: n 20 -> 20   mean +0.0579 -> +0.0579 c   sd 0.3105 -> 0.3105 c   (crosscheck h32)
+  -> /tmp/g13cut/g13-run-n60-r5.screened.json
+
+
+claim-038 G13: pooled sign test, run-quality cut applied
+  run cut-r1  harmonic 16  /tmp/pooled/g13-run-cut-r1.screened.json
+  run cut-r2  harmonic 16  /tmp/pooled/g13-run-cut-r2.screened.json
+  run cut-r3  harmonic 16  /tmp/pooled/g13-run-cut-r3.screened.json
+  run cut-r4  harmonic 16  /tmp/pooled/g13-run-cut-r4.screened.json
+  run cut-r5  harmonic 16  /tmp/pooled/g13-run-cut-r5.screened.json
+  run n60-r1  harmonic 16  /tmp/pooled/g13-run-n60-r1.screened.json
+  run n60-r2  harmonic 16  /tmp/pooled/g13-run-n60-r2.screened.json
+  run n60-r3  harmonic 16  /tmp/pooled/g13-run-n60-r3.screened.json
+  run n60-r4  harmonic 16  /tmp/pooled/g13-run-n60-r4.screened.json
+  run n60-r5  harmonic 16  /tmp/pooled/g13-run-n60-r5.screened.json
+cut: reject a cell whose sd > 3x the median cell sd for its note; 3 surviving repeats required
+
+note 36 (63-cv 63): 10 cells offered
+  median cell sd 0.9262 c, reject above 3x = 2.7787 c
+  mode 1: 5 repeat(s) survive both halves
+    cut-r1   +4.2444 c   mode 0 dropped 1 of 20
+    cut-r2   +4.0642 c   mode 1 dropped 1 of 20
+    cut-r3   +3.9173 c   mode 1 dropped 2 of 20
+    cut-r4   +4.0829 c   mode 1 dropped 1 of 20
+    cut-r5   +3.8031 c   mode 0 dropped 1 of 20, mode 1 dropped 2 of 20
+  SHIFT  +4.0224 +/- 0.0754 c (between-repeat sd 0.1687 over k=5)
+  uncut, for comparison:  +4.0224 c over 5 repeats. A disagreement larger than the error above means the cut is deciding the answer.
+
+note 60 (63-cv 39): 10 cells offered
+  median cell sd 0.4057 c, reject above 3x = 1.2170 c
+  mode 1: 5 repeat(s) survive both halves
+    n60-r1   +2.7401 c
+    n60-r2   +3.2363 c
+    n60-r3   +2.8729 c
+    n60-r4   +2.9468 c   mode 0 dropped 2 of 20
+    n60-r5   +2.7347 c
+  SHIFT  +2.9062 +/- 0.0918 c (between-repeat sd 0.2054 over k=5)
+  uncut, for comparison:  +2.9062 c over 5 repeats. A disagreement larger than the error above means the cut is deciding the answer.
+
+PUBLISHABLE ROWS
+ note  63-cv  mode    shift c    +/- c   k
+   36     63     1    +4.0224   0.0754   5
+   60     39     1    +2.9062   0.0918   5
+
+  mode 1: the 63:39:0 ratio, with HONEST errors
+    63-cv 39: ratio 0.7225 +/- 0.0266 vs predicted 0.6190 -> 3.9 sigma
+  L79: a systematic that cancels in each half does NOT cancel in their
+  ratio. The per-half agreement is what hides it, so the quotient is what
+  gets quoted, never the halves.
