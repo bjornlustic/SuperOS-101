@@ -224,6 +224,8 @@ class Link:
     def open(self):
         if mido is None:
             raise RuntimeError("mido is not installed; cannot reach the 101")
+        # Lease FIRST, before a single byte and before a port is even opened.
+        _check_101_lease()
         self.inp = mido.open_input(_match(mido.get_input_names(), self.port))
         self.out = mido.open_output(_match(mido.get_output_names(), self.port))
         self.drain()
@@ -434,12 +436,116 @@ class SimLink:
 
 
 def _match(names, want):
+    """EXACT port name, never a substring and never an index.
+
+    This used to be `if want in n`, which would have selected
+    'SuperOS-101 Bootloader' or any port merely CONTAINING the name, and
+    returned whichever enumerated first. That is the defect that sent a reboot
+    to the wrong machine on 2026-08-25 and cost a recovery session. A close
+    name is NAMED below and deliberately not selected: on this host CoreMIDI
+    gives the bootloader the app's old port name, so a resembling name is
+    exactly when you are least sure what you are talking to.
+    """
     for n in names:
-        if want in n:
+        if n == want:
             return n
-    raise RuntimeError(f"no MIDI port matching {want!r} in {names}. "
+    near = [n for n in names if want.lower() in n.lower() or n.lower() in want.lower()]
+    hint = (f" {len(near)} port(s) resemble it: {', '.join(repr(n) for n in near)}."
+            " NOT selecting one: pass the exact name if you mean it." if near else "")
+    raise RuntimeError(f"no MIDI port named exactly {want!r} in {names}.{hint} "
                        "After any 0x2F/0x4D/0x4A the device re-enumerates and "
                        "CoreMIDI will not rebind: killall MIDIServer (finding 8)")
+
+
+def _midiport():
+    """CORE's tools/midiport.py (exact matching + lease check), or None.
+
+    Located relative to the RUNNER rather than hard-coded: timing/suite.py runs
+    as __main__ out of the SuperOS-USBC checkout, so its sibling tools/ is the
+    one belonging to the same tree. $SUPEROS_USBC overrides. Returning None is
+    not a failure: the caller still refuses to run against a held lease, it
+    just has to read the lease directory itself.
+    """
+    import importlib.util
+    roots = []
+    main = getattr(sys.modules.get("__main__"), "__file__", None)
+    if main:
+        roots.append(os.path.join(os.path.dirname(os.path.abspath(main)), os.pardir, "tools"))
+    if os.environ.get("SUPEROS_USBC"):
+        roots.append(os.path.join(os.environ["SUPEROS_USBC"], "tools"))
+    for r in roots:
+        p = os.path.join(r, "midiport.py")
+        if os.path.isfile(p):
+            try:
+                spec = importlib.util.spec_from_file_location("superos_midiport", p)
+                m = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(m)
+                return m
+            except Exception:                          # pragma: no cover
+                return None
+    return None
+
+
+def _lease_holder_fallback():
+    """(agent, why) for the 101, read straight from coord/leases/101.lease.
+
+    Only used when midiport.py cannot be located. Same on-disk layout it uses.
+    """
+    main = getattr(sys.modules.get("__main__"), "__file__", None)
+    roots = []
+    if main:
+        roots.append(os.path.join(os.path.dirname(os.path.abspath(main)), os.pardir, "coord", "leases"))
+    if os.environ.get("SUPEROS_USBC"):
+        roots.append(os.path.join(os.environ["SUPEROS_USBC"], "coord", "leases"))
+    for r in roots:
+        d = os.path.join(r, "101.lease")
+        if os.path.isdir(d):
+            try:
+                with open(os.path.join(d, "agent")) as f:
+                    agent = f.read().strip()
+                with open(os.path.join(d, "why")) as f:
+                    why = f.read().strip()
+                return (agent or None), why
+            except OSError:                            # pragma: no cover
+                return None, None
+    return None, None
+
+
+def _check_101_lease():
+    """Raise unless it is safe to address the 101. Fails CLOSED.
+
+    Why this is in the adapter and not left to the caller: the device transport
+    is one env var away from the sim transport, and the person flipping it is
+    normally mid-sweep and not thinking about who holds the machine. CORE's
+    words for the 303 incident were "you did not ignore the lease, you had no
+    reason to look at it". The check belongs where the port is opened.
+
+    SUPEROS_101_IGNORE_LEASE=1 overrides, and warns loudly rather than
+    silently, for the case where the holder has already agreed it.
+    """
+    ignore = os.environ.get("SUPEROS_101_IGNORE_LEASE") == "1"
+    mp = _midiport()
+    if mp is not None:
+        if mp.check_lease("101", ignore=ignore):
+            return
+        raise RuntimeError(
+            "REFUSING to open the 101: it is leased by another agent (see above). "
+            "Wait, agree it with them, or set SUPEROS_101_IGNORE_LEASE=1.")
+    holder, why = _lease_holder_fallback()
+    if holder is None:
+        return                                         # free, or no lease dir found
+    me = os.environ.get("SUPEROS_AGENT")
+    if me and holder == me:
+        return
+    msg = (f"REFUSING to open the 101: leased by {holder}. Their reason: {why}")
+    if ignore:
+        print(f"WARNING: {msg} -- proceeding because SUPEROS_101_IGNORE_LEASE=1.")
+        return
+    if not me:
+        msg += ("  You have not said who you are: set SUPEROS_AGENT=A101 so this "
+                "can tell your own lease from someone else's.")
+    raise RuntimeError(msg + "  Or set SUPEROS_101_IGNORE_LEASE=1 if you have "
+                             "already agreed it.")
 
 
 # --------------------------------------------------------------------------- #
