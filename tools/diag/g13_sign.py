@@ -213,6 +213,60 @@ def pick_harmonic(f0, rate=RATE, want=16, ceiling=0.40):
     return max(1, min(want, n))
 
 
+MIN_HARMONIC_DB = -40.0     # see harmonic_levels(); below this the partial is
+                            # noise and the estimator reads noise confidently.
+
+
+def harmonic_levels(sig, f_nom, rate=RATE, ceiling=0.40, n_cap=64):
+    """dB of every available harmonic of `f_nom`, relative to the strongest.
+
+    THIS EXISTS BECAUSE pick_harmonic() CHOOSES BY NYQUIST ALONE, and at note
+    99 that selects the weakest partial in the capture. Measured, one capture
+    each, coherent magnitude referred to the strongest available harmonic:
+
+        note 36:  h7 -14.1   h8 -19.7   h16 -25.2   h32 -37.4 dB
+        note 99:  h2  +0.0   h3 -21.6   h4 -19.0    h7 -47.6 dB
+
+    So `--harmonic 16` at note 99 clamps to h7 and reads a partial 48 dB down.
+    What that cost: within-cell sd 13x worse than h2/h4/h6, a shift that moved
+    from -4.32 c to -0.15 c with the harmonic, and a per-capture screen that
+    became an arm-asymmetric selector (33 of 100 control captures dropped
+    against 3 of 100) and manufactured +0.65 c out of an unscreened -0.05 c.
+
+    The peak is searched for in a narrow band around n*f_nom rather than read
+    at exactly n*f_nom: the machine is a few cents off nominal by construction
+    (that is the whole measurement), and at n=32 a few cents is several bins.
+    Reading at nominal understates a strong harmonic badly -- it put note 99's
+    h2 at -16.5 dB when it is the strongest thing in the capture.
+    """
+    x = np.asarray(sig, dtype=float)
+    x = x - x.mean()
+    if not np.any(x):
+        return {}
+    x = x * np.hanning(len(x))
+    t = np.arange(len(x)) / rate
+    out = {}
+    # Capped: at note 36 Nyquist allows 293 harmonics and scanning them all
+    # costs more than the capture. Nothing above n_cap is a candidate anyway,
+    # because estimate_f0_harmonic's band shrinks as 0.4/n and the tool's own
+    # docstring records h64 at note 36 returning sd 0.14 c with the mean 57 c
+    # wrong: a high harmonic is not made usable by having energy in it.
+    n_max = int((ceiling * rate) / f_nom) if f_nom > 0 else 1
+    for n in range(1, max(1, min(n_max, n_cap)) + 1):
+        f = f_nom * n
+        # +/- 30 cents, wide enough for any shift this claim measures and far
+        # narrower than the f_nom spacing between neighbouring harmonics.
+        lo, hi = f * 2 ** (-0.030 / 12), f * 2 ** (0.030 / 12)
+        grid = np.linspace(lo, hi, 41)
+        out[n] = float(np.max(_dft_mag(x, t, grid)))
+    if not out:
+        return {}
+    top = max(out.values())
+    if top <= 0:
+        return {}
+    return {n: 20.0 * np.log10(max(v, 1e-12) / top) for n, v in out.items()}
+
+
 def estimate_f0_harmonic(sig, f_nom, rate=RATE, want=16, span=0.06):
     """f0 via a harmonic, referred back to the fundamental.
 
@@ -1117,6 +1171,54 @@ def cmd_run(args):
         nh = pick_harmonic(f_nom, RATE, args.harmonic)
         print(f"note {note} ({f_nom:.2f} Hz, cv {note - CV_OF}, "
               f"63-cv = {63 - (note - CV_OF)}), via harmonic {nh}")
+
+        # REFUSE A HARMONIC THAT IS NOT THERE, rather than reading noise.
+        #
+        # One probe capture on the CONTROL arm, before the cell is spent. The
+        # instrument that produced note 99's wrong answer could not have
+        # noticed: nothing in the chain ever asked whether the partial it was
+        # measuring had any energy in it. Refusing costs one capture; not
+        # refusing cost five repeats and a wrong sign at the control point.
+        if not args.no_level_check:
+            probe = os.path.join(args.outdir,
+                                 f"g13-run-{args.run_id}-{note}-probe.wav")
+            try:
+                psr, psig = capture_note(b, note, probe, args.secs,
+                                         args.fire_at)
+                pwin = onset_window(psig, psr, args.head, args.win)
+            except Exception as e:                       # noqa: BLE001
+                print(f"  level check could not capture ({e}); NOT skipped, "
+                      f"but this note is unverified")
+                pwin = None
+            if pwin is not None:
+                lv = harmonic_levels(pwin, f_nom, rate=psr)
+                got = lv.get(nh)
+                if got is None:
+                    print(f"  REFUSING note {note}: harmonic {nh} is above "
+                          f"Nyquist in the probe capture.")
+                    continue
+                # Candidates are capped at the harmonic that was ASKED for.
+                # Recommending a higher one would walk into the band-limit
+                # failure that estimate_f0_harmonic documents (h64 at note 36:
+                # sd 0.14 c, mean 57 c wrong). Having energy is necessary, not
+                # sufficient.
+                usable = sorted((n for n, d in lv.items()
+                                 if d >= args.min_harmonic_db
+                                 and n <= args.harmonic), reverse=True)
+                print(f"  harmonic {nh} is {got:+.1f} dB relative to the "
+                      f"strongest partial; usable at or below the requested "
+                      f"{args.harmonic} and >= {args.min_harmonic_db:.0f} dB: "
+                      f"{usable[:8] if usable else 'NONE'}")
+                if got < args.min_harmonic_db:
+                    print(f"  REFUSING note {note}: harmonic {nh} is {got:+.1f} "
+                          f"dB down, below the {args.min_harmonic_db:.0f} dB "
+                          f"floor. The estimator would lock onto noise and "
+                          f"return a confident wrong answer, which is what it "
+                          f"did at note 99 before this check existed.")
+                    print(f"  Re-run this note with --harmonic "
+                          f"{usable[0] if usable else '<none available>'}.")
+                    continue
+
         if args.interleave:
             # INTERLEAVED: alternate the arms trigger by trigger, so the
             # control and the arm are seconds apart instead of minutes.
@@ -1948,6 +2050,14 @@ def build_parser():
     s.add_argument("--sd-factor", type=float, default=DEFAULT_SD_FACTOR,
                    help="reject a cell whose within-run sd exceeds this many "
                         "times the median cell sd for its note")
+    s.add_argument("--min-harmonic-db", type=float, default=MIN_HARMONIC_DB,
+                   help="refuse a note whose selected harmonic is more than "
+                        "this many dB below the strongest partial in a probe "
+                        "capture. pick_harmonic() chooses by Nyquist alone "
+                        "and at note 99 that selects a partial 48 dB down")
+    s.add_argument("--no-level-check", action="store_true",
+                   help="skip the probe capture and the harmonic level "
+                        "refusal. Use only to reproduce a pre-check result")
     s.add_argument("--min-repeats", type=int, default=DEFAULT_MIN_REPEATS,
                    help="surviving repeats required before any shift is "
                         "printed as a result")
