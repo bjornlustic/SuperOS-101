@@ -71,6 +71,13 @@ omission, when you describe coverage.
 0..63). Edit lanes: 0 = note (value is the MIDI note, 0 = rest), 3 = gate (0
 normal, 1 legato).
 
+**But SysEx cannot reach step 128 or length 128** (claim-061). `setLength` accepts
+1..128 and `MAX_STEPS` is 128, yet the length and step-index fields of `0x18` and
+`0x16` are each a single MIDI data byte: 128 sets the status bit and truncates the
+message. So the top step of the longest pattern is panel-only, and any test that
+writes 128 is sending a malformed message rather than exercising a boundary. Use
+127 as the largest reachable index. This is a protocol gap, not a dead feature.
+
 **P2 has two inversions and they are easy to get backwards.** GATE (P27) is **0**
 when the gate is ON. HOLD (P25) is **0** when its LED is LIT. KEY-TRANSPOSE (P26)
 is **1** when lit (an extra inverter, TR10). CLOCK RESET (P24) idles high and is
