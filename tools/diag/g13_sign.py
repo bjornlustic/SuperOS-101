@@ -786,10 +786,28 @@ def _one_trigger(b, note, mode, i, f_nom, args):
                   f"harmonic {h2}; REJECTED")
             return None
         dis = abs(float(cents(f, f_nom)) - float(cents(f2, f_nom)))
-        if dis > args.max_disagree:
+        # GROSS FAILURES ONLY. This guard is deliberately wide, because at run
+        # time there is no population to compare against: the first capture has
+        # no reference, so anything data-driven here is either unavailable or
+        # fitted to a handful of triggers.
+        #
+        # It was NOT wide, and that cost bench time. The first version used the
+        # same 3.0 c the host-side screen uses, which was set from note-36 data
+        # where the two harmonics agree to 0.05 c. At note 60 they sit a
+        # CONSTANT ~4.5 c apart (measured this morning: h16 and h32 differ by
+        # -5.04 c in mean while the SHIFT agrees to 0.018 c). So every note-60
+        # capture was rejected and a whole run produced nothing.
+        #
+        # The distinction the first version missed: a constant offset between
+        # two harmonics is a per-note SYSTEMATIC and cancels in a difference. A
+        # per-capture disagreement that departs from that note's usual offset is
+        # an estimator failure. Only the second is a reason to drop a capture.
+        # `screen` makes that distinction with the whole population; this
+        # cannot, so it only catches the 43 c kind.
+        if dis > args.gross_disagree:
             print(f"  trigger {i} mode {mode}: REJECTED, the estimator "
                   f"disagrees with itself by {dis:.3f} c across harmonics "
-                  f"(limit {args.max_disagree:g}). "
+                  f"(gross limit {args.gross_disagree:g}). "
                   f"{cents(f, f_nom):+.3f} c vs {cents(f2, f_nom):+.3f} c")
             return None
     return f
@@ -1614,23 +1632,69 @@ def cmd_reanalyse(args):
     return 0
 
 
-def cmd_screen(args):
-    """Rebuild sidecars from their SAVED captures, applying the per-capture
-    estimator screen. No hardware, no lease.
+def _capture_disagreements(doc, outdir, note, mode, h1, h2):
+    """Per-capture (cents at h1, disagreement vs h2) for one cell, or None."""
+    rid = doc.get("run_id")
+    f_nom = None
+    for c in doc.get("cells", []):
+        if c["note"] == note and c["mode"] == mode:
+            f_nom = c.get("f_nom") or midi_hz(note)
+    if f_nom is None:
+        return []
+    out = []
+    i = 0
+    while True:
+        wav = os.path.join(outdir, f"g13-run-{rid}-{note}-{mode}-{i}.wav")
+        if not os.path.isfile(wav):
+            break
+        sr, sig = _read_capture(wav)
+        win = onset_window(sig, sr, doc["capture"]["head"], doc["capture"]["win"])
+        if win is None:
+            out.append((i, None, None, None))
+            i += 1
+            continue
+        fa, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=h1)
+        fb, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=h2)
+        if fa is None or fb is None:
+            out.append((i, None, None, None))
+            i += 1
+            continue
+        ca, cb = float(cents(fa, f_nom)), float(cents(fb, f_nom))
+        out.append((i, ca, float(fa), ca - cb))
+        i += 1
+    return out
 
-    Why this exists rather than trusting the in-run screen: runs taken before
-    the screen existed would otherwise be screened differently from runs taken
-    after it, and those runs get compared to each other. One host-side pass
-    over every run's captures removes the asymmetry: same code, same threshold,
-    same harmonics, every run. The in-run screen keeps its job (it tells the
-    operator a capture was lost while the bench is still set up), but the
-    PUBLISHED numbers come from here.
+
+def cmd_screen(args):
+    """Screen every capture against its NOTE's own usual harmonic disagreement.
+
+    THE DISTINCTION THIS EXISTS TO MAKE, and the first version got it wrong.
+
+    Two harmonics of the same capture can disagree for two different reasons:
+
+      a CONSTANT offset for that note, which is a per-note SYSTEMATIC. It
+        cancels in a difference and is not a reason to drop anything. Measured:
+        at note 60, h16 and h32 sit 5.04 c apart in mean while the SHIFT
+        between arms agrees to 0.018 c.
+      a DEPARTURE from that note's usual offset on one capture, which is the
+        estimator failing on that capture. Measured: note 36's median
+        disagreement is 0.045 c and one capture came in at 43.109 c.
+
+    Only the second is a reason to drop a capture. The first version compared
+    the RAW disagreement to a fixed 3.0 c set from note-36 data, so at note 60
+    it rejected every capture in a run and produced nothing. It failed safe (it
+    dropped everything rather than silently keeping bad data) but it cost a run
+    and a half of bench time.
+
+    So the reference is the note's own MEDIAN disagreement and the scale is its
+    MAD, pooled across arms and repeats. Blind to the shift: a disagreement is a
+    property of one capture read two ways and does not know which arm it is in,
+    and the reference is a per-note constant rather than a per-arm one.
 
     Writes `<sidecar>.screened.json` and never overwrites the original.
     """
     import glob
     import json
-    import re
     paths = []
     for pat in args.json:
         paths.extend(sorted(glob.glob(pat)) or [pat])
@@ -1640,55 +1704,117 @@ def cmd_screen(args):
         print("no sidecars matched")
         return 2
 
-    print("claim-038: per-capture estimator screen over saved captures")
-    print(f"reject a capture whose two harmonics disagree by more than "
-          f"{args.max_disagree:g} c\n")
-    rc = 0
+    docs = []
     for sc in paths:
         with open(sc) as fh:
-            doc = json.load(fh)
-        rid = doc.get("run_id")
+            docs.append((sc, json.load(fh)))
+
+    hs = {d.get("harmonic") for _, d in docs}
+    if len(hs) > 1:
+        print(f"REFUSING: harmonics differ across runs {sorted(hs)}. Mixing "
+              f"harmonics is what produced the withdrawn 5.4 sigma.")
+        return 2
+    h1 = docs[0][1].get("harmonic", 16)
+
+    print("claim-038: per-capture estimator screen over saved captures")
+    print("reference: the NOTE's own median harmonic disagreement, not zero.\n")
+
+    # PASS 1: measure every capture, and build the per-note reference.
+    meas = {}                       # (sidecar, note, mode) -> list of tuples
+    per_note = {}                   # note -> list of disagreements
+    for sc, doc in docs:
         outdir = args.capture_dir or os.path.dirname(sc)
-        print(f"run {rid}  (captures in {outdir}/)")
-        total_drop = 0
         for cell in doc.get("cells", []):
             note, mode = cell["note"], cell["mode"]
             f_nom = cell.get("f_nom") or midi_hz(note)
-            h2 = crosscheck_harmonic(f_nom, doc.get("harmonic", 16))
+            h2 = crosscheck_harmonic(f_nom, h1)
             if h2 is None:
+                meas[(sc, note, mode)] = None
+                continue
+            rows = _capture_disagreements(doc, outdir, note, mode, h1, h2)
+            meas[(sc, note, mode)] = (rows, h2)
+            # The reference key. Per NOTE by default; per (note, arm) with
+            # --ref-per-arm.
+            #
+            # This is not a preference, it is a measured asymmetry. At note 36
+            # the disagreement distribution is WIDER on the shifted arm:
+            #
+            #   mode 0   n=100  median +0.0147  MAD 0.0471  p95 dev 0.358
+            #   mode 1   n=100  median -0.0200  MAD 0.0817  p95 dev 1.114
+            #
+            # which is what the band limit predicts: the crosscheck harmonic's
+            # search band is centred on NOMINAL pitch and is +/-0.4/n wide, so
+            # the arm whose pitch is shifted sits closer to its edge and its
+            # crosscheck reading is the less reliable of the two.
+            #
+            # The consequence is that a per-NOTE reference drops more captures
+            # from the shifted arm (6 against 2 over five runs) and moves the
+            # shift by +0.048 c, the SAME SIGN in all four clean runs. That is
+            # a signed systematic worth about half the quoted error, not noise.
+            #
+            # A per-ARM reference equalises the selection and is blind to the
+            # arm by construction; a per-NOTE one is blind to nothing but is
+            # right about which captures are actually worse. Neither is simply
+            # correct, so both are available and `pool` should be run twice.
+            key = (note, mode) if args.ref_per_arm else note
+            per_note.setdefault(key, []).extend(
+                [d for _, _, _, d in rows if d is not None])
+
+    ref = {}
+    for note, ds in per_note.items():   # `note` is the reference KEY
+        a = np.array(ds, dtype=float)
+        if len(a) < args.min_ref:
+            ref[note] = None
+            continue
+        med = float(np.median(a))
+        mad = float(np.median(np.abs(a - med)))
+        # A floor on the scale, because MAD can come back near zero on a tight
+        # population and would then reject captures that are perfectly good.
+        lim = max(args.k * mad, args.floor)
+        ref[note] = (med, mad, lim)
+        lab = (f"note {note[0]} mode {note[1]}" if isinstance(note, tuple)
+               else f"note {note}")
+        print(f"{lab}: {len(a)} captures, median disagreement "
+              f"{med:+.4f} c, MAD {mad:.4f} c -> reject beyond "
+              f"{lim:.4f} c from the median")
+        if abs(med) > 1.0:
+            print(f"  (that median is a per-note SYSTEMATIC of {med:+.3f} c "
+                  f"between h{h1} and its crosscheck. It cancels in a "
+                  f"difference and is NOT a reason to drop captures.)")
+    print()
+
+    # PASS 2: apply it.
+    rc = 0
+    for sc, doc in docs:
+        rid = doc.get("run_id")
+        print(f"run {rid}")
+        total_drop = total_seen = 0
+        for cell in doc.get("cells", []):
+            note, mode = cell["note"], cell["mode"]
+            got = meas.get((sc, note, mode))
+            if got is None:
                 print(f"  note {note} mode {mode}: screen UNAVAILABLE, every "
                       f"candidate harmonic clamps to Nyquist. UNSCREENED.")
                 cell["screened"] = False
                 continue
+            rows, h2 = got
+            r = ref.get((note, mode) if args.ref_per_arm else note)
+            if r is None:
+                print(f"  note {note} mode {mode}: fewer than {args.min_ref} "
+                      f"captures at this note, no reference. UNSCREENED.")
+                cell["screened"] = False
+                continue
+            med, mad, lim = r
             kept_c, kept_f, dropped = [], [], []
-            for i in range(len(cell.get("cents", []))):
-                wav = os.path.join(
-                    outdir, f"g13-run-{rid}-{note}-{mode}-{i}.wav")
-                if not os.path.isfile(wav):
-                    # A capture that no longer exists cannot be screened, and
-                    # keeping it would mean publishing an unscreened value
-                    # inside a screened cell. Drop it and say how many.
-                    dropped.append((i, cell["cents"][i], None))
-                    continue
-                sr, sig = _read_capture(wav)
-                win = onset_window(sig, sr, doc["capture"]["head"],
-                                   doc["capture"]["win"])
-                if win is None:
-                    dropped.append((i, cell["cents"][i], None))
-                    continue
-                fa, _ = estimate_f0_harmonic(win, f_nom, rate=sr,
-                                             want=doc.get("harmonic", 16))
-                fb, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=h2)
-                if fa is None or fb is None:
-                    dropped.append((i, cell["cents"][i], None))
-                    continue
-                ca, cb = float(cents(fa, f_nom)), float(cents(fb, f_nom))
-                dis = abs(ca - cb)
-                if dis > args.max_disagree:
-                    dropped.append((i, ca, dis))
+            for i, ca, fa, d in rows:
+                total_seen += 1
+                if d is None:
+                    dropped.append((i, ca, None))
+                elif abs(d - med) > lim:
+                    dropped.append((i, ca, d))
                 else:
                     kept_c.append(ca)
-                    kept_f.append(float(fa))
+                    kept_f.append(fa)
             before = _cell_stats(cell.get("cents", []))
             after = _cell_stats(kept_c)
             cell["cents"] = kept_c
@@ -1704,19 +1830,22 @@ def cmd_screen(args):
                   f"{after['mean']:+.4f} c   sd {before['sd']:.4f} -> "
                   f"{after['sd']:.4f} c   (crosscheck h{h2})")
             for i, c, d in dropped:
-                why = (f"disagrees by {d:.3f} c" if d is not None
+                why = (f"disagreement {d:+.3f} c, {abs(d - med):.3f} from the "
+                       f"note's median" if d is not None
                        else "no capture or no lock")
-                print(f"    dropped trigger {i}: {c:+.4f} c, {why}")
-        frac = total_drop / max(1, sum(len(c.get("cents", [])) + len(
-            c.get("dropped", [])) for c in doc["cells"]))
+                cs = f"{c:+.4f} c" if c is not None else "no estimate"
+                print(f"    dropped trigger {i}: {cs}, {why}")
+        frac = total_drop / max(1, total_seen)
         if frac > args.max_drop_frac:
             print(f"  RUN FLAGGED: the screen dropped {100 * frac:.0f} % of "
-                  f"this run's captures, over the {100 * args.max_drop_frac:.0f} "
-                  f"% limit. A screen doing that much work is not cleaning a "
-                  f"run, it is telling you the run is broken.")
+                  f"this run's captures, over the "
+                  f"{100 * args.max_drop_frac:.0f} % limit. A screen doing that "
+                  f"much work is not cleaning a run, it is telling you the run "
+                  f"is broken.")
             doc["flagged"] = True
             rc = 1
-        out = sc[:-5] + ".screened.json" if sc.endswith(".json") else sc + ".screened.json"
+        out = (sc[:-5] + ".screened.json" if sc.endswith(".json")
+               else sc + ".screened.json")
         with open(out, "w") as fh:
             json.dump(doc, fh, indent=1)
         print(f"  -> {out}\n")
@@ -1811,9 +1940,11 @@ def build_parser():
     s.add_argument("--no-crosscheck", dest="crosscheck", action="store_false",
                    help="disable the per-capture screen. Use only to "
                         "demonstrate what it was catching")
-    s.add_argument("--max-disagree", type=float, default=3.0,
-                   help="reject a capture whose two harmonics disagree by "
-                        "more than this many cents")
+    s.add_argument("--gross-disagree", type=float, default=20.0,
+                   help="in-run guard: reject a capture whose two harmonics "
+                        "disagree by more than this many cents. WIDE on "
+                        "purpose; the real screen is the host-side 'screen', "
+                        "which has a population to compare against")
     s.add_argument("--sd-factor", type=float, default=DEFAULT_SD_FACTOR,
                    help="reject a cell whose within-run sd exceeds this many "
                         "times the median cell sd for its note")
@@ -1846,7 +1977,21 @@ def build_parser():
     s = sub.add_parser("screen", help="re-screen saved runs per capture "
                                       "(no hardware)")
     s.add_argument("json", nargs="+", help="run sidecars, or globs of them")
-    s.add_argument("--max-disagree", type=float, default=3.0)
+    s.add_argument("--ref-per-arm", action="store_true",
+                   help="compute the disagreement reference per (note, arm) "
+                        "rather than per note. Equalises the selection between "
+                        "the arms, which a difference measurement wants; run "
+                        "both and compare rather than picking one")
+    s.add_argument("--k", type=float, default=6.0,
+                   help="reject a capture whose disagreement departs from its "
+                        "note's median by more than k MADs")
+    s.add_argument("--floor", type=float, default=1.0,
+                   help="floor on that limit, in cents. MAD can come back near "
+                        "zero on a tight population and would then reject "
+                        "perfectly good captures")
+    s.add_argument("--min-ref", type=int, default=20,
+                   help="captures required at a note before its reference is "
+                        "trusted; below this the note is left UNSCREENED")
     s.add_argument("--capture-dir", default=None,
                    help="where the .wav files are; defaults to the sidecar's "
                         "own directory")

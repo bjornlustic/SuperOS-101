@@ -1,0 +1,27 @@
+claim-038 note 36: sensitivity of the pooled shift to the screen threshold
+instrument tools/diag/g13_sign.py {screen,pool}; captures /tmp/g13cut, 200 files
+generated 2026-08-26T17:59:03Z
+
+for fl in 0.3 0.5 1.0 2.0 3.0 20.0; do
+  cp g13-run-cut-r?.json /tmp/sn-... ; screen --floor $fl ; pool
+done
+
+floor 0.3 c: drops 14    SHIFT  +4.0189 +/- 0.0735 c (between-repeat sd 0.1644, k=5)
+floor 0.5 c: drops 13    SHIFT  +4.0257 +/- 0.0741 c (between-repeat sd 0.1657, k=5)
+floor 1.0 c: drops  8    SHIFT  +4.0224 +/- 0.0754 c (between-repeat sd 0.1687, k=5)   <- default
+floor 2.0 c: drops  4    SHIFT  +4.0083 +/- 0.0818 c (between-repeat sd 0.1830, k=5)
+floor 3.0 c: drops  1    SHIFT  +3.9838 +/- 0.0850 c (between-repeat sd 0.1901, k=5)
+floor 20.0 c: drops 1    SHIFT  +3.9838 +/- 0.0850 c (between-repeat sd 0.1901, k=5)
+
+The shift spans 0.042 c across a 67x range of threshold, against a quoted
+error of 0.075 c. The screen's threshold does not decide the answer.
+
+The per-arm disagreement distributions at note 36, which is why the screen
+is NOT arm-blind:
+  mode 0   n=100  median +0.0147 c  MAD 0.0471 c  p95 dev 0.358 c  max dev 43.124 c
+  mode 1   n=100  median -0.0200 c  MAD 0.0817 c  p95 dev 1.114 c  max dev  2.767 c
+
+--ref-per-arm gives IDENTICAL drops at the default floor, because 6*MAD is
+0.28 c and 0.49 c, both under the 1.0 c floor, so the floor binds. The
+asymmetry is not the reference choice: mode 1 genuinely produces more
+large-deviation captures, which is what the band limit predicts.
