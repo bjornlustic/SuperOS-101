@@ -1,0 +1,72 @@
+claim-038: note 60 re-taken to ten repeats, and the law is NOT smooth in cv
+instrument tools/diag/g13_sign.py {run,screen,pool}; SSL ch6 (CH_101 = 2);
+bench unit 0.2 1a6010b, NOT reflashed. All ten repeats one recipe, h16.
+
+FOUR ROWS, note 60 now k=9 (the flagged r10 excluded by the screen's own 10% rule)
+  note  63-cv    shift     total err   k
+    36     63   +4.0224    0.1439    5
+    60     39   +2.8837    0.0630    9
+    72     27   +1.7122    0.0374    5
+    99      0   +0.5988    0.0073    5
+
+PROPORTIONAL: chi2 6724.1 on 3 dof   residuals n36 -1.5sd  n60 +4.2sd  n72 -2.7sd  n99 +81.8sd
+AFFINE: chi2 71.5 on 2 dof   residuals n36 +2.1sd  n60 +5.6sd  n72 -6.0sd  n99 +0.4sd
+QUADRATIC: chi2 41.7 on 1 dof   residuals n36 -2.4sd  n60 +5.2sd  n72 -3.0sd  n99 +0.1sd
+
+=== THE QUESTION THIS RUN WAS TAKEN TO ANSWER ===
+
+The previous commit named two readings of note 60 being high in every fit, and
+said five more repeats would discriminate:
+
+  (a) one bad repeat -> the pooled row falls toward +2.82 and the fits improve
+  (b) the law is not smooth in cv -> it holds near +2.91 and the next job is a
+      cv sweep rather than a law
+
+**IT IS (b).** Note 60 over nine repeats is +2.8837 +/- 0.0593, which moves the
+row by 0.023 c, well inside its own error. **Every fit got WORSE, not better**,
+because the error bar tightened while the residual did not move: note 60 is
++4.2 to +5.6 sd high depending on the law, and note 72 is 2.7 to 6.0 sd low.
+
+  before (note 60 k=5):  proportional 6714/3   affine 52.6/2   quadratic 25.3/1
+  after  (note 60 k=9):  proportional 6724/3   affine 71.5/2   quadratic 41.7/1
+
+**n60-r2 is NOT the explanation.** It is 4.0 sd from its siblings, nothing
+flags it, it was kept, and with nine repeats it is no longer able to carry the
+residual on its own.
+
+**No session-drift artefact either.** The two blocks were taken hours apart:
+r1-r5 mean +2.9062 (sd 0.2054), r6-r10 mean +2.7791 (sd 0.2214). They differ by
+0.127 c, inside their own spread.
+
+=== WHAT THE NEXT MEASUREMENT IS ===
+
+A cv SWEEP, not another law. If the shift is code-dependent rather than a
+smooth function of cv, the object to measure is the per-code deviation, and a
+6-bit DAC has only 64 codes. The four notes measured are cv 0, 24, 36 and 63.
+Neighbouring codes are the discriminator: if cv 23 and cv 25 bracket cv 24's
+high reading, the effect is local to the code and the answer is differential
+nonlinearity. If they follow it, it is a smooth feature this sampling is too
+coarse to see.
+
+That is a G13 result rather than a defeat: "the rail shift read through this
+DAC is not a smooth function of the code" is a statement a hardware model has
+to reproduce, and it is stronger than a fitted slope.
+
+=== A DEFECT IN MY OWN POOL, FOUND BY THIS RUN ===
+
+`screen` sets `flagged` on a run that loses more than --max-drop-frac of its
+captures and prints "a screen doing that much work is not cleaning a run, it is
+telling you the run is broken". **`pool` was ignoring the field**, which made
+that sentence decorative.
+
+n60-r10 dropped 35 % and was the lowest of the ten (+2.4732). Pooling it moved
+the published row by 0.041 c, comparable to its own error bar, on the authority
+of a run the instrument had already called broken. Now excluded by default,
+`--pool-flagged` to override, both directions break-tested:
+
+    default:        EXCLUDING run n60-r10 ... +2.8837 +/- 0.0593 c  k=9
+    --pool-flagged: +2.8426 +/- 0.0671 c  k=10
+
+**This is a PRE-EXISTING criterion applied, not a new one invented to remove an
+inconvenient point, and the difference is the whole of my defence: n60-r2 is
+4.0 sd from its siblings and is KEPT, because nothing flags it.**

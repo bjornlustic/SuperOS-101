@@ -1038,14 +1038,36 @@ def pool_shifts(cells, factor=DEFAULT_SD_FACTOR,
     return table
 
 
-def _cells_from_json(paths, out=print):
+def _cells_from_json(paths, out=print, pool_flagged=False):
     """Load run sidecars into the flat cell list pool_shifts() wants."""
     import json
     cells, meta = [], []
     for p in paths:
         with open(p) as fh:
             d = json.load(fh)
+        if pool_flagged:
+            d = dict(d, flagged=False)
         meta.append((d.get("run_id"), d.get("harmonic"), p))
+
+        # A RUN THE SCREEN FLAGGED IS EXCLUDED, and pool used to ignore the
+        # field entirely. `screen` sets doc["flagged"] when it drops more than
+        # --max-drop-frac of a run's captures and prints "a screen doing that
+        # much work is not cleaning a run, it is telling you the run is
+        # broken". Pooling it anyway makes that sentence decorative.
+        #
+        # Found on note 60: n60-r10 dropped 35 % and was the lowest of ten
+        # repeats (+2.4732 against a k=9 mean of +2.8837). Including it moved
+        # the published row by 0.041 c, comparable to its own error bar, on the
+        # authority of a run the instrument had already called broken.
+        #
+        # This is a PRE-EXISTING criterion applied, not a new one invented to
+        # remove an inconvenient point. The distinction matters here: n60-r2 is
+        # 4.0 sd from its siblings and is KEPT, because nothing flags it.
+        if d.get("flagged"):
+            out(f"  EXCLUDING run {d.get('run_id')}: the screen FLAGGED it "
+                f"(it dropped more than the allowed fraction of its captures). "
+                f"Re-take it rather than pooling it. --pool-flagged overrides.")
+            continue
         for c in d.get("cells", []):
             cs = c.get("cents", [])
             cells.append({"run_id": d.get("run_id"), "note": c["note"],
@@ -1075,7 +1097,8 @@ def cmd_pool(args):
     if not paths:
         print("no run sidecars given")
         return 2
-    cells, meta = _cells_from_json(paths)
+    cells, meta = _cells_from_json(paths,
+                                   pool_flagged=getattr(args, "pool_flagged", False))
     if cells is None:
         return 2
     print("claim-038 G13: pooled sign test, run-quality cut applied")
@@ -2080,6 +2103,12 @@ def build_parser():
                    help="run sidecars, or globs of them")
     s.add_argument("--sd-factor", type=float, default=DEFAULT_SD_FACTOR)
     s.add_argument("--min-repeats", type=int, default=DEFAULT_MIN_REPEATS)
+    s.add_argument("--pool-flagged", action="store_true",
+                   help="pool runs the screen FLAGGED as broken. Off by "
+                        "default: a run that lost more than --max-drop-frac "
+                        "of its captures has already been called broken by the "
+                        "instrument, and pooling it anyway makes that verdict "
+                        "decorative. Use only to show what it was excluding")
     s.set_defaults(fn=cmd_pool)
 
     s = sub.add_parser("reanalyse", help="re-read SAVED captures at several "

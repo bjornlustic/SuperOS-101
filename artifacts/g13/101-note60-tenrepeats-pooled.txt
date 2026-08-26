@@ -1,0 +1,32 @@
+  EXCLUDING run n60-r10: the screen FLAGGED it (it dropped more than the allowed fraction of its captures). Re-take it rather than pooling it. --pool-flagged overrides.
+claim-038 G13: pooled sign test, run-quality cut applied
+  run n60-r1  harmonic 16  /tmp/g13cut/g13-run-n60-r1.screened.json
+  run n60-r10  harmonic 16  /tmp/g13cut/g13-run-n60-r10.screened.json
+  run n60-r2  harmonic 16  /tmp/g13cut/g13-run-n60-r2.screened.json
+  run n60-r3  harmonic 16  /tmp/g13cut/g13-run-n60-r3.screened.json
+  run n60-r4  harmonic 16  /tmp/g13cut/g13-run-n60-r4.screened.json
+  run n60-r5  harmonic 16  /tmp/g13cut/g13-run-n60-r5.screened.json
+  run n60-r6  harmonic 16  /tmp/g13cut/g13-run-n60-r6.screened.json
+  run n60-r7  harmonic 16  /tmp/g13cut/g13-run-n60-r7.screened.json
+  run n60-r8  harmonic 16  /tmp/g13cut/g13-run-n60-r8.screened.json
+  run n60-r9  harmonic 16  /tmp/g13cut/g13-run-n60-r9.screened.json
+cut: reject a cell whose sd > 3x the median cell sd for its note; 3 surviving repeats required
+
+note 60 (63-cv 39): 18 cells offered
+  median cell sd 0.4057 c, reject above 3x = 1.2170 c
+  mode 1: 9 repeat(s) survive both halves
+    n60-r1   +2.7401 c
+    n60-r2   +3.2363 c
+    n60-r3   +2.8729 c
+    n60-r4   +2.9468 c   mode 0 dropped 2 of 20
+    n60-r5   +2.7347 c
+    n60-r6   +2.9960 c
+    n60-r7   +2.9465 c
+    n60-r8   +2.6296 c   mode 1 dropped 1 of 20
+    n60-r9   +2.8502 c
+  SHIFT  +2.8837 +/- 0.0593 c (between-repeat sd 0.1780 over k=9)
+  uncut, for comparison:  +2.8837 c over 9 repeats. A disagreement larger than the error above means the cut is deciding the answer.
+
+PUBLISHABLE ROWS
+ note  63-cv  mode    shift c    +/- c   k
+   60     39     1    +2.8837   0.0593   9
