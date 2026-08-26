@@ -804,8 +804,23 @@ class Adapter:
     #
     # Only READS retry. A write must not: 0x2E RANDOMIZE re-sent is a different
     # draw, and a retried edit is a second edit.
-    def _request(self, body, opcode, what, tries=4):
+    def _request(self, body, opcode, what, tries=6):
+        # Back OFF between attempts instead of re-asking immediately.
+        #
+        # The loss is not load-related, which I established by predicting the
+        # opposite and being wrong: 100 back-to-back 0x16 writes each awaiting
+        # its own ack lost 0/100 with no pacing (3 ms a round trip), and 2/100
+        # with a 5 ms or 20 ms gap. Flat out is the BEST arm. So there is no
+        # queue to drain and no point re-asking faster.
+        #
+        # What actually kills a run is a BURST: a second suite run died in
+        # setup on four consecutive losses, which at a ~2 % background rate is
+        # about one in ten million if the drops were independent. They are not.
+        # Four rapid retries inside 8 s all land inside the same outage, so the
+        # fix is to spread them: 0, 0.2, 0.6, 1.4, 3.0 s.
         for attempt in range(tries):
+            if attempt:
+                time.sleep(0.2 * (2 ** attempt - 1))
             self.link.drain()
             self.link.send(body)
             d = self.link.recv(opcode)
@@ -813,7 +828,7 @@ class Adapter:
                 if attempt:
                     print(f"    (retried {what} {attempt}x)")
                 return d
-        raise RuntimeError(f"no {what} after {tries} tries")
+        raise RuntimeError(f"no {what} after {tries} tries with backoff")
 
     def _read_pattern(self, p):
         d = self._request((0x10, p), 0x11, f"0x11 dump for pattern {p}")
@@ -855,8 +870,10 @@ class Adapter:
         pass the flag; the failure it prevents is a corrupted expectation that
         looks like a firmware bug, which is the shape of claim-031.
         """
-        tries = 4 if idempotent else 1
+        tries = 6 if idempotent else 1
         for attempt in range(tries):
+            if attempt:
+                time.sleep(0.2 * (2 ** attempt - 1))   # see _request: bursts, not load
             self.link.drain()
             self.link.send(body)
             d = self.link.recv(0x14)
@@ -900,21 +917,92 @@ class Adapter:
             raise _skip(f"length {n} needs {ticks} ticks = {budget:.1f} s on "
                         f"the {self.link.kind} transport; run it in the focused "
                         "suite, not the sweep")
+        ch.uses("time")
+        attempts = []
+        for _ in range(3):
+            positions = self._wrap_window(ticks)
+            attempts.append(self._playhead_faults(positions, n))
+            if attempts[-1] is None:            # a clean window settles it
+                return
+        # Every window had an anomaly. Whether that is the MACHINE or the
+        # TRANSPORT is decided by whether it lands in the same place each time.
+        if len(set(attempts)) == 1:
+            raise _fail(f"playhead: {attempts[0]} (identical in 3 windows, so "
+                        "it is the sequencer and not a dropped report)")
+        raise _skip(
+            "playhead anchors incomplete on the "
+            f"{self.link.kind} transport, and the anomaly MOVES between "
+            f"windows, so it is dropped 0x15 reports rather than the "
+            f"sequencer: " + " | ".join(str(a) for a in attempts))
+
+    def _wrap_window(self, ticks):
+        """Clock the sequencer for `ticks` and return the playhead positions."""
         self.link.drain()
         self.link.transport("start")                    # 0xFA: see _park_head
         self.link.send((0x1E, 1))
-        # `ticks` is computed above with the budget: enough for at least two
-        # wraps, so there are two anchors to take an interval between, and
-        # scaled by the divider because ticks are not steps.
+        # `ticks` is computed by the caller with the budget: enough for at least
+        # two wraps, and scaled by the divider because ticks are not steps.
         self.link.clock(ticks)
         seen = self.link.collect(0x15, 0.2)
         self.link.send((0x1E, 0))
         self.link.transport("stop")
-        anchors = [i for i, m in enumerate(seen) if len(m) > 1 and m[1] == 0]
-        if len(anchors) < 2:
-            raise _fail(f"saw {len(anchors)} playhead wrap(s) in "
-                        f"{len(seen)} step reports over {ticks} ticks")
-        ch.anchors_exact(anchors, n, what="playhead wrap")
+        return [m[1] for m in seen if len(m) > 1]
+
+    @staticmethod
+    def _playhead_faults(positions, n):
+        """None if the playhead ran cleanly, else a one-line description.
+
+        **Read the step index out of the message instead of counting messages.**
+        `0x15` is `{current_pattern, position}` (main.cpp SendStep), so every
+        report says which step it was, and the old check threw that away: it
+        took the LIST POSITIONS of the reports whose step was 0 and required
+        them `n` apart. One dropped report then shifts every later index by one
+        and the interval reads `n - 1`, while a dropped WRAP report merges two
+        intervals and reads about `2n`. That is exactly the two shapes the first
+        device run produced (`#0=15` against 16, and `#0=7` against 4).
+
+        On the step index the test is strictly STRONGER, not looser: every
+        adjacent delta must be +1 mod n, which fails an early wrap, a repeated
+        step and a skipped step, and makes a dropped report visible as a delta
+        of 2 rather than as a silent re-indexing of everything after it.
+
+        What it still cannot do from ONE window is tell a dropped report from a
+        genuinely skipped step: both are a +2. That is why the caller repeats
+        the window. A transport drop is random and moves; a sequencer fault is
+        systematic and repeats in the same place. Same discriminator as
+        claim-087's A/B, and the reason this is not a widened tolerance: a real
+        fault still goes red, in 3 windows out of 3.
+        """
+        if len(positions) < 2 * n:
+            return (f"only {len(positions)} step reports, need {2 * n} for two "
+                    f"full laps of a {n}-step pattern")
+        # `1 % n`, not `1`. A ONE-step pattern advances 0 -> 0 -> 0, so its
+        # correct delta is 0, and requiring 1 reds every length=1 case with
+        # "#0 0->0" while calling it a sequencer fault. It did exactly that on
+        # the first device run of this check: 5 failures, all length=1, all
+        # reproducing in 3 of 3 windows, because a wrong MODEL is as systematic
+        # as a wrong machine and the repeat discriminator cannot tell them
+        # apart. My unit test used n=16 and never tried the degenerate length.
+        step = 1 % n
+        # Range first, because mod-n arithmetic HIDES an out-of-range playhead:
+        # on a 1-step pattern every delta is 0 mod 1, so a report of step 1 read
+        # as clean until this line existed. That is claim-051's shape (a
+        # position outside the pattern) and it is worth its own check on every
+        # length, not just the degenerate one.
+        out = [f"#{i} step {p} outside 0..{n - 1}"
+               for i, p in enumerate(positions) if not 0 <= p < n]
+        if out:
+            return f"{len(out)} out-of-range playhead report(s): " + ", ".join(out[:4])
+        bad = []
+        for i, (a, b) in enumerate(zip(positions, positions[1:])):
+            if (b - a) % n != step:
+                bad.append(f"#{i} {a}->{b}")
+        if bad:
+            return (f"{len(bad)} non-consecutive step(s) in {len(positions)} "
+                    f"reports over a {n}-step pattern: " + ", ".join(bad[:4]))
+        if 0 not in positions:
+            return f"no wrap to step 0 in {len(positions)} reports"
+        return None
 
     def expect_red(self, case):
         return ""
@@ -1027,7 +1115,7 @@ class Adapter:
             ad._ack(0x18, SLOT, 24)
             ad._ack(0x16, SLOT, 0, 11, 60)
             time.sleep(1.2)                              # the 500 ms flush gate
-            probe = ad._probe()
+            probe = ad._probe(want=125)
             ch.uses("state")
             if probe is not None and len(probe) > 124 and not (probe[124] & 0x04):
                 raise _fail("store reports not mounted, so any 'it persisted' "
@@ -1065,12 +1153,21 @@ class Adapter:
                             "fail here and its passing would be an artifact of "
                             "the host build. Run with "
                             "SUPEROS_101_TRANSPORT=device.")
-            probe = ad._probe()
+            probe = ad._probe(want=125)
             ch.uses("state")
-            if probe is None or len(probe) < 125:
-                raise _fail("probe reply is shorter than 125 bytes: this unit "
-                            "is running an image older than the store-health "
-                            "word, so persistence cannot be observed")
+            if probe is None:
+                raise _fail("no 0x3C probe reply in 6 tries with backoff")
+            if len(probe) < 125:
+                # NOT "this unit is running an old image", which is what this
+                # said and it was wrong: the unit publishes 127 and one dropped
+                # 257-byte reply decoded to 97. Say what was observed and let
+                # the two explanations stay separate, because 0x34 -> 0x35
+                # settles which one it is and this test cannot.
+                raise _fail(f"probe decoded to {len(probe)} bytes, need 125 for "
+                            "the store-health word, after 6 tries with backoff. "
+                            "Either the image predates that word or the reply "
+                            "was truncated: check 0x34 -> 0x35 before believing "
+                            "the first.")
             if not probe[124] & 0x01:
                 raise _fail("the bootloader's SPM service did not answer")
             if not probe[124] & 0x04:
@@ -1086,7 +1183,37 @@ class Adapter:
         yield "store health reported and live", store_health, ""
         yield "length+step survive a reboot", length_survives_reboot, ""
 
-    def _probe(self):
+    def _probe(self, want=0):
+        """Read the 0x3B -> 0x3C probe, retrying a SHORT reply, not just a lost one.
+
+        `want` is the raw length the caller needs. A truncated reply is not a
+        short machine: the store-health test read one 97-byte decode on a unit
+        running a 127-byte probe and reported "this unit is running an image
+        older than the store-health word", which is a firmware conclusion drawn
+        from a dropped message. That is the same mistake as reading a machine
+        hitch off the probe's own reply cost (claim-087), pointed the other way.
+
+        The 101's probe is 257 bytes on the wire, by far the longest reply it
+        sends, so it is the message most exposed to the transport's ~2 %.
+        """
+        best = None
+        for attempt in range(6):
+            if attempt:
+                time.sleep(0.2 * (2 ** attempt - 1))
+            self.link.drain()
+            self.link.send((0x3B,))
+            d = self.link.recv(0x3C, timeout=3.0)
+            if d is not None:
+                raw = [(d[i] << 4) | d[i + 1] for i in range(0, len(d) - 1, 2)]
+                if best is None or len(raw) > len(best):
+                    best = raw
+                if len(raw) >= want:
+                    if attempt:
+                        print(f"    (retried probe {attempt}x for >={want} bytes)")
+                    return raw
+        return best
+
+    def _probe_raw(self):
         self.link.drain()
         self.link.send((0x3B,))
         d = self.link.recv(0x3C, timeout=3.0)
