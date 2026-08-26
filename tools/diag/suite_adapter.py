@@ -219,6 +219,99 @@ class Link:
             time.sleep(0.002)
         return seen
 
+    def clock(self, n, per=0.004):
+        """n MIDI clock bytes. Real time on the wire, because that is what the
+        device's own divider sees."""
+        for _ in range(n):
+            self.out.send(mido.Message("clock"))
+            time.sleep(per)
+
+
+class SimLink:
+    """The same conversation, against sim/superos101-sim instead of hardware.
+
+    Why this exists: the G12 sweep gates G8/G9 for this machine, and the 101's
+    hardware lease is shared with three other agents and CORE's audio captures,
+    so a suite that can ONLY run on the bench is a suite that runs rarely. The
+    sim links the REAL firmware (src/main.cpp, src/engine.h, the actual 80C49
+    emulator), so a sweep through here exercises the true OnSysex dispatch and
+    the true edit ops, not a stand-in for them.
+
+    What it CANNOT show, said plainly because a green run here is easy to
+    over-read: anything electrical, anything about the device's real timing,
+    and anything about the flash part. `sim_flash_program` is a host file, and
+    `ServicePresent()` is a constant true. So a sim sweep is necessary and NOT
+    sufficient, and the adapter reports which transport produced a run.
+    """
+
+    def __init__(self, exe=None):
+        self.exe = exe or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "..", "sim", "superos101-sim")
+        self.p = None
+        self._pending = []
+
+    def open(self):
+        import subprocess
+        if not os.path.exists(self.exe):
+            raise RuntimeError(f"no sim binary at {self.exe}; run `make` in sim/")
+        self.p = subprocess.Popen([self.exe], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True, bufsize=1)
+        self._until_ok(greeting=True)
+
+    def close(self):
+        if self.p is not None:
+            try:
+                self.p.stdin.write("quit\n"); self.p.stdin.flush()
+                self.p.wait(timeout=5)
+            except Exception:
+                self.p.kill()
+            self.p = None
+
+    def _until_ok(self, greeting=False):
+        """Read sim output up to the next [ok], collecting `<- ` SysEx lines."""
+        got = []
+        while True:
+            line = self.p.stdout.readline()
+            if not line:
+                raise RuntimeError("the sim exited unexpectedly")
+            line = line.rstrip("\n")
+            if line.startswith("<-"):
+                got.append([int(b, 16) for b in line[2:].split()])
+            elif line == "[ok]":
+                return got
+            elif greeting and line.startswith("SuperOS-101 sim"):
+                # The banner has no [ok]; one prompt-free settle is enough.
+                return got
+
+    def drain(self):
+        self._pending = []
+
+    def send(self, body):
+        hexs = " ".join(f"{b:02X}" for b in body)
+        self.p.stdin.write(f"syx {hexs}\n"); self.p.stdin.flush()
+        self._pending.extend(self._until_ok())
+
+    def recv(self, opcode, timeout=2.0):
+        for i, m in enumerate(self._pending):
+            if len(m) >= 2 and m[0] == MFR and m[1] == opcode:
+                return self._pending.pop(i)[2:]
+        return None
+
+    def collect(self, opcode, seconds=0.0):
+        out = [m[2:] for m in self._pending
+               if len(m) >= 2 and m[0] == MFR and m[1] == opcode]
+        self._pending = [m for m in self._pending
+                         if not (len(m) >= 2 and m[0] == MFR and m[1] == opcode)]
+        return out
+
+    def clock(self, n, per=0.0):
+        # One clock byte per loop pass, which is what the sim's own `midi clock`
+        # does; no wall-clock delay, so a 128-step sweep is seconds not minutes.
+        self.p.stdin.write(f"midi clock {n}\n"); self.p.stdin.flush()
+        self.p.stdin.write("runq 2\n"); self.p.stdin.flush()
+        self._pending.extend(self._until_ok())
+
 
 def _match(names, want):
     for n in names:
@@ -252,12 +345,20 @@ class Adapter:
         to find those. 3 lengths x 3 heads x 2 legato x 5 edits = 90 cases,
         comfortably under the runner's 240 cross-product cap.
 
-        length carries both boundaries the 101 actually has: 1 is the minimum
-        setLength accepts and the case where every step IS the wrap, and 128 is
-        MAX_STEPS.
+        length carries both boundaries REACHABLE OVER SYSEX: 1 is the minimum
+        setLength accepts and the case where every step IS the wrap, and 127 is
+        the largest a 7-bit SysEx data byte can carry.
+
+        NOT 128, and this is a real protocol limit rather than a choice:
+        engine.h MAX_STEPS is 128 and setLength accepts 1..128, but 0x18's
+        length byte is one MIDI data byte, so 128 sets the status bit and
+        terminates the message. The top step of this machine's longest pattern
+        is unreachable over SysEx, and so is any step index above 127. Logged
+        as claim-043; the panel can still reach it, so it is a protocol gap and
+        not a dead feature.
         """
         return dict(
-            length=[1, 16, 128],
+            length=[1, 16, 127],
             head=["start", "mid", "wrap"],
             legato=["off", "on"],
             edit=["setstep", "setrest", "setlen", "randomize", "select"],
@@ -307,11 +408,9 @@ class Adapter:
         want = {"start": 0, "mid": n // 2, "wrap": n - 1}[case["head"]]
         self.link.send((0x1E, 1))                       # setPlaying: see above
         self.link.drain()
-        for _ in range(want):
-            self.link.out.send(mido.Message("clock"))
-            time.sleep(0.004)
-        time.sleep(0.05)
+        self.link.clock(want)
         self.link.send((0x1E, 0))
+        self.link.drain()
         self._head = want
 
     def edit(self, case):
@@ -431,9 +530,7 @@ class Adapter:
         self.link.drain()
         self.link.send((0x1E, 1))
         ticks = 4 * n + 2
-        for _ in range(ticks):
-            self.link.out.send(mido.Message("clock"))
-            time.sleep(0.004)
+        self.link.clock(ticks)
         seen = self.link.collect(0x15, 0.2)
         self.link.send((0x1E, 0))
         anchors = [i for i, m in enumerate(seen) if len(m) > 1 and m[1] == 0]
@@ -473,7 +570,10 @@ class Adapter:
             case = dict(length=16, head="start", legato="off", edit="randomize")
             ad.setup(case)
             ad._ack(0x15, SLOT, 0, 64, 0x39, 0x60)
-            ch.state_equals(ad.model(case)["steps"], ad._read_pattern(SLOT)[1],
+            # state_equals diffs DICTS field by field, so the comparison has to
+            # be handed named fields, not bare lists.
+            ch.state_equals({"steps": ad.model(case)["steps"]},
+                            {"steps": ad._read_pattern(SLOT)[1]},
                             what="seeded randomize")
 
         def randomize_density_bounds(ad, ch):
@@ -508,10 +608,15 @@ class Adapter:
             case = dict(length=16, head="start", legato="off", edit="setstep")
             ad.setup(case)
             ch.uses("state")
+            # Every value here has to fit in 7 bits or it is not a SysEx data
+            # byte at all: it would set the status bit and truncate the
+            # message, which is a malformed send rather than a refused edit.
+            # That is why there is no "length past MAX_STEPS" case (129 is
+            # unsendable) and why the step case uses 127, which is a legal byte
+            # and still past a length-16 pattern.
             for body, why in (((0x16, NUM_PATTERNS, 0, 0, 60), "pattern past NUM_PATTERNS"),
-                              ((0x16, SLOT, 0, 200, 60), "step past the length"),
-                              ((0x18, SLOT, 0), "length 0"),
-                              ((0x18, SLOT, MAX_STEPS + 1), "length past MAX_STEPS")):
+                              ((0x16, SLOT, 0, 127, 60), "step past the length"),
+                              ((0x18, SLOT, 0), "length 0")):
                 if ad._ack(*body) != 2:
                     raise _fail(f"{why} was not refused with ack 2")
 
@@ -585,8 +690,11 @@ class Adapter:
         d = self.link.recv(0x3C, timeout=3.0)
         if d is None:
             return None
-        nib = d[1:]
-        return [(nib[i] << 4) | nib[i + 1] for i in range(0, len(nib) - 1, 2)]
+        # recv() already strips the manufacturer byte AND the opcode, so `d` is
+        # the nibble stream itself. Taking d[1:] here dropped the first nibble
+        # and shifted every decoded byte by half a byte, which showed up as a
+        # short reply rather than as wrong values.
+        return [(d[i] << 4) | d[i + 1] for i in range(0, len(d) - 1, 2)]
 
 
 def _fail(msg):
@@ -595,7 +703,27 @@ def _fail(msg):
 
 
 def make_adapter():
-    return Adapter()
+    """Transport chosen by SUPEROS_101_TRANSPORT: `sim` (default when the
+    device is not enumerated) or `device`.
+
+    Defaulting to the sim when the hardware is absent is deliberate and is NOT
+    the runner's "a missing suite is never a pass" rule being dodged: a sim run
+    still exercises the real firmware and still fails loudly. What it must not
+    do is be MISTAKEN for a device run, so the adapter's machine label carries
+    the transport and every report says which one produced it.
+    """
+    want = os.environ.get("SUPEROS_101_TRANSPORT", "").lower()
+    if want == "device":
+        return Adapter(link=Link())
+    if want == "sim":
+        return Adapter(link=SimLink())
+    if mido is not None:
+        try:
+            if any(PORT in n for n in mido.get_input_names()):
+                return Adapter(link=Link())
+        except Exception:
+            pass
+    return Adapter(link=SimLink())
 
 
 if __name__ == "__main__":

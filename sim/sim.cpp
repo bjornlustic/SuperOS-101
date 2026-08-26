@@ -239,6 +239,29 @@ static int ButtonBit(const std::string& name) {
   return -1;
 }
 
+// Print every complete SysEx message sitting in the TX capture as one
+// `<- xx xx ...` line of hex, F0/F7 stripped, then CLEAR the capture. Anything
+// that is not SysEx (note echoes, clock) is skipped: the callers here are
+// asking about the protocol.
+//
+// Draining here rather than clearing before each command is deliberate. The
+// 101 emits UNSOLICITED 0x15 step-position messages while the sequencer runs,
+// so a reader that cleared first would throw away exactly the playhead reports
+// the time channel is built on.
+static void PrintSysexOut() {
+  std::string line;
+  bool in = false;
+  for (uint8_t b : g_midiOut) {
+    if (b == 0xF0) { in = true; line = "<-"; continue; }
+    if (b == 0xF7) {
+      if (in && !line.empty()) puts(line.c_str());
+      in = false; continue;
+    }
+    if (in) { char buf[8]; snprintf(buf, sizeof(buf), " %02X", b); line += buf; }
+  }
+  g_midiOut.clear();
+}
+
 static void Help() {
   puts("commands:");
   puts("  key <0-31> down|up          press/release a keyboard key (0 = F3)");
@@ -255,6 +278,8 @@ static void Help() {
   puts("  midi sync on|off            toggle MIDI clock sync (as the config menu does)");
   puts("  midi div <0-9>              division: 0=1/4 1=1/4d 2=1/4t 3=1/8 4=1/8d");
   puts("                              5=1/8t 6=1/16 7=1/16d 8=1/16t 9=1/32");
+  puts("  syx <hex...>                send a SysEx body (after F0 7D), print replies");
+  puts("  runq [n]                    run n passes, print any SysEx emitted");
   puts("  state                       show firmware, S/H CVs, gate, held keys");
   puts("  quit");
 }
@@ -318,6 +343,46 @@ static void Repl() {
       else if (sub == "sync")     { midiclk::SetSync(val == "on"); RunLoops(1); }
       else if (sub == "div")      { midiclk::SetDiv((uint8_t)atoi(val.c_str())); RunLoops(1); }
       else { puts("usage: midi start|stop|continue|clock [n]|sync on/off|div <0-9>"); continue; }
+    } else if (cmd == "syx") {
+      // Inject a SysEx body (hex, the bytes BETWEEN F0 7D and F7) and print
+      // every SysEx the firmware sends back, one `<- ` line per message.
+      //
+      // This is the machine-readable channel the G12 suite adapter drives when
+      // there is no hardware lease to be had (tools/diag/suite_adapter.py,
+      // SimLink). It matters because the sim links the REAL firmware, so a
+      // sweep run through here exercises src/main.cpp's actual OnSysex and
+      // src/engine.h's actual setStep/setLength/randomize, not a stand-in.
+      // What it cannot show is anything electrical or timing-related on the
+      // device, so a green sim sweep is a necessary result and not a
+      // sufficient one; the adapter says which transport produced a run.
+      std::vector<uint8_t> body;
+      std::string tok;
+      bool bad = false;
+      while (ss >> tok) {
+        char* end = nullptr;
+        long v = strtol(tok.c_str(), &end, 16);
+        if (*end || v < 0 || v > 0xFF) { bad = true; break; }
+        body.push_back((uint8_t)v);
+      }
+      if (bad || body.empty()) { puts("usage: syx <hex bytes after F0 7D>"); continue; }
+      g_midiOut.clear();
+      g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+      for (uint8_t b : body) g_midiQ.push_back(b);
+      g_midiQ.push_back(0xF7);
+      RunLoops(2);
+      PrintSysexOut();
+      puts("[ok]");
+      continue;
+    } else if (cmd == "runq") {
+      // Run loop passes and report any SysEx emitted, without sending
+      // anything. This is how the adapter collects the 101's UNSOLICITED
+      // outgoing 0x15 step-position reports, which are the playhead and so
+      // the time channel's anchors.
+      int n = 1; ss >> n;
+      RunLoops(n < 1 ? 1 : n);   // no clear: see PrintSysexOut
+      PrintSysexOut();
+      puts("[ok]");
+      continue;
     } else if (cmd == "mode") {
       std::string val; ss >> val;
       if (val == "emu" && !emu101::available()) { puts("no ROM embedded"); continue; }
@@ -874,6 +939,14 @@ static int SelfTest() {
 }
 
 int main(int argc, char** argv) {
+  // Line-buffer stdout. A terminal gives us this for free, a PIPE does not: C
+  // stdio switches to 4 kB full buffering the moment stdout is not a tty, so
+  // every `[ok]` a driving script waits for sits in this process's buffer while
+  // that script blocks on read() and this one blocks on getline(). Both sides
+  // then look alive and idle, which is what it cost to find. The G12 suite
+  // adapter drives this REPL over a pipe (tools/diag/suite_adapter.py SimLink),
+  // so this line is load-bearing for the sim transport, not a tidy-up.
+  setvbuf(stdout, nullptr, _IOLBF, 0);
   if (argc > 1 && !strcmp(argv[1], "--test")) return SelfTest();
   Repl();
   return 0;
