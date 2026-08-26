@@ -137,7 +137,43 @@ inline uint8_t ScanReadRaw(ScanCol col) {
 inline uint8_t ScanRead(ScanCol col) { return (uint8_t)~ScanReadRaw(col); }
 
 // --- P2 outputs -------------------------------------------------------------
-inline void P2Write(uint8_t value) { P2_PORT = value; }
+// Every P2 write goes through here, and here is where SuperOS is observed.
+// The emulator already publishes what the ROM does with P2 (per-bit toggle
+// counts, probe words [65..80]); the SuperOS side published nothing, so its
+// LEDs, gate and CLOCK-RESET could only be checked in the sim. That gap is
+// what stops G10's tempo blink and G11's progress bar being measurable on
+// hardware: an indicator nobody can read is one nobody can test (G12).
+//
+// Two things are recorded, deliberately the same shape as the emulator's so
+// one host-side reader covers both firmwares: the last image written (which
+// LED is lit, HOLD, KEY-TRANSPOSE, GATE, CLOCK-RESET, PORTAMENTO OFF, all in
+// one byte) and per-bit transitions per second (a blink RATE, which is what
+// G10's "blinks on the incoming tempo" actually asserts).
+//
+// Cost is 33 bytes of SRAM and it is compiled into every build rather than
+// hidden behind a probe flag, because a bench control that is absent from the
+// shipping image measures a different firmware than the one that ships.
+struct P2Observer {
+  uint8_t  last = P2_IDLE;
+  uint16_t togAcc[8] = {0}, togPerSec[8] = {0};
+  uint32_t t0 = 0;
+
+  inline void note(uint8_t value) {
+    uint8_t d = (uint8_t)(value ^ last);
+    last = value;
+    for (uint8_t b = 0; b < 8; ++b) if (d & (1u << b)) ++togAcc[b];
+  }
+  // Roll the one-second window. Called from the loop, not from note(), so a
+  // burst of writes cannot make the window shorter than a second.
+  inline void tick(uint32_t ms) {
+    if ((uint32_t)(ms - t0) < 1000) return;
+    t0 = ms;
+    for (uint8_t b = 0; b < 8; ++b) { togPerSec[b] = togAcc[b]; togAcc[b] = 0; }
+  }
+};
+inline P2Observer& P2Obs() { static P2Observer o; return o; }
+
+inline void P2Write(uint8_t value) { P2Obs().note(value); P2_PORT = value; }
 
 // --- T0 / T1 ----------------------------------------------------------------
 inline bool ClockLevel()     { return (PIND & (1u << T1_CLOCK_BIT)) != 0; }

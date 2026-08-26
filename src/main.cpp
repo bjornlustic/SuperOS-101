@@ -307,4 +307,5 @@ void superos_loop() {
   if ((int32_t)(g_portaUntilMs - millis()) > 0)
     p2 |= (uint8_t)(1u << P2_PORTA_OFF);                     // pulse HIGH
   hw::P2Write(p2);
+  hw::P2Obs().tick(millis());   // roll the LED/gate rate window (probe [97..113])
 }

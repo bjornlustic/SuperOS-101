@@ -34,6 +34,7 @@ namespace emu101 { bool available(); const uint8_t* ram(); }
 #include "usbmidi_codec.h"
 #include "flash_persist.h"
 #include "cvdac.h"
+#include "pins.h"        // P2_GATE et al: the probe's P2 image is decoded by bit name
 static const uint8_t SIM_FW_EMU = 1;
 extern uint16_t g_simCvCode[2];   // last MCP4822 code per channel (sim_cvdac_write, below)
 
@@ -511,6 +512,48 @@ static int SelfTest() {
     for (int i = 0; i < 2000; ++i) { delayMicroseconds(1000); RunLoops(1); }   // > 500 ms quiet: deferred flush
     uint8_t buf[101]; uint8_t k = persist::Store().read(persist::FB_PATTERN_BASE + 5, buf, sizeof(buf));
     CHECK(k == 4 && buf[0] == 3 && buf[3] == (0x80 | 22), "pattern 5 flushed to the flash arena");
+  }
+
+  // 0x3B -> 0x3C bench probe, SuperOS LED/gate words (gate G12 observability,
+  // and the harness G10's tempo blink will be measured with). The probe had no
+  // test at all before this; these fail against a probe without raw[97..113].
+  {
+    puts("probe (0x3B -> 0x3C):");
+    auto probe = [&](uint8_t* raw, uint8_t want) -> int {   // returns raw byte count
+      g_midiOut.clear();
+      for (uint8_t b : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x3B, (uint8_t)0xF7}) g_midiQ.push_back(b);
+      RunLoops(1);
+      if (g_midiOut.size() < 4 || g_midiOut[2] != 0x3C) return -1;
+      size_t n = (g_midiOut.size() - 4) / 2;                // F0 7D 3C .. F7, two nibbles per byte
+      for (size_t i = 0; i < n && i < want; ++i) raw[i] = (uint8_t)((g_midiOut[3 + 2 * i] << 4) | g_midiOut[4 + 2 * i]);
+      return (int)n;
+    };
+    uint8_t raw[128] = {0};
+    int n = probe(raw, sizeof(raw));
+    CHECK(n >= 114, "0x3C carries the SuperOS LED/gate words (>= 114 bytes)");
+    // raw[97] is the live P2 image. The gate bit is INVERTED (0 = gate on), so
+    // a resting pattern-0 machine with no note must read it high.
+    CHECK((raw[97] & (1u << P2_GATE)) != 0, "probe P2 image: gate bit high = gate off at rest");
+    // Drive a note and confirm the image follows the gate through the probe,
+    // i.e. the probe reads the live port image and not a frozen copy.
+    for (uint8_t b : {(uint8_t)0x90, (uint8_t)53, (uint8_t)100}) g_midiQ.push_back(b); RunLoops(2);
+    probe(raw, sizeof(raw));
+    CHECK((raw[97] & (1u << P2_GATE)) == 0, "probe P2 image: gate bit low = gate on while a note sounds");
+    for (uint8_t b : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(2);
+    probe(raw, sizeof(raw));
+    CHECK((raw[97] & (1u << P2_GATE)) != 0, "probe P2 image: gate released after note off");
+    // Toggle counters: the gate just changed twice, so bit 7 must have counted
+    // transitions once the one-second window rolls. Advance past the window.
+    for (int i = 0; i < 1100; ++i) { delayMicroseconds(1000); RunLoops(1); }
+    probe(raw, sizeof(raw));
+    uint16_t gateTog = (uint16_t)((raw[98 + 2 * P2_GATE] << 8) | raw[99 + 2 * P2_GATE]);
+    CHECK(gateTog == 0, "probe toggles/s: a quiet second reports zero gate transitions");
+    for (uint8_t b : {(uint8_t)0x90, (uint8_t)53, (uint8_t)100}) g_midiQ.push_back(b); RunLoops(2);
+    for (uint8_t b : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(2);
+    for (int i = 0; i < 1100; ++i) { delayMicroseconds(1000); RunLoops(1); }
+    probe(raw, sizeof(raw));
+    gateTog = (uint16_t)((raw[98 + 2 * P2_GATE] << 8) | raw[99 + 2 * P2_GATE]);
+    CHECK(gateTog >= 2, "probe toggles/s: a note on+off inside the window counts 2 gate transitions");
   }
 
   // Live-edit opcodes (gate G4): 0x16 set step, 0x18 set length, 0x15 randomize.

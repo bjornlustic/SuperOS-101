@@ -9,6 +9,7 @@
 #include "midi.h"
 #include "emu101.h"
 #include "usb_gate.h"
+#include "hw.h"      // P2Observer: the SuperOS LED/gate probe words
 
 #ifndef SUPEROS_VERSION
 #define SUPEROS_VERSION "dev"
@@ -89,13 +90,25 @@ inline uint16_t MeasureVccMv() {
 //   [85..86] emulator: incoming MIDI note-ons per second
 //   [87..88] emulator: ROM key-column reads per second with a key down  [89..90] same, buttons
 //   [91..96] emulator: S/H value changes per second: CV-OUT, VCO, RANDOM
+//   [97]     SuperOS: last P2 image written (hw.h P2Observer). Decode with the
+//            pins.h bit names, and mind the two inversions: GATE (P27) is 0
+//            when the gate is ON, HOLD (P25) is 0 when the HOLD LED is LIT,
+//            KEY-TRANSPOSE (P26) is 1 when lit, CLOCK RESET (P24) is 0 while
+//            pulsed. P20-22 are the function-LED select: 0 none, 1-5 exactly
+//            one of LOAD / PLAY / DOWN / U&D / UP.
+//   [98..113] SuperOS: P2 bit 0..7 transitions per second (8 words), the same
+//            shape as the emulator's [65..80] so one host reader does both.
+//            This is where a blink RATE is read: G10 asserts the tempo
+//            indicator tracks incoming MIDI clock, and a rate is the thing
+//            that claim actually makes. The 101 has no dedicated tempo LED
+//            (claim-022), so its indicator is KEY-TRANSPOSE, bit 6.
 }  // namespace sysex
 extern uint16_t g_vccParkedMv;   // boot.cpp
 extern uint8_t  g_benchMode;     // boot.cpp (SysEx 0x3E)
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[97] = {0};
+  uint8_t raw[114] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -126,6 +139,11 @@ inline void SendProbe() {
     raw[87] = ks >> 8; raw[88] = ks & 0xFF; raw[89] = bs >> 8; raw[90] = bs & 0xFF;
     for (uint8_t r = 0; r < 3; ++r) { uint16_t c2 = emu101::shChangesPerSec(r); raw[91 + 2 * r] = c2 >> 8; raw[92 + 2 * r] = c2 & 0xFF; }
   }
+  {   // SuperOS LED / gate observability (hw.h P2Observer)
+    hw::P2Observer& o = hw::P2Obs();
+    raw[97] = o.last;
+    for (uint8_t b = 0; b < 8; ++b) { raw[98 + 2 * b] = o.togPerSec[b] >> 8; raw[99 + 2 * b] = o.togPerSec[b] & 0xFF; }
+  }
   uint16_t pl = combined_pass_us(false), pm = combined_pass_us(true);
   raw[9] = pl >> 8; raw[10] = pl & 0xFF; raw[11] = pm >> 8; raw[12] = pm & 0xFF;
 #ifdef __AVR__
@@ -135,6 +153,12 @@ inline void SendProbe() {
   raw[6] = usb_configuration;
 #endif
 #endif
+  // midi::SendSysex takes a uint8_t length, and this body is two nibbles per
+  // raw byte plus the opcode. Past 127 raw bytes it would wrap and send a
+  // truncated reply that still looks well-formed, which is the shape of bug
+  // this fleet has already paid for once (claim-002's ring arithmetic). Fail
+  // the build instead.
+  static_assert(1 + 2 * sizeof(raw) <= 255, "0x3C probe body exceeds the uint8_t SysEx length");
   uint8_t body[1 + 2 * sizeof(raw)];
   body[0] = 0x3C;
   for (uint8_t i = 0; i < sizeof(raw); ++i) { body[1 + 2 * i] = raw[i] >> 4; body[2 + 2 * i] = raw[i] & 0x0F; }
