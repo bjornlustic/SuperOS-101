@@ -120,6 +120,40 @@ already hooks both events (`mcs48_p1_read` counts keyboard-bank reads,
 `mcs48_bus_write` sees the gate write), so it is a probe word, which is what
 `CLAUDE.md` and COMMON rule 7 require instead of asking for hands.
 
+## `f` is now a probe word, and it is NOT yet a measurement
+
+`emu101::keyToGateUs(true)`, published at **`raw[125..126]`** of the `0x3B ->
+0x3C` probe. It times the ROM's own structure, not a stimulus: the ROM reads the
+keyboard (step 5) and writes P2 (step 13) every pass whether or not a key is
+held, so **no key injection opcode, no `0x4B`, and no hands are needed**. It is
+armed at a keyboard-bank read (DB0..3 low, so the button column cannot arm it)
+and disarmed at the first P2 write after it, so the later LED writes in the same
+pass cannot stretch it. Max over the last second, because the gate wants a bound
+and not a sample.
+
+**Appended at the end deliberately**: every existing probe offset is unchanged,
+so offset-indexing readers keep working. That was the failure mode of the `0x21`
+config reply (`DEVICES.md` documented five fields where the 101 sends seven, and
+`timing/probe101.py` has been printing `ver=1` for a machine running 0.2 ever
+since). **It also takes the last free word**: `raw` is now 127 and the
+`static_assert` ceiling is 127, so the next addition must change the body
+encoding from nibbles to 7-bit packing. That is marked at the declaration.
+
+**What the sim run does and does not establish.** It reads 1878 us against a
+mean pass of 1770 us, which confirms the word is wired, armed, disarmed and
+published, and that it moves. **It is not a value for `f`.** Two reasons, and the
+first is the one this whole document is about:
+
+* the sim's clock is settle-delays-only, which is precisely why it cannot stand
+  in for hardware here. **I am not entitled to use it for `f` having just shown
+  it cannot measure this class of quantity.**
+* 1878 us is a **max** over a second and 1770 us is a **mean**. Their ratio is
+  not `f` and the apparent `f > 1` is that mismatch, not a physical result. On
+  hardware the same care applies: pair the max with a max.
+
+Verified no regression: self-test 0 failures, `g1_test.py` all green, G12 suite
+still 69 pass / 0 fail / 2 skip on the sim transport.
+
 ## Status
 
 * **The bound "< 13.8 ms on the emulator, < 1.7 ms on SuperOS" stands**, on the

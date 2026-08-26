@@ -22,6 +22,9 @@ uint16_t p2TogglesPerSec(uint8_t bit); // ROM P2 bit transitions per second
 uint16_t gateOnLenUs();   // last ROM gate on-length (us)
 uint16_t cvToGateOffUs(); // last ROM gate drop minus last CV-OUT change (us)
 uint16_t midiNoteOnsPerSec(); // incoming MIDI note-ons per second (DIN + USB)
+uint16_t keyToGateUs(bool max); // G5: us from the ROM's keyboard read (step 5) to its
+                              // next P2/GATE write (step 13). This is f * T_pass, the
+                              // second term of the key-to-gate bound (1 + f) * T_pass.
 uint16_t keysSeenPerSec();    // ROM keyboard-column P1 reads per second with a row low
 uint16_t shChangesPerSec(uint8_t route); // S/H value changes per second: 0 CV-OUT, 1 VCO, 2 RANDOM
 uint16_t btnsSeenPerSec();    // ROM button-column P1 reads per second with a row low

@@ -75,6 +75,25 @@ static uint16_t g_benchNoIntUs = 0, g_benchIntUs = 0;   // boot bench (BenchRun)
 static uint16_t g_benchDacUs = 0, g_benchPollUs = 0;      // 10x hw::DacWrite / 100x midi::Poll
 static uint16_t g_benchB[6];                               // 100x: Poll, T1Watch, RateTick, RamPersistTick, micros, button scan
 static volatile uint16_t g_edgeAcc = 0;   // T1 falling edges seen (INT0 / poll)
+// --- key-scan response, the G5 bar for this machine ---------------------------
+// G5 asks the 101 for a STATED key-to-gate bound rather than a throughput
+// number. That bound is (1 + f) * T_pass: up to one whole pass of waiting,
+// because the ROM reads the keyboard exactly once per pass (step 5,
+// SH101.asm:491), plus f, the fraction of a pass the ROM then spends between
+// that read and writing GATE (step 13, :1381). T_pass is already published as
+// g_pps, so f was the only missing term and the bound could only be stated as
+// the useless "< 2 passes".
+//
+// f needs no key press, no injection opcode and no hands: the ROM performs both
+// events every pass whether or not anything is held. So this times the ROM's
+// own structure rather than a stimulus, which also means it cannot be fooled by
+// a stimulus that never arrived.
+//
+// Measured to the FIRST P2 write after a keyboard-bank read and disarmed there,
+// so the LED/function writes later in the same pass cannot stretch it.
+static uint32_t g_kbdReadUs = 0;
+static bool     g_kbdArmed  = false;
+static uint16_t g_k2gLastUs = 0, g_k2gMaxUs = 0, g_k2gMaxAcc = 0;
 static void RateTick(uint32_t ms, uint16_t ran) {
   g_cycAcc += ran;
   if ((uint32_t)(ms - g_rateT0) >= 1000) {
@@ -88,6 +107,7 @@ static void RateTick(uint32_t ms, uint16_t ran) {
     g_keySeenPerSec = g_keySeenAcc; g_keySeenAcc = 0;
     for (uint8_t r = 0; r < 3; ++r) { g_shChgPerSec[r] = g_shChgAcc[r]; g_shChgAcc[r] = 0; } g_btnSeenPerSec = g_btnSeenAcc; g_btnSeenAcc = 0;
     for (uint8_t b = 0; b < 8; ++b) { g_p2TogPerSec[b] = g_p2TogAcc[b]; g_p2TogAcc[b] = 0; }
+    g_k2gMaxUs = g_k2gMaxAcc; g_k2gMaxAcc = 0;
     g_runPm = (uint16_t)(g_runUsAcc / 1000); g_shPm = (uint16_t)(g_shUsAcc / 1000);
     g_runUsAcc = 0; g_shUsAcc = 0;
     g_cycAcc = 0; g_passAcc = 0; g_rateT0 = ms;
@@ -194,6 +214,9 @@ uint8_t mcs48_p1_read() {
   for (uint8_t bank = 0; bank < 4; ++bank)
     if (!(bus & (1u << bank))) rows &= (uint8_t)~(uint8_t)(g_midiKeys >> (8 * bank));
   if (g_virtButtons && !(bus & (1u << COL_BUTTONS))) rows &= (uint8_t)~g_virtButtons;
+  // Keyboard banks only (DB0..3), not the button column: step 5 is the read the
+  // G5 bound is measured from. Costs one micros() per bank, 4 per 6.9 ms pass.
+  if ((bus & 0x0F) != 0x0F) { g_kbdReadUs = micros(); g_kbdArmed = true; }
   if (rows != 0xFF) { if ((bus & 0x0F) != 0x0F) ++g_keySeenAcc; else if (!(bus & (1u << COL_BUTTONS))) ++g_btnSeenAcc; }
   return rows;
 }
@@ -277,6 +300,12 @@ static inline void GateTick(uint32_t now) {
 }
 
 void    mcs48_p2_write(uint8_t v)     {
+  if (g_kbdArmed) {                      // key-scan response: see g_kbdReadUs
+    g_kbdArmed = false;
+    uint32_t d = micros() - g_kbdReadUs;
+    g_k2gLastUs = d > 0xFFFF ? 0xFFFF : (uint16_t)d;
+    if (g_k2gLastUs > g_k2gMaxAcc) g_k2gMaxAcc = g_k2gLastUs;
+  }
   g_p2Rom = v;
   { uint8_t d = (uint8_t)(v ^ g_p2Prev); g_p2Prev = v; for (uint8_t b = 0; b < 8; ++b) if (d & (1u << b)) ++g_p2TogAcc[b]; }
   {
@@ -406,6 +435,7 @@ bool available() { return ROM101_PRESENT != 0; }
 const uint8_t* ram() { return g_cpu.ram; }   // sim / bench inspection
 uint16_t cyclesPerSec100() { return g_cyc100; }
 uint16_t passesPerSec()    { return g_pps; }
+uint16_t keyToGateUs(bool max) { return max ? g_k2gMaxUs : g_k2gLastUs; }
 uint16_t t1EdgesPerSec()   { return g_eps; }
 uint16_t t1PollEdgesPerSec() { return g_pollEps; }
 uint16_t t1RejectedPerSec()  { return g_t1Rej; }

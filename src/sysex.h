@@ -218,7 +218,14 @@ extern uint8_t  g_benchClkps;    // boot.cpp: prescale actually in force
 extern uint32_t g_benchUntil;
 namespace sysex {
 inline void SendProbe() {
-  uint8_t raw[125] = {0};
+  // 127 is the CEILING, not a size: the static_assert below is the real limit
+  // (1 + 2*127 = 255, the largest uint8_t SysEx length). raw[125..126] is the
+  // last free word and G5's key-scan bound has it. THE NEXT ADDITION CANNOT
+  // APPEND: it has to change the body encoding from two nibbles per byte to
+  // 7-bit packing (8 bytes carry 7), which buys room but moves every offset and
+  // so breaks every reader that indexes rather than scans. Do that deliberately
+  // and in one commit, not as a side effect of wanting one more word.
+  uint8_t raw[127] = {0};
   uint16_t vcc = MeasureVccMv(); raw[13] = vcc >> 8; raw[14] = vcc & 0xFF;
   raw[15] = g_vccParkedMv >> 8; raw[16] = g_vccParkedMv & 0xFF;
   raw[7] = combined_boot_count();
@@ -248,6 +255,12 @@ inline void SendProbe() {
     uint16_t ks = emu101::keysSeenPerSec(), bs = emu101::btnsSeenPerSec();
     raw[87] = ks >> 8; raw[88] = ks & 0xFF; raw[89] = bs >> 8; raw[90] = bs & 0xFF;
     for (uint8_t r = 0; r < 3; ++r) { uint16_t c2 = emu101::shChangesPerSec(r); raw[91 + 2 * r] = c2 >> 8; raw[92 + 2 * r] = c2 & 0xFF; }
+    // G5's key-scan bound. APPENDED at the end rather than placed with the other
+    // emulator words, so no existing offset moves and probe101.py-style readers
+    // that index by offset keep working (that exact class of break is why
+    // DEVICES.md's 0x21 field count mattered). Max over the last second: the
+    // gate wants a bound, not a sample.
+    uint16_t kg = emu101::keyToGateUs(true); raw[125] = kg >> 8; raw[126] = kg & 0xFF;
   }
   {   // SuperOS LED / gate observability (hw.h P2Observer)
     hw::P2Observer& o = hw::P2Obs();
