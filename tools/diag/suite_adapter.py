@@ -62,6 +62,10 @@ MIDI_CV_OFFSET = 36
 CV_MAX = 63
 STEP_NOTE, STEP_REST, STEP_LEGATO = 0, 1, 2
 
+# engine.h edit lanes. 1 and 2 (accent, slide) do not exist on this mono
+# machine and must be REFUSED rather than reinterpreted.
+LANE_NOTE, LANE_ACCENT, LANE_SLIDE, LANE_GATE, LANE_ALL = 0, 1, 2, 3, 0x7F
+
 # The slot the suite works in. Not 0: pattern 0 is what the machine plays at
 # rest and what CORE's G3 capture leaves set to one hit per beat, and a suite
 # that silently rewrote it would break the next capture rather than its own run.
@@ -109,17 +113,28 @@ def xorshift14(seed, entropy=0):
         yield st & 0x7F
 
 
-def model_randomize(steps, length, scope, density, seed):
-    """engine.h randomize(). Draw order is the part that must match exactly."""
+def model_randomize(steps, length, lane, density, seed):
+    """engine.h randomize(). Addressed by LANE since claim-057 retired `scope`.
+
+    Draw order is the part that must match exactly: one draw per step for the
+    density decision, plus a SECOND draw only where a pitch is written. A rest
+    costs one draw and a note costs two. LANE_GATE writes no pitch, so it is
+    one draw per step throughout.
+    """
     rnd = xorshift14(seed)
     out = list(steps)
     for i in range(length):
         r = next(rnd)
         on = True if density >= 127 else (False if density == 0 else r < density)
-        if scope == 1:                                  # note values only
+        if lane == LANE_NOTE:                           # pitches only
             if step_kind(out[i]) == STEP_REST:
                 continue                                # no second draw
             out[i] = step_byte(next(rnd) & CV_MAX, step_kind(out[i]))
+        elif lane == LANE_GATE:                         # legato only, no draw
+            if step_kind(out[i]) == STEP_REST:
+                continue
+            out[i] = step_byte(step_cv(out[i]),
+                               STEP_LEGATO if on else STEP_NOTE)
         else:
             out[i] = (step_byte(next(rnd) & CV_MAX, STEP_NOTE) if on
                       else step_byte(0, STEP_REST))
@@ -558,7 +573,7 @@ class Adapter:
         elif e == "setlen":
             self._ack(0x18, SLOT, self._new_len(case))
         elif e == "randomize":
-            self._ack(0x38, SLOT, 0, 64, 0x39, 0x60)
+            self._ack(0x2E, SLOT, LANE_ALL, 64, 0x39, 0x60)
         elif e == "select":
             self.link.send((0x1D, SLOT_ALT))
             self.link.recv(0x21)
@@ -599,7 +614,7 @@ class Adapter:
                 head = 0
         elif e == "randomize":
             seed = 0x39 | (0x60 << 7)
-            steps = model_randomize(steps, length, 0, 64, seed)
+            steps = model_randomize(steps, length, LANE_ALL, 64, seed)
         elif e == "select":
             active = SLOT_ALT
         return dict(steps=steps[:length], length=length, active=active)
@@ -710,7 +725,7 @@ class Adapter:
             runs = []
             for _ in range(2):
                 ad.setup(case)
-                ad._ack(0x38, SLOT, 0, 64, 0x39, 0x60)
+                ad._ack(0x2E, SLOT, LANE_ALL, 64, 0x39, 0x60)
                 runs.append(ad._read_pattern(SLOT)[1])
             if runs[0] != runs[1]:
                 raise _fail("same seed gave two different patterns")
@@ -723,7 +738,7 @@ class Adapter:
             catch a draw-order slip in either direction."""
             case = dict(length=16, head="start", legato="off", edit="randomize")
             ad.setup(case)
-            ad._ack(0x38, SLOT, 0, 64, 0x39, 0x60)
+            ad._ack(0x2E, SLOT, LANE_ALL, 64, 0x39, 0x60)
             # state_equals diffs DICTS field by field, so the comparison has to
             # be handed named fields, not bare lists.
             ch.state_equals({"steps": ad.model(case)["steps"]},
@@ -735,12 +750,12 @@ class Adapter:
             distribution test cannot pin, and they are exact."""
             case = dict(length=16, head="start", legato="off", edit="randomize")
             ad.setup(case)
-            ad._ack(0x38, SLOT, 0, 0, 0x11, 0x00)
+            ad._ack(0x2E, SLOT, LANE_ALL, 0, 0x11, 0x00)
             got = ad._read_pattern(SLOT)[1]
             ch.uses("state")
             if any(step_kind(s) != STEP_REST for s in got):
                 raise _fail("density 0 left notes in the pattern")
-            ad._ack(0x38, SLOT, 0, 127, 0x11, 0x00)
+            ad._ack(0x2E, SLOT, LANE_ALL, 127, 0x11, 0x00)
             got = ad._read_pattern(SLOT)[1]
             if any(step_kind(s) == STEP_REST for s in got):
                 raise _fail("density 127 left rests in the pattern")
@@ -927,11 +942,11 @@ if __name__ == "__main__":
     # Offline check of the closed form: no hardware, no runner. Proves the
     # model reimplements the device's rules rather than merely running.
     s = [step_byte(i % 24, STEP_NOTE) for i in range(16)]
-    r = model_randomize(s, 16, 0, 64, 0x39 | (0x60 << 7))
-    assert r == model_randomize(s, 16, 0, 64, 0x39 | (0x60 << 7)), "not deterministic"
+    r = model_randomize(s, 16, LANE_ALL, 64, 0x39 | (0x60 << 7))
+    assert r == model_randomize(s, 16, LANE_ALL, 64, 0x39 | (0x60 << 7)), "not deterministic"
     assert all(step_cv(x) <= CV_MAX for x in r), "cv out of range"
-    assert model_randomize(s, 16, 0, 0, 99) == [step_byte(0, STEP_REST)] * 16
-    assert all(step_kind(x) == STEP_NOTE for x in model_randomize(s, 16, 0, 127, 99))
+    assert model_randomize(s, 16, LANE_ALL, 0, 99) == [step_byte(0, STEP_REST)] * 16
+    assert all(step_kind(x) == STEP_NOTE for x in model_randomize(s, 16, LANE_ALL, 127, 99))
     st, _ = model_set_step(s, 16, 0, 0, 0)
     assert step_kind(st[0]) == STEP_REST
     _, ack = model_set_step(st, 16, 3, 0, 1)

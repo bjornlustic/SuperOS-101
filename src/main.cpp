@@ -157,11 +157,17 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     // re-sets a step to the value it already holds and is idempotent, while an
     // echoed RANDOMIZE destroys the pattern.
     //
-    // 0x38 confirmed free on this machine in BOTH directions before use, as
-    // CORE required: inbound 0x10 0x12 0x13 0x16 0x18 0x1D 0x1E 0x20 0x22 0x23
-    // 0x25 0x2F 0x3B 0x3D 0x3E 0x40 0x4A 0x4D, outbound 0x11 0x14 0x15 0x21
-    // 0x24 0x3C 0x41, bootloader 0x01 0x02 (0x03 proposed). 0x38 in none.
-    case 0x38:
+    // ON 0x2E. It was briefly 0x38 here (5e20bf0) and that was withdrawn one
+    // commit later: 0x38 is CMD_FRAM_PROBE inbound on the 606. Both 0x15 and
+    // 0x38 were proposed as "free" and both were taken, each caught by an
+    // agent reading its own source AFTER publication. 0x2E is the first byte
+    // taken from `tools/opcode_free.py` against the registry rather than
+    // proposed and then checked, and the 101's full both-directions table is
+    // published in docs/OPCODES.tsv so the allocator can see this machine.
+    //
+    // The payload's second byte is now a LANE, not the retired `scope`
+    // (claim-057); see engine::randomize for why scope could not be salvaged.
+    case 0x2E:
       if (len >= 6) { uint16_t seed = (uint16_t)(body[4] | ((uint16_t)body[5] << 7));
                       bool ok = g_engine.seq().randomize(body[1], body[2], body[3], seed, (uint8_t)(millis() & 0xFF));
                       if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }

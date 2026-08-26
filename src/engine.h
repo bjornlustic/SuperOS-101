@@ -40,6 +40,16 @@ enum Mode : uint8_t {
 // previous step: no envelope retrigger, and (portamento AUTO) a glide into it.
 enum StepType : uint8_t { STEP_NOTE = 0, STEP_REST = 1, STEP_LEGATO = 2 };
 
+// Edit lanes, shared with the fleet's edit opcodes (0x16 SET STEP, 0x2E
+// RANDOMIZE). Lanes 1 and 2 are accent and slide and DO NOT EXIST on the 101:
+// it is mono. They are named here so a refusal is a deliberate decision at a
+// named lane rather than a default case swallowing an unknown byte.
+static const uint8_t LANE_NOTE   = 0;
+static const uint8_t LANE_ACCENT = 1;   // absent on the 101 -> ack 2
+static const uint8_t LANE_SLIDE  = 2;   // absent on the 101 -> ack 2
+static const uint8_t LANE_GATE   = 3;
+static const uint8_t LANE_ALL    = 0x7F;
+
 // One step byte, the SH-101's own model: 6-bit CV + 2 type bits.
 inline uint8_t  StepByte(uint8_t cv, StepType t) { return (uint8_t)((cv & 0x3F) | ((uint8_t)t << 6)); }
 inline uint8_t  StepCv  (uint8_t s) { return s & 0x3F; }
@@ -159,19 +169,42 @@ class Sequencer {
     if (p == cur_ && pos_ >= len) rewind();
     return true;
   }
-  // scope 0 = whole pattern (note+rest), 1 = note VALUES only (keep the rest/note
-  // layout). density 0 clears, 127 fills, else P(note)=density/127. seed 14-bit:
-  // 0 = entropy, nonzero = deterministic (seeded xorshift) so a G4 capture repeats.
-  bool randomize(uint8_t p, uint8_t scope, uint8_t density, uint16_t seed, uint8_t entropy) {
+  // RANDOMIZE, addressed by LANE rather than the retired `scope` byte
+  // (claim-057). `scope` was unfixable because two machines read it
+  // defensibly differently: 1 meant "note values only" here and "the selected
+  // instrument" on the 606. A lane is the same unit the edit opcodes already
+  // address, so it cannot mean two things.
+  //
+  //   LANE_ALL  0x7F  time + pitch (what scope 0 did)
+  //   LANE_NOTE 0     pitches only, keeping the note/rest layout (scope 1)
+  //   LANE_GATE 3     legato flags only, keeping pitches and the layout
+  //   lanes 1, 2      accent and slide: this machine is MONO and has neither,
+  //                   so they are REFUSED, not quietly reinterpreted.
+  //
+  // density 0 clears, 127 fills, else P(note) = density/127. seed 14-bit:
+  // 0 = entropy, nonzero = deterministic (seeded xorshift) so a G4 capture
+  // repeats.
+  //
+  // DRAW ORDER IS PART OF THE CONTRACT, because the host models this to check
+  // it: exactly one draw per step for the density decision, plus a SECOND draw
+  // only where a pitch is written. So a rest costs one draw and a note costs
+  // two, and a model that draws once per step desyncs at the first rest and
+  // reads as a device bug. LANE_GATE writes no pitch, so it is one draw per
+  // step throughout.
+  bool randomize(uint8_t p, uint8_t lane, uint8_t density, uint16_t seed, uint8_t entropy) {
     if (p >= NUM_PATTERNS || len_[p] == 0) return false;
+    if (lane != LANE_ALL && lane != LANE_NOTE && lane != LANE_GATE) return false;
     uint16_t st = seed ? seed : (uint16_t)(entropy | 0x100);           // never 0
     auto rnd = [&st]() -> uint8_t { st ^= st << 7; st ^= st >> 9; st ^= st << 8; return (uint8_t)(st & 0x7F); };
     for (uint8_t i = 0; i < len_[p]; ++i) {
       uint8_t r = rnd();
       bool on = density >= 127 ? true : (density == 0 ? false : (r < density));
-      if (scope == 1) {                                                // note values only
+      if (lane == LANE_NOTE) {                                         // pitches only
         if (StepKind(step_[p][i]) == STEP_REST) continue;
         step_[p][i] = StepByte(rnd() & CV_MAX, StepKind(step_[p][i]));
+      } else if (lane == LANE_GATE) {                                  // legato only
+        if (StepKind(step_[p][i]) == STEP_REST) continue;              // no gate on a rest
+        step_[p][i] = StepByte(StepCv(step_[p][i]), on ? STEP_LEGATO : STEP_NOTE);
       } else {
         step_[p][i] = on ? StepByte(rnd() & CV_MAX, STEP_NOTE) : StepByte(0, STEP_REST);
       }

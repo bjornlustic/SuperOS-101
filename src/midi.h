@@ -37,9 +37,12 @@
 //                         to live here and moved to 0x38 (claim-049): this
 //                         machine emits 0x15 every step, and an echoed playhead
 //                         report would have randomized the pattern once per step.
-//   0x38 <p><scope><density><slo><shi>  RANDOMIZE (gate G4, docs/EDIT_OPCODES.md)
-//                           scope 0=whole 1=notes; density 0 clears/127 fills;
-//                           seed=slo|(shi<<7), 0=entropy else deterministic -> 0x14
+//   0x2E <p><lane><density><slo><shi>  RANDOMIZE (gate G4, docs/EDIT_OPCODES.md)
+//                           lane 0x7F=all (time+pitch), 0=pitches only, 3=legato
+//                           only; 1/2 (accent/slide) absent here -> ack 2.
+//                           density 0 clears/127 fills; seed=slo|(shi<<7),
+//                           0=entropy else deterministic                   -> 0x14
+//                           NOT 0x38: that is CMD_FRAM_PROBE on the 606.
 //   0x16 <p><lane><step><value>  SET STEP (gate G4): lane 0 note (value=MIDI note,
 //                           0=rest), lane 3 gate (0 normal/1 legato); 1/2 absent -> 0x14
 //   0x18 <p><length>      SET LENGTH (gate G4), 1..MAX_STEPS                  -> 0x14

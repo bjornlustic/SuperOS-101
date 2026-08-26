@@ -716,9 +716,36 @@ static int SelfTest() {
     CHECK(edit({0x16, 5, 1, 0, 56}) == 2, "G4 0x16 lane1 (accent absent) -> ack 2");
     CHECK(edit({0x18, 5, 0}) == 2, "G4 0x18 length 0 -> ack 2");
     uint8_t a[130], b[130];
-    edit({0x38, 5, 0, 64, 57, 96}); int la = readpat(5, a);
-    edit({0x38, 5, 0, 64, 57, 96}); int lb = readpat(5, b);
-    CHECK(la == lb && la > 0 && memcmp(a, b, la) == 0, "G4 0x38 randomize deterministic (same seed)");
+    edit({0x2E, 5, 0x7F, 64, 57, 96}); int la = readpat(5, a);
+    edit({0x2E, 5, 0x7F, 64, 57, 96}); int lb = readpat(5, b);
+    CHECK(la == lb && la > 0 && memcmp(a, b, la) == 0, "G4 0x2E randomize deterministic (same seed)");
+    // 0x38 was this opcode for exactly one commit and is CMD_FRAM_PROBE on
+    // the 606. It must be as dead here as inbound 0x15 is.
+    CHECK(edit({0x38, 5, 0x7F, 64, 57, 96}) == -1, "withdrawn 0x38 is not acked");
+    // Lanes: 0x7F all, 0 pitches only, 3 legato only, 1/2 absent (mono).
+    CHECK(edit({0x2E, 5, 1, 64, 57, 96}) == 2, "0x2E lane1 (accent absent) -> ack 2");
+    CHECK(edit({0x2E, 5, 2, 64, 57, 96}) == 2, "0x2E lane2 (slide absent) -> ack 2");
+    CHECK(edit({0x2E, 5, 9, 64, 57, 96}) == 2, "0x2E unknown lane -> ack 2");
+    // LANE_NOTE keeps the note/rest layout; LANE_GATE keeps pitches too.
+    edit({0x18, 5, 8}); for (uint8_t i = 0; i < 8; i++) edit({0x16, 5, 0, i, (uint8_t)(48 + i)});
+    uint8_t g0[130]; int lg = readpat(5, g0);
+    edit({0x2E, 5, 0, 100, 11, 0});
+    uint8_t g1[130]; readpat(5, g1);
+    bool layout_kept = true, some_pitch_moved = false;
+    for (int i = 0; i < lg; i++) {
+      if ((g0[i] >> 6) != (g1[i] >> 6)) layout_kept = false;
+      if ((g0[i] & 0x3F) != (g1[i] & 0x3F)) some_pitch_moved = true;
+    }
+    CHECK(layout_kept && some_pitch_moved, "0x2E lane0 moves pitches, keeps the layout");
+    uint8_t h0[130]; int lh = readpat(5, h0);
+    edit({0x2E, 5, 3, 127, 11, 0});
+    uint8_t h1[130]; readpat(5, h1);
+    bool pitch_kept = true, all_legato = true;
+    for (int i = 0; i < lh; i++) {
+      if ((h0[i] & 0x3F) != (h1[i] & 0x3F)) pitch_kept = false;
+      if ((h1[i] >> 6) != 2) all_legato = false;
+    }
+    CHECK(pitch_kept && all_legato, "0x2E lane3 density 127 -> all legato, pitches kept");
 
     // THE ECHO HAZARD, asserted rather than assumed (claim-049). RANDOMIZE
     // moved off 0x15 because this machine EMITS 0x15 every step as its
@@ -777,7 +804,7 @@ static int SelfTest() {
         MidiClocks(30);                                    // advance across the pattern (wrap)
         sx({0x16, P, 0, (uint8_t)(L - 1), 55});            // edit the last step (wrap boundary)
         sx({0x18, P, (uint8_t)(li ? lens[li-1] : 1)});     // shrink length under the head
-        sx({0x38, P, 1, 100, 21, 33});                     // randomize notes-only, deterministic
+        sx({0x2E, P, 0, 100, 21, 33});                     // randomize lane 0 (pitches), deterministic
         sx({0x16, P, 3, 0, (uint8_t)(legato ? 0 : 1)});    // toggle a tie
         MidiClocks(12); MidiByte(0xFC);                    // more clock, then stop
         if (!valid(P)) bad++; combos++;
