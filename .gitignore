@@ -15,3 +15,8 @@ sim/sim-selftest-flash.bin
 # host MIDI tool binaries (build from tools/*.c)
 tools/recvsyx
 tools/sendsyx
+
+# The sim writes its EEPROM into its CWD, so it can land at the repo root
+# too, not only in sim/. It is a run artifact: never a tracked file.
+sim-eeprom.bin
+sim-selftest-eeprom.bin

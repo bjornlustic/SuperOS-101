@@ -44,6 +44,20 @@ MFR = 0x7D
 # src/engine.h. MAX_STEPS is 128 and NUM_PATTERNS is 8.
 NUM_PATTERNS = 8
 MAX_STEPS = 128
+
+# src/midiclock.h DIV_TICKS, integer tick counts at 24 ppqn (never rate-based:
+# integer counts are why this machine's division cannot accumulate drift).
+#   0 1/4  1 1/4d  2 1/4t  3 1/8  4 1/8d  5 1/8t  6 1/16  7 1/16d  8 1/16t  9 1/32
+DIV_TICKS = (24, 36, 16, 12, 18, 8, 6, 9, 4, 3)
+
+# The suite clocks at 1/32: 3 ticks a step is the cheapest division in the
+# table, and a sweep case that parks the playhead at step 126 costs 378 clock
+# bytes instead of 3024 at the 1/16 default. It is a real table entry, not a
+# special value.
+DIV_IDX = 9
+TICKS_PER_STEP = DIV_TICKS[DIV_IDX]
+
+MIDI_CHANNEL = 0
 MIDI_CV_OFFSET = 36
 CV_MAX = 63
 STEP_NOTE, STEP_REST, STEP_LEGATO = 0, 1, 2
@@ -52,6 +66,17 @@ STEP_NOTE, STEP_REST, STEP_LEGATO = 0, 1, 2
 # rest and what CORE's G3 capture leaves set to one hit per beat, and a suite
 # that silently rewrote it would break the next capture rather than its own run.
 SLOT = 6
+
+# Where the `select` edit switches TO. Also not 0, and for a second reason
+# beyond leaving CORE's capture pattern alone: `select` changes which pattern
+# the sequencer plays, so the time channel's expectation (a wrap every `length`
+# steps) becomes a statement about the DESTINATION pattern, not the one the
+# case edited. Pointing select at slot 0 made that expectation depend on
+# whatever length slot 0 happened to hold: on this bench 3, against the case's
+# 16, which reads as a machine fault and is not one. The suite owns both slots
+# and sets both lengths, so the expectation is defined.
+SLOT_ALT = 5
+SLOT_ALT_LEN = 4
 
 
 # --------------------------------------------------------------------------- #
@@ -168,6 +193,15 @@ def unpack7(src):
 class Link:
     """One SysEx conversation with the 101 over USB-C."""
 
+    # What this transport can honestly answer for. `persists` is the one that
+    # matters: it gates the two tests that would otherwise pass VACUOUSLY off
+    # the bench. See SimLink.persists for why that is not a formality.
+    kind = "device"
+    persists = True
+    # Wall-clock cost of one MIDI clock byte. On the wire it is real time,
+    # because the device's own divider is what has to see it.
+    tick_cost = 0.004
+
     def __init__(self, port=PORT):
         self.port = port
         self.inp = self.out = None
@@ -226,6 +260,11 @@ class Link:
             self.out.send(mido.Message("clock"))
             time.sleep(per)
 
+    def transport(self, msg):
+        """0xFA / 0xFC. See Adapter._park_head for why this is not optional."""
+        self.out.send(mido.Message(msg))
+        time.sleep(0.01)
+
 
 class SimLink:
     """The same conversation, against sim/superos101-sim instead of hardware.
@@ -244,6 +283,25 @@ class SimLink:
     sufficient, and the adapter reports which transport produced a run.
     """
 
+    kind = "sim"
+
+    # THE PERSISTENCE CHANNEL DOES NOT EXIST HERE, and this flag is the whole
+    # reason the class carries one. `ServicePresent()` is a compile-time true
+    # in the host build and `sim_flash_program` writes a host file that the
+    # process keeps across a reboot, so `store_health` would report a healthy
+    # store and `length_survives_reboot` would report a survived length NO
+    # MATTER WHAT THE FLASH CODE DID. Two green lines asserting exactly the
+    # thing the 606 was wrong about (claim-036), proving nothing.
+    #
+    # That is A808's trap in another costume: a check written where the
+    # mechanism cannot fail switches itself off and still prints a pass. So
+    # these two skip here WITH A REASON rather than passing.
+    persists = False
+
+    # A tick is a loop pass here, not 1/24 of a beat of real time, so clocking
+    # is effectively free and the long-pattern time cases can actually run.
+    tick_cost = 0.0
+
     def __init__(self, exe=None):
         self.exe = exe or os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
@@ -253,10 +311,31 @@ class SimLink:
 
     def open(self):
         import subprocess
+        import tempfile
         if not os.path.exists(self.exe):
             raise RuntimeError(f"no sim binary at {self.exe}; run `make` in sim/")
+        # A PRIVATE EEPROM PER RUN, for two separate reasons.
+        #
+        # Hygiene: the sim writes `sim-eeprom.bin` into its CURRENT DIRECTORY
+        # (sim.cpp EepromPath). The runner lives in SuperOS-USBC, so driving
+        # the sim from there drops a stray binary into CORE's shared repo, and
+        # driving it from here leaves this tree dirty after every sweep. A
+        # dirty tree is not cosmetic in this project: a flash carries the whole
+        # tree (LESSONS L12).
+        #
+        # Correctness, which matters more: a persistent EEPROM makes the sweep
+        # depend on what the PREVIOUS sweep left behind. Config and patterns
+        # both live there, so a case could pass only because an earlier case
+        # set something it never sets itself. That is the same defect as
+        # inheriting the bench machine's sync setting, one layer down, and a
+        # fresh file per run removes the whole class rather than the instance.
+        self._ee = tempfile.NamedTemporaryFile(prefix="sim-eeprom-", suffix=".bin",
+                                               delete=False)
+        self._ee.close()
+        env = dict(os.environ, SIM_EEPROM=self._ee.name)
         self.p = subprocess.Popen([self.exe], stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, text=True, bufsize=1)
+                                  stdout=subprocess.PIPE, text=True, bufsize=1,
+                                  cwd=os.path.dirname(self.exe), env=env)
         self._until_ok(greeting=True)
 
     def close(self):
@@ -267,6 +346,13 @@ class SimLink:
             except Exception:
                 self.p.kill()
             self.p = None
+        ee = getattr(self, "_ee", None)
+        if ee is not None:
+            try:
+                os.unlink(ee.name)
+            except OSError:
+                pass
+            self._ee = None
 
     def _until_ok(self, greeting=False):
         """Read sim output up to the next [ok], collecting `<- ` SysEx lines."""
@@ -279,6 +365,17 @@ class SimLink:
             if line.startswith("<-"):
                 got.append([int(b, 16) for b in line[2:].split()])
             elif line == "[ok]":
+                return got
+            elif line == "[reboot]":
+                # A REBOOT IS ALSO A COMPLETE RESPONSE, and missing this is a
+                # hang rather than an error. Any opcode that reboots (0x2F,
+                # 0x4D, 0x4A) reaches sim_reboot(), which longjmps to the top
+                # of Repl() (sim.cpp:288). That jump leaves the `syx` handler
+                # WITHOUT running its puts("[ok]"), so a reader waiting only
+                # for [ok] waits forever while the sim sits waiting for the
+                # next command: two idle processes, no error, no timeout.
+                # Cost 7 minutes of a 45 s suite run before faulthandler
+                # named the line.
                 return got
             elif greeting and line.startswith("SuperOS-101 sim"):
                 # The banner has no [ok]; one prompt-free settle is enough.
@@ -308,7 +405,15 @@ class SimLink:
     def clock(self, n, per=0.0):
         # One clock byte per loop pass, which is what the sim's own `midi clock`
         # does; no wall-clock delay, so a 128-step sweep is seconds not minutes.
+        if n <= 0:
+            return
         self.p.stdin.write(f"midi clock {n}\n"); self.p.stdin.flush()
+        self.p.stdin.write("runq 2\n"); self.p.stdin.flush()
+        self._pending.extend(self._until_ok())
+
+    def transport(self, msg):
+        """0xFA / 0xFC. See Adapter._park_head for why this is not optional."""
+        self.p.stdin.write(f"midi {msg}\n"); self.p.stdin.flush()
         self.p.stdin.write("runq 2\n"); self.p.stdin.flush()
         self._pending.extend(self._until_ok())
 
@@ -383,6 +488,20 @@ class Adapter:
         """Put SLOT into a known state: full length, every step a note, legato
         applied if the case asks, playhead parked where the case asks."""
         n = case["length"]
+        # 0x22 [chan, sync, div]. ESTABLISH the clock config, do not inherit it.
+        # Without this the suite silently depended on how the machine happened
+        # to be left: the bench 101 has had sync ON since I set it up for CORE's
+        # G3 capture, so the device path would have worked by luck while the sim
+        # (cold EEPROM, sync OFF) advanced nothing. A test that passes because
+        # of a setting another agent made is not measuring what it says.
+        self.link.send((0x22, MIDI_CHANNEL, 1, DIV_IDX))
+        self.link.recv(0x21)
+        # The `select` destination is put in a KNOWN state too, so the time
+        # channel after a select is checking a length this suite set rather
+        # than one it inherited. See SLOT_ALT.
+        self._ack(0x18, SLOT_ALT, SLOT_ALT_LEN)
+        for i in range(SLOT_ALT_LEN):
+            self._ack(0x16, SLOT_ALT, 0, i, MIDI_CV_OFFSET + i)
         self._ack(0x18, SLOT, n)
         for i in range(n):
             self._ack(0x16, SLOT, 0, i, MIDI_CV_OFFSET + (i % 24))
@@ -403,13 +522,28 @@ class Adapter:
         running and rewinds, but only SysEx 0x1E calls setPlaying(). A 101 that
         is slaved with sync on will sit silent through an entire capture unless
         0x1E goes with it.
+
+        AND THE CONVERSE, which is the half I got wrong and which the paragraph
+        above talks you straight past: **0x1E is not sufficient either.** The
+        two are both necessary. `midiclk::OnRealtime` ignores every 0xF8 unless
+        `S().running`, and only 0xFA sets that (midiclock.h:71). So an adapter
+        that sends 0x1E and then clocks, as this one did, advances the playhead
+        exactly zero steps and every time-channel case reports "0 step reports"
+        with the sequencer sitting armed and idle. Knowing the trap in one
+        direction is what stopped me seeing it in the other.
+
+        Ticks are not steps. One step is DIV_TICKS[div] clock bytes at 24 ppqn
+        (3 at the 1/32 this suite sets), so a step count has to be scaled or
+        nothing reaches the next division boundary.
         """
         n = case["length"]
         want = {"start": 0, "mid": n // 2, "wrap": n - 1}[case["head"]]
+        self.link.transport("start")                    # 0xFA: clock running
         self.link.send((0x1E, 1))                       # setPlaying: see above
         self.link.drain()
-        self.link.clock(want)
+        self.link.clock(want * TICKS_PER_STEP)
         self.link.send((0x1E, 0))
+        self.link.transport("stop")
         self.link.drain()
         self._head = want
 
@@ -426,7 +560,7 @@ class Adapter:
         elif e == "randomize":
             self._ack(0x15, SLOT, 0, 64, 0x39, 0x60)
         elif e == "select":
-            self.link.send((0x1D, 0 if SLOT else 1))
+            self.link.send((0x1D, SLOT_ALT))
             self.link.recv(0x21)
         else:
             raise RuntimeError(f"the 101 has no edit {e!r}")
@@ -467,7 +601,7 @@ class Adapter:
             seed = 0x39 | (0x60 << 7)
             steps = model_randomize(steps, length, 0, 64, seed)
         elif e == "select":
-            active = 0 if SLOT else 1
+            active = SLOT_ALT
         return dict(steps=steps[:length], length=length, active=active)
 
     # -- reading it back --------------------------------------------------- #
@@ -518,26 +652,46 @@ class Adapter:
         its playhead unsolicited on outgoing 0x15, so the anchors are the
         device's own account of where it was, not the host's guess.
 
-        Skipped at length 128: at 4 ms a tick that is four wraps of over 500
-        ticks, which is minutes of clocking for one case in a 90-case sweep.
-        Said out loud rather than silently narrowed.
+        Skipped for LONG patterns ON THE DEVICE ONLY, and the "only" is the
+        point. At 4 ms a tick, two wraps of a 127-step pattern is 765 clock
+        bytes and about 3 s per case, which is minutes across the sweep; in the
+        sim a tick is a loop pass and the same cases cost nothing. The bound
+        that matters is wall clock, so it is read off the transport rather than
+        hard-coded, and the long cases run in full wherever they are affordable.
+
+        This matters more than a speed tweak because of a runner bug A808
+        reported to CORE and which is still open: **a Skip from check_time
+        aborts the WHOLE case**, so a skipped time channel silently throws away
+        a state result that passed. Skipping 15 long cases here did not report
+        "no time channel", it reported "could not test", and the state coverage
+        those cases represent vanished from the count.
         """
-        n = self.model(case)["length"]
-        if n > 32:
-            from suite import Skip
-            raise Skip(f"length {n} needs {4 * n} ticks per case; run it in the "
-                       "focused suite, not the sweep")
+        # The wrap interval belongs to the pattern that is PLAYING, which after
+        # a select is the destination, not the slot the case edited. Reading it
+        # off model()["length"] unconditionally asserted the wrong pattern's
+        # length and reported the machine red for behaving correctly.
+        n = (SLOT_ALT_LEN if case["edit"] == "select"
+             else self.model(case)["length"])
+        ticks = (2 * n + 1) * TICKS_PER_STEP
+        budget = ticks * self.link.tick_cost
+        if budget > 1.0:
+            raise _skip(f"length {n} needs {ticks} ticks = {budget:.1f} s on "
+                        f"the {self.link.kind} transport; run it in the focused "
+                        "suite, not the sweep")
         self.link.drain()
+        self.link.transport("start")                    # 0xFA: see _park_head
         self.link.send((0x1E, 1))
-        ticks = 4 * n + 2
+        # `ticks` is computed above with the budget: enough for at least two
+        # wraps, so there are two anchors to take an interval between, and
+        # scaled by the divider because ticks are not steps.
         self.link.clock(ticks)
         seen = self.link.collect(0x15, 0.2)
         self.link.send((0x1E, 0))
+        self.link.transport("stop")
         anchors = [i for i, m in enumerate(seen) if len(m) > 1 and m[1] == 0]
         if len(anchors) < 2:
-            from suite import SuiteFailure
-            raise SuiteFailure(f"saw {len(anchors)} playhead wrap(s) in "
-                               f"{len(seen)} step reports over {ticks} ticks")
+            raise _fail(f"saw {len(anchors)} playhead wrap(s) in "
+                        f"{len(seen)} step reports over {ticks} ticks")
         ch.anchors_exact(anchors, n, what="playhead wrap")
 
     def expect_red(self, case):
@@ -640,6 +794,12 @@ class Adapter:
             Costs a re-enumeration, so it is a feature test and not a sweep
             case, and it needs killall MIDIServer behind it (finding 8).
             """
+            if not ad.link.persists:
+                raise _skip("no persistence channel on the "
+                            f"{ad.link.kind} transport: sim_flash_program is a "
+                            "host file that survives the reboot regardless, so "
+                            "a pass here would be guaranteed and would mean "
+                            "nothing. Run with SUPEROS_101_TRANSPORT=device.")
             case = dict(length=16, head="start", legato="off", edit="setlen")
             ad.setup(case)
             ad._ack(0x18, SLOT, 24)
@@ -663,6 +823,12 @@ class Adapter:
 
         def store_health(ad, ch):
             """The state channel for persistence itself (claim-036)."""
+            if not ad.link.persists:
+                raise _skip(f"ServicePresent() is a compile-time true on the "
+                            f"{ad.link.kind} transport, so this test cannot "
+                            "fail here and its passing would be an artifact of "
+                            "the host build. Run with "
+                            "SUPEROS_101_TRANSPORT=device.")
             probe = ad._probe()
             ch.uses("state")
             if probe is None or len(probe) < 125:
@@ -697,33 +863,64 @@ class Adapter:
         return [(d[i] << 4) | d[i + 1] for i in range(0, len(d) - 1, 2)]
 
 
+def _runner_exc(name):
+    """Return the runner's OWN exception class by that name.
+
+    `from suite import Skip` is WRONG here and looks right, which is why A808
+    lost time to it and reported it. suite.py executes as `__main__`, so
+    importing `suite` loads a SECOND copy of the module: the class the adapter
+    raises is then a different object from the one `run_one` catches, the
+    `except Skip` handler does not match, and the whole run dies with a
+    traceback reading `suite.Skip` next to a handler reading `Skip`. Resolving
+    off sys.modules["__main__"] gets the class the runner will actually catch.
+
+    Falls back to a plain import so this file still works when driven directly
+    (the __main__ block below) rather than by the runner.
+    """
+    mod = sys.modules.get("__main__")
+    cls = getattr(mod, name, None)
+    if isinstance(cls, type) and issubclass(cls, BaseException):
+        return cls
+    import suite
+    return getattr(suite, name)
+
+
 def _fail(msg):
-    from suite import SuiteFailure
-    return SuiteFailure(msg)
+    return _runner_exc("SuiteFailure")(msg)
+
+
+def _skip(msg):
+    return _runner_exc("Skip")(msg)
 
 
 def make_adapter():
-    """Transport chosen by SUPEROS_101_TRANSPORT: `sim` (default when the
-    device is not enumerated) or `device`.
+    """Transport chosen EXPLICITLY by SUPEROS_101_TRANSPORT: `sim` or `device`.
 
-    Defaulting to the sim when the hardware is absent is deliberate and is NOT
-    the runner's "a missing suite is never a pass" rule being dodged: a sim run
-    still exercises the real firmware and still fails loudly. What it must not
-    do is be MISTAKEN for a device run, so the adapter's machine label carries
-    the transport and every report says which one produced it.
+    THERE IS NO AUTODETECT AND THAT IS THE POINT. The previous version fell
+    back to the device whenever `SuperOS-101` happened to be enumerated, which
+    on this bench it always is. Two ways that is dangerous, both of them
+    somebody else's problem rather than mine:
+
+    * the 101's lease is usually held by another agent, and a capture takes all
+      26 SSL channels at once, so a sweep that quietly went to the wire would
+      land in CORE's exclusive audio capture as a few hundred extra onsets and
+      corrupt a measurement nobody would think to re-run;
+    * a device run and a sim run prove very different things, and a default
+      that picks between them by what is plugged in makes "which one produced
+      this result" an accident.
+
+    So: no variable, no run. An explicit choice costs one word and removes an
+    entire class of silent wrong answer.
     """
     want = os.environ.get("SUPEROS_101_TRANSPORT", "").lower()
     if want == "device":
         return Adapter(link=Link())
     if want == "sim":
         return Adapter(link=SimLink())
-    if mido is not None:
-        try:
-            if any(PORT in n for n in mido.get_input_names()):
-                return Adapter(link=Link())
-        except Exception:
-            pass
-    return Adapter(link=SimLink())
+    raise RuntimeError(
+        "set SUPEROS_101_TRANSPORT=sim or =device. There is deliberately no "
+        "default: the 101 is usually leased by another agent, and a sweep that "
+        "guessed 'device' would push MIDI into whatever capture is running.")
 
 
 if __name__ == "__main__":
