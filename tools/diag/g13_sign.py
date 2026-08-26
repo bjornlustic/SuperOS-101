@@ -923,7 +923,26 @@ def pool_shifts(cells, factor=DEFAULT_SD_FACTOR,
             k = len(per)
             out(f"  mode {mode}: {k} repeat(s) survive both halves")
             for r, d in per:
-                out(f"    {r}  {d:>+8.4f} c")
+                # The per-repeat screen accounting, kept next to the repeat it
+                # belongs to. CORE asked for this specifically and the reason is
+                # right: a screen that drops a capture in ONE repeat and none in
+                # the others is a fact about that run, and it is exactly the
+                # kind of thing a pooled number summarises away. cut-r1 dropped
+                # 1 of 40 and moved +5.8483 -> +4.2443, a 1.6 c swing from one
+                # capture. A reader who cannot see that cannot judge the row.
+                info = []
+                for mm in (0, mode):
+                    cell = idx.get((r, mm))
+                    if cell is None:
+                        continue
+                    nd = len(cell.get("dropped") or [])
+                    if cell.get("screened") is False:
+                        info.append(f"mode {mm} UNSCREENED")
+                    elif nd:
+                        info.append(f"mode {mm} dropped {nd} of "
+                                    f"{cell['stats']['n'] + nd}")
+                note_ = ("   " + ", ".join(info)) if info else ""
+                out(f"    {r}  {d:>+8.4f} c{note_}")
             if k < min_repeats:
                 out(f"  NO SHIFT PUBLISHED for mode {mode}: {k} surviving "
                     f"repeats, {min_repeats} required. This is 'not measured', "
@@ -959,6 +978,8 @@ def _cells_from_json(paths, out=print):
             cs = c.get("cents", [])
             cells.append({"run_id": d.get("run_id"), "note": c["note"],
                           "mode": c["mode"], "cents": cs,
+                          "screened": c.get("screened"),
+                          "dropped": c.get("dropped", []),
                           "stats": _cell_stats(cs)})
     hs = {h for _, h, _ in meta}
     if len(hs) > 1:
@@ -1002,8 +1023,13 @@ def cmd_pool(args):
               f"{r['shift']:>+10.4f} {r['err']:>8.4f} {r['k']:>3}")
 
     for mode in sorted({m for _, m in table}):
+        # `m2 == m` here for one commit, and `m` is the SET COMPREHENSION's
+        # variable, which does not leak in Python 3. It raised NameError the
+        # first time a pool ran, which is the good failure: a typo that only
+        # silently mis-filtered would have published a ratio built from the
+        # wrong arm's rows.
         got = [(63 - (n - CV_OF), r) for (n, m2), r in sorted(table.items())
-               if m2 == m]
+               if m2 == mode]
         base = next((r for k, r in got if k == 63), None)
         if base is None or len(got) < 2:
             continue
