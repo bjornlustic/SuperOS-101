@@ -28,6 +28,7 @@ to decide, once for the pitch) and ONCE when it comes out a rest. Get that wrong
 and the sequence desyncs after the first rest, which looks like a device bug.
 """
 import os
+import subprocess
 import sys
 import time
 
@@ -221,13 +222,46 @@ class Link:
         self.port = port
         self.inp = self.out = None
 
-    def open(self):
+    def open(self, rebind_tries=6):
         if mido is None:
             raise RuntimeError("mido is not installed; cannot reach the 101")
         # Lease FIRST, before a single byte and before a port is even opened.
         _check_101_lease()
-        self.inp = mido.open_input(_match(mido.get_input_names(), self.port))
-        self.out = mido.open_output(_match(mido.get_output_names(), self.port))
+        # The persistence tests reboot the device, and after a re-enumeration
+        # CoreMIDI does not rebind the port on this host, sometimes for over
+        # 30 s (finding 8: a host cache, not a firmware fault). The remedy is
+        # `killall MIDIServer`, and the first device run of this suite died here
+        # with an EMPTY port list because the adapter only knew how to PRINT
+        # that remedy in an exception. COMMON rule 7 is explicit that there is
+        # no human in the loop, so a documented one-command fix belongs in the
+        # tool, not in the error text.
+        #
+        # Be PATIENT before being violent. Measured on this host: after a 0x4D
+        # the port list never drops below five, so waiting is usually the whole
+        # fix. A kill is what actually empties it, and killing repeatedly never
+        # lets the client come back at all, which is how an earlier version of
+        # this loop turned a recoverable stall into five failed attempts.
+        #
+        # So: re-list quietly, and only on the LAST attempt fall back to the
+        # kill with a long settle. It also disturbs every other machine's
+        # binding on this shared host, where three peers hold leases.
+        for attempt in range(rebind_tries):
+            try:
+                self.inp = mido.open_input(_match(mido.get_input_names(), self.port))
+                self.out = mido.open_output(_match(mido.get_output_names(), self.port))
+                if attempt:
+                    print(f"    (port returned after {attempt} wait(s))")
+                break
+            except Exception:
+                if attempt == rebind_tries - 1:
+                    raise
+                if attempt == rebind_tries - 2:
+                    print("    (port still gone: killall MIDIServer, last resort)")
+                    subprocess.run(["killall", "MIDIServer"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    time.sleep(10.0)
+                else:
+                    time.sleep(2.0)
         self.drain()
 
     def close(self):
@@ -249,10 +283,16 @@ class Link:
         messages arrive continuously while the sequencer runs (the 101's 0x15 is
         DIRECTIONAL: incoming randomize, outgoing playhead), so anything that
         reads a reply has to skip past traffic rather than assume the next
-        message is its answer."""
+        message is its answer.
+
+        Same type guard as collect(): played notes are echoed on MIDI OUT and
+        do not carry `.data`. This one had not fired yet only because the reads
+        that use it mostly run with the sequencer stopped."""
         end = time.time() + timeout
         while time.time() < end:
             for m in self.inp.iter_pending():
+                if m.type != "sysex":
+                    continue
                 d = list(m.data)
                 if len(d) >= 2 and d[0] == MFR and d[1] == opcode:
                     return d[2:]
@@ -260,10 +300,24 @@ class Link:
         return None
 
     def collect(self, opcode, seconds):
-        """Every message with this opcode seen over a window."""
+        """Every message with this opcode seen over a window.
+
+        The type guard is load-bearing on the DEVICE transport and was missing:
+        only sysex messages carry `.data`, and while the sequencer is clocked
+        the 101 also emits note on/off for whatever it is playing (the ROM's
+        output is echoed on MIDI OUT, CV + 36). `list(m.data)` on the first of
+        those raises AttributeError in the middle of the time channel, which
+        reads as a broken test rather than as an untyped read.
+
+        The sim transport never showed it because nothing there echoes notes
+        back, which is the same class of gap as `persists`: a channel that does
+        not exist off the bench cannot fail off the bench.
+        """
         end, seen = time.time() + seconds, []
         while time.time() < end:
             for m in self.inp.iter_pending():
+                if m.type != "sysex":
+                    continue
                 d = list(m.data)
                 if len(d) >= 2 and d[0] == MFR and d[1] == opcode:
                     seen.append(d[2:])
@@ -731,12 +785,38 @@ class Adapter:
         cfg = self._read_config()
         return dict(steps=steps, length=length, active=cfg["current"])
 
+    # A read is idempotent, and this transport drops a few percent of them.
+    #
+    # Measured on the unit rather than assumed, 40 transactions per arm: a bare
+    # 0x10 read lost 2/40, a 0x10 issued with no gap after a 0x16 write lost
+    # 1/40, and the same with a 60 ms gap lost 0/40. So it is a flat few-percent
+    # loss and NOT the flash-write-eats-the-request mechanism I expected: that
+    # hypothesis predicted the middle arm would be the worst and it was the
+    # best. I have not localised the loss to the device versus CoreMIDI, and
+    # this retry does not need me to: re-asking is correct either way.
+    #
+    # Why it mattered: the first device run of this suite died on case one with
+    # "no 0x11 dump for pattern 6", which reads exactly like a firmware defect
+    # in RANDOMIZE. It was not. At ~3 % per transaction a 69-case sweep is
+    # near-certain to hit at least one, so a single-shot read made the device
+    # transport unable to complete a run for reasons that have nothing to do
+    # with the firmware under test.
+    #
+    # Only READS retry. A write must not: 0x2E RANDOMIZE re-sent is a different
+    # draw, and a retried edit is a second edit.
+    def _request(self, body, opcode, what, tries=4):
+        for attempt in range(tries):
+            self.link.drain()
+            self.link.send(body)
+            d = self.link.recv(opcode)
+            if d is not None:
+                if attempt:
+                    print(f"    (retried {what} {attempt}x)")
+                return d
+        raise RuntimeError(f"no {what} after {tries} tries")
+
     def _read_pattern(self, p):
-        self.link.drain()
-        self.link.send((0x10, p))
-        d = self.link.recv(0x11)
-        if d is None:
-            raise RuntimeError(f"no 0x11 dump for pattern {p}")
+        d = self._request((0x10, p), 0x11, f"0x11 dump for pattern {p}")
         raw = unpack7(d[3:])
         if not raw:
             raise RuntimeError("0x11 dump did not unpack")
@@ -750,21 +830,42 @@ class Adapter:
         return n, raw[1:1 + n]
 
     def _read_config(self):
-        self.link.drain()
-        self.link.send((0x20,))
-        d = self.link.recv(0x21)
-        if d is None:
-            raise RuntimeError("no 0x21 config reply")
+        d = self._request((0x20,), 0x21, "0x21 config reply")
         return dict(fw=d[0], channel=d[1], sync=d[2], div=d[3],
                     current=d[4], store=d[5])
 
-    def _ack(self, *body):
-        self.link.drain()
-        self.link.send(body)
-        d = self.link.recv(0x14)
-        if d is None:
-            raise RuntimeError(f"no 0x14 ack for {[hex(b) for b in body]}")
-        return d[0]
+    def _ack(self, *body, idempotent=True):
+        """Send an edit and return its ack status, retrying a LOST ack.
+
+        Retrying a write needs an argument, not a shrug, because if the edit
+        landed and only the ack was dropped then the retry applies it twice.
+
+        The argument is claim-014's ruling, which this machine's edits already
+        obey: **an edit is a total function of its own payload.** Applying such
+        an edit twice lands exactly where applying it once did, because the
+        result does not depend on the prior state. Every write this suite sends
+        qualifies: 0x16 SET STEP and 0x18 SET LENGTH are absolute setters, and
+        0x2E RANDOMIZE carries an explicit seed (that is precisely why `scope`
+        was retired and `seed = 0` forbidden), so it is a pure function of its
+        bytes rather than a fresh draw.
+
+        `idempotent=False` is for anything RELATIVE, and nothing here is today:
+        a rotate, a nudge-by-one or a transpose-by-N composes rather than
+        overwrites, and replaying it silently doubles the edit. If you add one,
+        pass the flag; the failure it prevents is a corrupted expectation that
+        looks like a firmware bug, which is the shape of claim-031.
+        """
+        tries = 4 if idempotent else 1
+        for attempt in range(tries):
+            self.link.drain()
+            self.link.send(body)
+            d = self.link.recv(0x14)
+            if d is not None:
+                if attempt:
+                    print(f"    (retried ack for {[hex(b) for b in body]} {attempt}x)")
+                return d[0]
+        raise RuntimeError(f"no 0x14 ack for {[hex(b) for b in body]} "
+                           f"after {tries} tr{'ies' if tries > 1 else 'y'}")
 
     # -- the time channel -------------------------------------------------- #
     def check_time(self, case, ch):
@@ -933,8 +1034,22 @@ class Adapter:
                             "result here would be a cache echo (claim-036)")
             ad.link.send((0x4D,))                        # reboot into SuperOS
             time.sleep(3.0)
-            os.system("killall MIDIServer >/dev/null 2>&1")
-            time.sleep(2.0)
+            # NO killall here, and removing it is what made this test pass.
+            #
+            # It used to `killall MIDIServer` and sleep 2 s, on finding 8's
+            # authority. Measured on this host instead of taken on trust: hold
+            # the ports open, send this same 0x4D, and the port list stays at
+            # five the whole way through the re-enumeration (2/4/6/10/15 s).
+            # The kill is what empties it, because it destroys the CoreMIDI
+            # client this process is already holding, and 2 s is not enough for
+            # it to come back. The suite then failed with an EMPTY port list and
+            # blamed the device, which is finding 8's own remedy causing
+            # finding 8's own symptom.
+            #
+            # Link.open() below retries patiently and still escalates to a kill
+            # as a last resort, so the case where finding 8 genuinely applies is
+            # covered without paying for it every run. It also disturbs three
+            # peers' bindings on this shared host, so it is not free.
             ad.close(); ad.open()
             n, steps = ad._read_pattern(SLOT)
             if n != 24:
