@@ -184,8 +184,15 @@ Implemented (clean-room, behavioural — see `src/`):
   and a 100-step sequencer with **AVR-EEPROM** persistence (`engine.h`).
 
 Still stubbed / to refine:
-- KEY-TRANSPOSE shift value (`keyShift_`), function-LED 4552 one-hot multiplex, exact
-  clock-reset + portamento timing, and the mode-button latch semantics (verify on HW).
+- KEY-TRANSPOSE shift value (`keyShift_`), exact clock-reset + portamento timing, and
+  the mode-button latch semantics (verify on HW).
+- ~~function-LED 4552 one-hot multiplex~~ **Retired 2026-08-25: it is implemented and
+  now measured, not stubbed.** `engine.h ledSelect()` maps the mode to the one-hot
+  select and `main.cpp` drives it into the P2 image every pass. Asserted headless in
+  the sim self-test by reading the select back through the 0x3B probe (`raw[97]` bits
+  0-2): UP -> 5, DOWN -> 3, U&D -> 4, keyboard -> 0. The part is the **4556** (as
+  `pins.h`, `HARDWARE.md` and line 132 of this file all say); "4552" here was a typo
+  that survived because it was the only copy that disagreed.
 
 ## Open questions
 

@@ -5,9 +5,16 @@ accumulator mod 48 (48 half-ticks/beat), advanced +2 per MIDI 0xF8 when slaved,
 aligned to 0 on Start; tempo_blink() = phase < 24 (LED on the first half of each
 beat). Per-machine quirk = the LED output only.
 
-Gated behind the 101's G3 baseline (finding 23, pending CORE's confirmation) and
-lands with the shared MIDI-clock subsystem (subsystem 2), since the 101's
-midiclock.h is that subsystem's base.
+Still to apply. What it waits on has narrowed since this was written:
+
+* ~~Gated behind the 101's G3 baseline (finding 23, pending CORE's confirmation)~~
+  **SATISFIED 2026-08-25.** CORE ruled finding 23 IS the 101's G3 baseline (1.36 ms
+  jitter, drift zero, on the shipping app build). With G2 (finding 20) and G5
+  (25.3 %, accepted) the sequencing rule is met and code changes are allowed.
+* **Still gated** on landing with the shared MIDI-clock subsystem (G9 subsystem 2),
+  since the 101's `midiclock.h` is that subsystem's base and CORE sequences it. The
+  blink should arrive as one shared feature, not as a fourth private implementation
+  (which is the disease G9 exists to cure).
 
 ## The 101's LED-map quirk (measured)
 
@@ -60,14 +67,21 @@ if (midiclk::SyncOn() && midiclk::Running() && midiclk::TempoBlink())
 * Sim: slave the 101 (sync on), send 0xFA then 0xF8 stream, read P2 across ticks;
   assert P26 toggles with a 50% duty cycle at the beat rate, phase-aligned to 0xFA.
   Add to sim/g1_test.py as a G10 check.
-* Hardware: the LED is not on MIDI/telemetry today. Either (a) add the beatPhase to
-  the 0x3B probe so the host can read the phase and confirm phase-lock over the
-  wire (rule 7: measurable via telemetry), or (b) patch the LED to an SSL channel
-  for a G3-style capture. (a) is the headless route; recommend adding beatPhase to
-  the probe in the same commit.
+* Hardware: ~~the LED is not on MIDI/telemetry today. Either (a) add the beatPhase
+  to the 0x3B probe ... or (b) patch the LED to an SSL channel for a G3-style
+  capture.~~ **Overtaken 2026-08-25 by commit `e3e3336`, which built the (a) route
+  before the feature.** The 0x3B probe now carries the live P2 image at raw[97] and
+  per-bit transitions per second at raw[98..113], so the KEY-TRANSPOSE LED (bit 6)
+  is readable over the wire as both a state and a RATE. Option (b), patching an LED
+  to an SSL channel, is dead: it needs hands and the headless route exists.
+
+  What that leaves for this feature's own commit is smaller than the note above
+  assumed: the rate check is already available, so add `beatPhase` itself to the
+  probe only if the PHASE (alignment to `0xFA`, as against the period) turns out
+  not to be inferable from the toggle rate plus a Start timestamp. Decide that with
+  a measurement when the feature lands, not now.
 
 ## Also in the same commit (G8: docs match code)
 * Manual: note the KEY-TRANSPOSE LED blinks on the beat while MIDI-clock slaved.
 * This lands WITH the shared MIDI-clock subsystem, so beatPhase belongs in the
   shared clock core CORE extracts from the 101's midiclock.h.
-```

@@ -554,6 +554,26 @@ static int SelfTest() {
     probe(raw, sizeof(raw));
     gateTog = (uint16_t)((raw[98 + 2 * P2_GATE] << 8) | raw[99 + 2 * P2_GATE]);
     CHECK(gateTog >= 2, "probe toggles/s: a note on+off inside the window counts 2 gate transitions");
+
+    // The function-LED select (P20-22, one-hot via IC8 4556) reported through
+    // the same image. Both docs/FIRMWARE.md and the manual listed this as "still
+    // stubbed / not yet implemented" long after engine.h ledSelect() was wired to
+    // main.cpp's P2 assembly; this is the check that settles it rather than a
+    // second reading of the source. 1 LOAD, 2 PLAY, 3 DOWN, 4 U&D, 5 UP, 0 none.
+    auto ledSel = [&]() -> uint8_t {
+      probe(raw, sizeof(raw));
+      return (uint8_t)(raw[97] & 0x07);
+    };
+    // Button bits are controls.h BTN_*: 0 LOAD, 1 PLAY, 2 DOWN, 3 U&D, 4 UP.
+    auto tap = [&](uint8_t btn) { sim::g_buttons = (uint32_t)(1u << btn); RunLoops(2); sim::g_buttons = 0; RunLoops(2); };
+    tap(4);
+    CHECK(ledSel() == 5, "probe P2 image: arp UP lights function-LED select 5");
+    tap(2);
+    CHECK(ledSel() == 3, "probe P2 image: arp DOWN lights select 3");
+    tap(3);
+    CHECK(ledSel() == 4, "probe P2 image: arp UP&DOWN lights select 4");
+    tap(3);   // second press leaves the arp -> keyboard, all off
+    CHECK(ledSel() == 0, "probe P2 image: back to keyboard lights no function LED");
   }
 
   // Live-edit opcodes (gate G4): 0x16 set step, 0x18 set length, 0x15 randomize.
