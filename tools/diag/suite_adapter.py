@@ -459,7 +459,7 @@ class Adapter:
         length byte is one MIDI data byte, so 128 sets the status bit and
         terminates the message. The top step of this machine's longest pattern
         is unreachable over SysEx, and so is any step index above 127. Logged
-        as claim-043; the panel can still reach it, so it is a protocol gap and
+        as claim-061; the panel can still reach it, so it is a protocol gap and
         not a dead feature.
         """
         return dict(
