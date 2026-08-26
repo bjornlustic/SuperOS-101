@@ -1,0 +1,89 @@
+claim-038: a THIRD systematic, and it weakens my own 'no law fits' conclusion
+instrument tools/diag/g13_sign.py estimator over the SAME committed captures,
+window split into two non-overlapping halves (early 0.05-0.325 s after onset,
+late 0.325-0.60 s). No hardware, no lease. Bench unit 0.2 1a6010b.
+
+A shift that moves between them is a window-placement systematic, and it
+would be note-dependent because the envelope is.
+
+ note   h  segment    shift c      sem   k
+   36  16    early    +4.4255   0.4174   5
+   36  16     late    +4.2215   0.3209   5
+   60  16    early    +2.8526   0.0903   5
+   60  16     late    +2.9884   0.0784   5
+   72  16    early    +1.3779   0.4157   5
+   72  16     late    +1.4309   0.2001   5
+   99   2    early    +0.6908   0.0087   5
+   99   2     late    +0.5734   0.0074   5
+
+WINDOW-PLACEMENT SYSTEMATIC, measured from the same captures (no bench time):
+the onset window split into two non-overlapping halves, early vs late.
+
+ note  63-cv    shift    stat    harm    window    TOTAL
+   36     63  +4.0224  0.0754  0.1226  0.2040   0.2497
+   60     39  +2.8837  0.0593  0.0213  0.1358   0.1497
+   72     27  +1.7122  0.0286  0.0241  0.0530   0.0649
+   99      0  +0.5988  0.0073  0.0005  0.1174   0.1176
+
+PROPORTIONAL: chi2 31.6 on 3 dof   residuals n36 -0.5sd  n60 +2.1sd  n72 -1.0sd  n99 +5.1sd
+AFFINE: chi2 15.0 on 2 dof   residuals n36 +1.0sd  n60 +2.6sd  n72 -2.2sd  n99 +1.5sd
+QUADRATIC: chi2 8.7 on 1 dof   residuals n36 -0.9sd  n60 +2.6sd  n72 -1.1sd  n99 +0.3sd
+
+NOTE 99 with the window systematic in: +0.5988 +/- 0.1176 c
+  refuting zero still needs 0.5988/0.1176 = 5.1 sigma. THE REFUTATION SURVIVES.
+
+=== WHAT THIS CORRECTS, AND IT IS MY OWN CONCLUSION FROM AN HOUR AGO ===
+
+`be26535` and the ledger entry say "NO low-order law in (63-cv) fits four rows"
+and quote proportional chi2 6724/3, affine 71.5/2, quadratic 41.7/1. **Those
+chi2 rest on error bars that omit the window-placement systematic, and with it
+in they are 31.6/3, 15.0/2 and 8.7/1.**
+
+**So "no low-order law fits" was TOO STRONG and I am withdrawing it in that
+form.** The affine law's residual at note 72 goes from -6.0 sd to -2.2 sd, and
+note 60's from +5.6 to +2.6. An affine law is not comfortable at chi2 15 on
+2 dof, but it is not refuted the way I said it was.
+
+**WHAT SURVIVES UNCHANGED, and it is the headline:** 63:39:0 predicts EXACTLY
+zero at note 99. With all three measured systematics in the budget, note 99 is
+**+0.5988 +/- 0.1176 c, which is 5.1 sigma from zero.** The refutation of the
+proportional law does not depend on the window systematic, on the harmonic
+systematic, or on the note60/note36 ratio.
+
+**WHAT ALSO SURVIVES: the affine law I proposed is still not supported**, but
+the honest statement is now "chi2 15 on 2 dof, note 60 high and note 72 low at
+~2.5 sd each", not "refuted at 4.9 sigma".
+
+=== WHY I DID NOT HAVE THIS SYSTEMATIC UNTIL NOW ===
+
+Because I never varied the window. Every row on this claim was taken at
+head 0.05, win 0.60 and analysed at head 0.05, win 0.60, so the choice was
+invisible: it is the same class as the harmonic choice, which was also
+invisible until note 99 forced it into the open. **An estimator parameter that
+is never varied contributes zero to the error bar and an unknown amount to the
+answer.**
+
+The three parameters this estimator chooses on my behalf, now all measured:
+
+    which harmonic     measured, 0.0005 to 0.1226 c depending on the note
+    which window       measured, 0.0530 to 0.2040 c depending on the note
+    which channel      NOT a free parameter, but CORE's wrong-channel trap
+                       (+91.7 c) shows what it costs when it is got wrong
+
+**The window systematic is the LARGEST of the three on three of the four rows**,
+and it was the last one I looked for.
+
+=== HONEST NOTE ON HOW IT IS PROPAGATED ===
+
+The full early-late spread is taken as the systematic, which is conservative:
+the published window spans both halves, so its value sits between them and half
+the spread would be the more standard choice. Taken at full width for
+consistency with how the harmonic systematic was propagated, and because
+under-stating an error bar is the failure this claim has repeated.
+
+=== WHAT IT DOES NOT EXPLAIN ===
+
+Note 60 is still the high row and note 72 still the low one in every law; the
+window systematic shrinks those residuals, it does not reverse or scatter them.
+**So the cv sweep around code 24 is still the right next measurement**, and its
+result is now less pre-judged than it was an hour ago, which is an improvement.
