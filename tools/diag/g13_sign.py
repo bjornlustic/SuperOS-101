@@ -710,6 +710,39 @@ def _default_run_id():
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
+def _one_trigger(b, note, mode, i, f_nom, args):
+    """One armed trigger: window, note, capture, estimate. None on any miss."""
+    try:
+        secs_b, _ = window_byte(mode, args.window)
+    except ValueError as e:
+        print(f"  mode {mode}: {e}")
+        return None
+    b.all_off()
+    time.sleep(0.15)
+    b.bench_window(mode, secs_b)
+    time.sleep(0.05)
+    path = os.path.join(args.outdir,
+                        f"g13-run-{args.run_id}-{note}-{mode}-{i}.wav")
+    sr, sig = capture_note(b, note, path, args.secs, args.fire_at)
+    win = onset_window(sig, sr, args.head, args.win)
+    if win is None:
+        return None
+    f, _ = estimate_f0_harmonic(win, f_nom, rate=sr, want=args.harmonic)
+    time.sleep(args.gap)
+    return f
+
+
+def _report_cell(mode, fs, f_nom):
+    if not fs:
+        print(f"  mode {mode:>2}: NO LOCKS")
+        return
+    a = np.array(fs)
+    c = cents(a, f_nom)
+    sem = c.std() / np.sqrt(len(a)) if len(a) > 1 else float("nan")
+    print(f"  mode {mode:>2}: n={len(a):>3}  {a.mean():>11.5f} Hz  "
+          f"{c.mean():>+8.3f} c  sd {c.std():.4f}  sem {sem:.4f}")
+
+
 def cmd_run(args):
     """The 63:39:0 sign test itself.
 
@@ -758,6 +791,29 @@ def cmd_run(args):
         nh = pick_harmonic(f_nom, RATE, args.harmonic)
         print(f"note {note} ({f_nom:.2f} Hz, cv {note - CV_OF}, "
               f"63-cv = {63 - (note - CV_OF)}), via harmonic {nh}")
+        if args.interleave:
+            # INTERLEAVED: alternate the arms trigger by trigger, so the
+            # control and the arm are seconds apart instead of minutes.
+            #
+            # Sequential order is why this was needed. cmd_run used to take all
+            # N control triggers and then all N arm triggers, putting ~1.75 min
+            # between the two halves of every difference. The 101 is analog and
+            # drifts over exactly that scale: repeating a cell with the same
+            # harmonic on a different run moved it further than its own sem
+            # (+3.6355 +/- 0.3169, then +2.9814 +/- 0.1975). Any drift inside
+            # that gap goes straight into the published shift. Interleaved, it
+            # is common-mode to both arms and largely cancels.
+            per = {m: [] for m in arms}
+            for i in range(args.n):
+                for mode in arms:
+                    f = _one_trigger(b, note, mode, i, f_nom, args)
+                    if f is not None:
+                        per[mode].append(f)
+            for mode in arms:
+                results[(note, mode)] = per[mode]
+                _report_cell(mode, per[mode], f_nom)
+            print()
+            continue
         for mode in arms:
             fs = []
             for i in range(args.n):
@@ -913,6 +969,9 @@ def build_parser():
     s.add_argument("--win", type=float, default=0.60)
     s.add_argument("--harmonic", type=int, default=16)
     s.add_argument("--gap", type=float, default=0.3)
+    s.add_argument("--interleave", action="store_true",
+                   help="alternate the arms trigger by trigger so drift is "
+                        "common-mode; strongly recommended on this machine")
     s.add_argument("--outdir", default="/tmp/g13",
                    help="where captures are written")
     s.add_argument("--run-id", default=None,
