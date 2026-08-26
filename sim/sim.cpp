@@ -33,7 +33,9 @@ namespace emu101 { bool available(); const uint8_t* ram(); }
 #include "midi.h"
 #include "usbmidi_codec.h"
 #include "flash_persist.h"
+#include "cvdac.h"
 static const uint8_t SIM_FW_EMU = 1;
+extern uint16_t g_simCvCode[2];   // last MCP4822 code per channel (sim_cvdac_write, below)
 
 // MIDI-in byte queue, drained by midi::Poll() via sim_midi_pop().
 static std::deque<uint8_t> g_midiQ;
@@ -418,6 +420,76 @@ static int SelfTest() {
   for (uint8_t b : {0x90, 40, 100}) g_midiQ.push_back(b); RunLoops(1);   // below the keyboard
   CHECK(sim::g_sh[0] == 4 && GateOn(), "MIDI note 40 (out of key range) -> CV 4 mono override");
   for (uint8_t b : {0x80, 40, 0}) g_midiQ.push_back(b); RunLoops(1);
+
+  // CV DAC (cvdac.h): cutoff CC + accent models, observed on the MCP4822
+  // codes. Each sim pass counts as 1 ms in cvdac::Tick (pass << 1 ms).
+  puts("CV DAC:");
+  {
+    // Unipolar variant (first fabbed boards before rework: R8 100k, no bias): center 0, additive only.
+    cvdac::SetHw(cvdac::HW_V11_UNIPOLAR); RunLoops(2500);
+    CHECK(g_simCvCode[0] == 0 && g_simCvCode[1] == cvdac::VCA_PARK, "unipolar board: VOUTA rests at 0 V, VOUTB parked at 650");
+    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)127}) g_midiQ.push_back(b); RunLoops(200);
+    CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "unipolar board: CC74=127 -> DAC full scale (0.55 throw, clamped)");
+    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(200);
+    CHECK(g_simCvCode[0] == 0, "unipolar board: CC74=0 -> 0 V");
+    // The rest of the block exercises the bipolar variant (R8 27k + R10 68k), the default.
+    cvdac::SetHw(cvdac::HW_V11_BIPOLAR); RunLoops(15);
+    const uint16_t C = cvdac::CENTER_DEFAULT_BY_HW[1], F = cvdac::FADER_LSB_BY_HW[1], P = cvdac::VCA_PARK;
+    { cvdac::Settings s3 = cvdac::Get(); s3.vcaAmount = 127; cvdac::Set(s3);
+      CHECK(cvdac::Get().vcaAmount == cvdac::VCA_AMOUNT_MAX, "VCA amount is capped at 100 (BA662 control-current limit)");
+      s3.vcaAmount = 64; cvdac::Set(s3); }
+    auto cc = [](uint8_t v) { for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, v}) g_midiQ.push_back(b); RunLoops(1); };
+    auto noteOn  = [](uint8_t vel) { for (uint8_t b : {(uint8_t)0x90, (uint8_t)53, vel}) g_midiQ.push_back(b); RunLoops(1); };
+    auto noteOff = []() { for (uint8_t b : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(1); };
+    // Track both channels' maxima over N passes (the 7 ms one-pole attack
+    // needs ~4 tau = 28 passes to reach its plateau).
+    auto peaks = [](int passes, uint16_t& ma, uint16_t& mb) {
+      ma = mb = 0;
+      while (passes-- > 0) { RunLoops(1); if (g_simCvCode[0] > ma) ma = g_simCvCode[0]; if (g_simCvCode[1] > mb) mb = g_simCvCode[1]; }
+    };
+    // The MIDI block above played notes at velocity 100 = the accent threshold,
+    // so let that accent bleed off fully first (env tail ~8 tau).
+    RunLoops(2500);
+    CHECK(g_simCvCode[0] == C && g_simCvCode[1] == P, "rest: VOUTA at center, VOUTB parked at 650");
+    cc(127); RunLoops(150);
+    CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "CC74=127 -> center + one fader throw (2105+2025 clamps at 4095 = +98 %)");
+    cc(64);  RunLoops(150);
+    CHECK(g_simCvCode[0] == C, "CC74=64 -> back to center");
+    cc(0);   RunLoops(150);
+    CHECK(g_simCvCode[0] == C - F, "CC74=0 -> center - one throw (80 LSB above 0 = -100 %)");
+    // smoothness: one 7-bit CC step (32 LSB) must not jump in a single pass
+    cc(64);  RunLoops(150); uint16_t before = g_simCvCode[0];
+    cc(65);  uint16_t after1 = g_simCvCode[0]; RunLoops(150); uint16_t settled = g_simCvCode[0];
+    CHECK(after1 - before < 8 && settled - before > 28 && settled - before < 36, "one CC step glides (no 32-LSB jump) and settles at +1/64 throw");
+    // 14-bit: CC 106 refines CC 74
+    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)106, (uint8_t)64}) g_midiQ.push_back(b); RunLoops(150);
+    CHECK(g_simCvCode[0] - settled > 12 && g_simCvCode[0] - settled < 20, "CC106 (LSB) adds half a CC step (14-bit cutoff)");
+    cc(64);  RunLoops(150);
+    // MC-202 accent: velocity 127 clears the threshold; both channels bump, then decay.
+    noteOn(127);
+    uint16_t pa, pb; peaks(40, pa, pb);
+    CHECK(pb > P + 1650 && pb <= P + 1740, "MC-202 accent: VCA +1 envelope at amount 64");
+    CHECK(pa > C + 550 && pa < C + 700,    "MC-202 accent: VCF peak-only bump (~0.32 throw at amount 100)");
+    RunLoops(100);
+    uint16_t bMid = g_simCvCode[1];
+    CHECK(bMid < pb && bMid > P, "MC-202 accent decays (300 ms)");
+    noteOff(); RunLoops(2500);
+    CHECK(g_simCvCode[0] == C && g_simCvCode[1] == P, "after the accent both channels return to rest");
+    noteOn(50); RunLoops(10);
+    CHECK(g_simCvCode[1] == P && g_simCvCode[0] == C, "velocity 50 < threshold 100: no accent");
+    noteOff(); RunLoops(5);
+    // TB-303 model: fixed 200 ms decay, build-up across consecutive accents.
+    cvdac::SetMode(cvdac::MODE_TB303);
+    uint16_t p1, p2, q;
+    noteOn(127); peaks(40, p1, q); noteOff(); RunLoops(10);
+    noteOn(127); peaks(40, p2, q); noteOff();
+    CHECK(p1 > C + 300, "TB-303 accent: VCF sweep present");
+    // default buildup 64 = +0.125 of the full sweep per hit ~= 70 LSB at these amounts
+    CHECK(p2 > p1 + 50, "TB-303 accent: second accent 50 ms later sweeps further (C13 build-up)");
+    RunLoops(2500);
+    CHECK(g_simCvCode[0] == C && g_simCvCode[1] == P, "TB-303 accent fully bled off");
+    cvdac::SetMode(cvdac::MODE_MC202);
+  }
   // SysEx: config request, pattern round trip via 0x12/0x10.
   g_midiOut.clear();
   for (uint8_t b : {0xF0, 0x7D, 0x20, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
@@ -440,6 +512,7 @@ static int SelfTest() {
     uint8_t buf[101]; uint8_t k = persist::Store().read(persist::FB_PATTERN_BASE + 5, buf, sizeof(buf));
     CHECK(k == 4 && buf[0] == 3 && buf[3] == (0x80 | 22), "pattern 5 flushed to the flash arena");
   }
+
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY back on (pattern 0)
 
   // Firmware invariant: a scan must never corrupt a held S/H (route 11 only).
@@ -612,3 +685,7 @@ int main(int argc, char** argv) {
   Repl();
   return 0;
 }
+
+// --- CV DAC (cvdac.h) host hook: record the last code per channel -----------
+uint16_t g_simCvCode[2] = {0, 0};
+extern "C" void sim_cvdac_write(uint8_t ch, uint16_t code) { g_simCvCode[ch & 1] = code; }

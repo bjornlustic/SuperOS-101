@@ -310,3 +310,12 @@ a per-pin BUS self-test over MIDI OUT (decode with `tools/recvsyx`); see
 - AT90USB1286 replacement-CPU lineage: Nicholas J. Michalek (Phazerville) &
   [Michigan Synth Works](https://michigansynthworks.com/).
 - SH-101 service manual (1982, Roland) under `docs/`.
+
+## CV DAC (MIDI filter cutoff + accent)
+
+Board v1.1+ carries an MCP4822 wired into the SH-101's cutoff summing node and
+VCA current node. MIDI CC 74 sets the cutoff anywhere in the FREQ slider's
+range from any slider position (bipolar, center-calibrated), and accented
+notes (MIDI velocity >= threshold) get an MC-202- or TB-303-style accent on
+the filter and the VCA, selectable in the config menu (keys 11/12) or by SysEx
+0x25. Details: `docs/FIRMWARE.md` "CV DAC", `src/cvdac.h`.

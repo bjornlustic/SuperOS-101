@@ -15,6 +15,8 @@
 //   UP / DOWN     -> next / previous MIDI clock division
 //   keys 1-10     -> MIDI clock division direct: 1/4 1/4d 1/4t 1/8 1/8d 1/8t
 //                    1/16 1/16d 1/16t 1/32 (lowest key = 1/4)
+//   key 11 / 12   -> accent model MC-202 / TB-303 (cvdac.h)
+//   key 13        -> toggle MIDI filter cutoff (CC) on/off
 //   KEY-TRANSPOSE -> exit, resume the running firmware
 #pragma once
 #include <Arduino.h>
@@ -24,6 +26,7 @@
 #include "combined.h"
 #include "emu101.h"
 #include "midiclock.h"
+#include "cvdac.h"
 
 namespace menu {
 
@@ -95,6 +98,10 @@ inline void Poll() {
     midiclk::SetDiv((uint8_t)((midiclk::DivIdx() + midiclk::DIV_COUNT - 1) % midiclk::DIV_COUNT));
   for (uint8_t k = 0; k < midiclk::DIV_COUNT; ++k)
     if (keyRise & (1UL << k)) midiclk::SetDiv(k);
+  // CV DAC: keys 11/12 pick the accent model, key 13 toggles MIDI cutoff.
+  if (keyRise & (1UL << 10)) cvdac::SetMode(cvdac::MODE_MC202);
+  if (keyRise & (1UL << 11)) cvdac::SetMode(cvdac::MODE_TB303);
+  if (keyRise & (1UL << 12)) cvdac::SetCutoffEnabled(!(cvdac::Get().flags & cvdac::F_MIDI_CUTOFF));
 
   if (rise & (1u << controls::BTN_LOAD)) {
     if (emu101::available()) RebootTo(FW_EMU);   // no ROM embedded -> ignore

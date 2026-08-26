@@ -10,7 +10,11 @@
 //   0x002        settings flags: bit0 = MIDI clock sync on
 //   0x003        MIDI clock division index (midiclock.h table)
 //   0x004        MIDI channel 0..15 (sysex.h)
-//   0x010..      free (SuperOS patterns live in the flash arena, flash_persist.h)
+//   0x010        CV DAC settings magic (cvdac.h, EE_CV_MAGIC_VAL)
+//   0x011..0x01C CV DAC settings: center(2), cutoff CC, flags, accent mode,
+//                VCF/VCA amounts, decay, velocity threshold, res depth, build-up,
+//                board variant (1 = bipolar, default; 0 = unreworked first-batch v1.1)
+//   0x020..      free (SuperOS patterns live in the flash arena, flash_persist.h)
 //   0x100        emulator RAM-image magic (EE_EMU_MAGIC_VAL when valid)
 //   0x101..0x164 emulator "battery RAM": the 80C49's RAM 0x1C..0x7F (the 100
 //                sequencer steps the original kept alive on its battery; the

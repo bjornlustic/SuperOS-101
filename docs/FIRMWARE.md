@@ -195,3 +195,44 @@ Still stubbed / to refine:
       (we currently use our own note/rest/tie encoding, not the original byte packing).
 - [ ] Confirm **U&D turn-around** behaviour (does it repeat top/bottom notes?).
 - [ ] Measure real **S/H acquisition + droop** to set loop rate and settle delay.
+
+---
+
+## CV DAC: MIDI filter cutoff + accent (`src/cvdac.h`, board v1.1+)
+
+Hardware: U5 MCP4822 on PORTA (PA0 ~CS, PA1 SCK, PA2 SDI), 1 LSB = 1 mV. Two
+board variants, `hw` in the settings (SysEx 0x25 byte 12, default 1 = bipolar; set 0 on an unreworked first-batch board):
+
+| `hw` | board | VCF path | cutoff range | VCA path |
+|---|---|---|---|---|
+| 0 | first-batch v1.1 (fabbed 2026-08-20) before rework: R8 100k, R9 4.7k, no bias | additive only, center 0 V, 0.55 throw max | CC 0..127 = 0..+0.55 throw | 4.7k: up to 0.94x envelope |
+| 1 | **bipolar (default)**: current design, or a first-batch board reworked (R8 -> 27k, R9 -> 2.2k, +68k from the -5.3 V rail to the VCF pad) | center ~2105 mV (-5.3 V rail; calibrate), ±1 throw | CC 64 = slider, 0/127 = ∓/±1 throw | 2.2k: up to 2x envelope |
+
+VOUTA -> R8 -> VCF cutoff summing node (IC18b, virtual ground). VOUTB -> R9 ->
+BA662 pin 1 (VCA current node), parked at 650 mV. Accent depths are the same in
+fader terms on both variants (the unipolar path is scaled by 100/27), clamped
+by the DAC's 0.55-throw ceiling on `hw` 0.
+
+Per main-loop pass: `VOUTA = center + cutoff(CC, one-pole glide tau ~16 ms) +
+vcfAccent(t)`. Cutoff accepts 14-bit CC (MSB on CC 74, LSB on CC 106); a 7-bit
+CC step (32 LSB, ~2 semitones of cutoff) is glided over ~50 ms so sweeps have
+no audible stepping, while a full-range jump still lands in under 100 ms.
+`VOUTA = ... +`, `VOUTB = 650 + env(t) * vcaAmount`. The DAC is only written when
+a code changes (~40 us per channel at 4 MHz, bit-banged).
+
+Accent trigger: a fresh note (gate rising, or a non-legato retrigger flagged by
+the engine's PORTAMENTO-OFF pulse) whose MIDI velocity >= `velThr`
+(default 100). Panel / sequencer notes carry no velocity; the `ACCENT_ALL` flag
+accents every note. Two models, selectable (menu keys 11/12, SysEx 0x25):
+
+| | MC-202 | TB-303 |
+|---|---|---|
+| envelope | 7 ms one-pole attack, exponential decay `decay10ms` (default 300 ms) | same attack, **fixed 200 ms** decay (the 303 overrides DECAY on accents) |
+| VCF | only the part above a 15 % threshold passes (the MC-202's two diodes), max ~0.4 fader throw | env/2 + **build-up** (leaky integrator, +`buildup` per hit, 400 ms bleed = C13), scaled by `resDepth` (stands in for the 303's second RESONANCE pot gang; the SH-101's RES slider is a passive audio attenuator and cannot be read), max ~0.8 fader throw |
+| VCA | `vcaAmount` 64 = +1 envelope (the MC-202's 3.3k‖3.3k) | `vcaAmount` up to the cap of **100 = +1.6 envelopes** (the 303's 1k vs 2.2k would be +2.2; capped because BA662 pin 1 is rated ~2 mA and the envelope alone is ~0.78 mA: 0.78 + 1.23 = 2.0 mA at amount 100) |
+
+Settings persist in internal EEPROM 0x010..0x01B (`combined.h`). SysEx 0x23 /
+0x24 / 0x25 carry the 11-byte config (`cvdac::Pack` order) plus the live DAC
+codes for metering. Headroom note: at cutoff CC near the top the VCF accent
+saturates (the filter is wide open there anyway); R8 22k would buy +50 % more
+range if ever wanted.

@@ -15,8 +15,11 @@
 #include "midi.h"
 #include "midiclock.h"
 #include "sysex.h"
+#include "cvdac.h"
 
 static engine::NoteEngine    g_engine;
+static uint8_t               g_lastVel = 0;       // velocity of the latest MIDI note-on (accent trigger)
+static bool                  g_prevGate = false;  // for the fresh-note edge into cvdac
 static controls::Buttons     g_buttons;
 static bool                  g_lastClock = false;
 static uint8_t               g_rnd = 0xA5;
@@ -31,7 +34,8 @@ static uint32_t              g_lastEditMs = 0;    // for the deferred flash flus
 static uint32_t g_midiMask = 0;
 static uint8_t  g_extStack[8]; static uint8_t g_extN = 0;
 
-static void MidiNoteOn(uint8_t note, uint8_t) {
+static void MidiNoteOn(uint8_t note, uint8_t vel) {
+  g_lastVel = vel;   // consumed by the accent trigger when the engine starts the note
   int16_t key = (int16_t)note - (engine::MIDI_CV_OFFSET + 0x0C + engine::CV_BASE);
   if (key >= 0 && key < 32) { g_midiMask |= (1UL << key); return; }
   for (uint8_t i = 0; i < g_extN; ++i) if (g_extStack[i] == note) return;
@@ -51,6 +55,7 @@ static int16_t ExtCv() {
 }
 static void MidiProgram(uint8_t pc) { g_engine.selectPattern(pc & 7); }
 static void MidiRealtime(uint8_t b) { midiclk::OnRealtime(b); }
+static void MidiCC(uint8_t num, uint8_t val) { cvdac::OnCc(num, val); }   // filter cutoff (CC 74 default)
 
 // --- MIDI note output --------------------------------------------------------
 static int16_t g_outNote = -1;
@@ -89,6 +94,16 @@ static void SendConfig() {
   midi::SendSysex(body, n);
 }
 static void SendAck(uint8_t code) { uint8_t b[2] = {0x14, code}; midi::SendSysex(b, 2); }
+// 0x24: CV DAC config (cvdac.h Pack order) + live codes for the editor's meters.
+static void SendCvConfig() {
+  uint8_t body[1 + cvdac::CFG_LEN + 4];
+  body[0] = 0x24;
+  cvdac::Pack(cvdac::Get(), body + 1);
+  uint16_t a = cvdac::CodeA(), b = cvdac::CodeB();
+  body[1 + cvdac::CFG_LEN + 0] = a & 0x7F; body[1 + cvdac::CFG_LEN + 1] = (a >> 7) & 0x1F;
+  body[1 + cvdac::CFG_LEN + 2] = b & 0x7F; body[1 + cvdac::CFG_LEN + 3] = (b >> 7) & 0x1F;
+  midi::SendSysex(body, sizeof(body));
+}
 static void SendStep() {
   uint8_t b[3] = {0x15, g_engine.seq().current(), g_engine.seq().position()};
   midi::TrySendSysex(b, 3);
@@ -114,6 +129,13 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     case 0x1D: if (len >= 2) { g_engine.selectPattern(body[1]); SendConfig(); } break;
     case 0x1E: if (len >= 2) { g_engine.setPlaying(body[1] != 0); } break;   // transport from the editor
     case 0x20: SendConfig(); break;
+    case 0x23: SendCvConfig(); break;
+    case 0x25: {   // set CV DAC config; the editor gets the applied values back
+      cvdac::Settings s = cvdac::Get();
+      if (len >= 1 + cvdac::CFG_LEN && cvdac::Unpack(body + 1, s)) cvdac::Set(s);
+      SendCvConfig();
+      break;
+    }
     case 0x22:
       if (len >= 4) {
         midi::SetChannel(body[1]);
@@ -161,8 +183,9 @@ void superos_setup() {
   g_buttons.Scan();
   midi::Handlers h;
   h.noteOn = MidiNoteOn; h.noteOff = MidiNoteOff; h.program = MidiProgram;
-  h.sysex = OnSysex; h.realtime = MidiRealtime;
+  h.sysex = OnSysex; h.realtime = MidiRealtime; h.cc = MidiCC;
   midi::SetHandlers(h);
+  cvdac::Begin();   // MCP4822: VOUTA at the cutoff center, VOUTB parked
 #ifdef USB_SERIAL
   Serial.begin(115200);
 #endif
@@ -202,6 +225,18 @@ void superos_loop() {
   engine::Output out = g_engine.update(keys, ExtCv(), g_buttons.hold, panel, g_buttons, clockEdge, halfEdge);
   hw::DacWrite(out.cv, ROUTE_CV_OUT);
   MidiOut(out.cv, out.gate);
+
+  // CV DAC (cvdac.h): a fresh note = gate rising from silence, or a non-legato
+  // retrigger (the engine flags those with the PORTAMENTO-OFF pulse). It fires
+  // the accent envelope when the note's MIDI velocity clears the threshold;
+  // panel and sequencer notes carry no velocity (ACCENT_ALL flag covers them).
+  // Then one tick of the envelope / cutoff slew and the DAC writes.
+  {
+    bool fresh = out.gate && (!g_prevGate || out.portaOff);
+    g_prevGate = out.gate;
+    if (fresh) { cvdac::NoteOn(g_lastVel); g_lastVel = 0; }
+    cvdac::Tick();
+  }
   if (midi::HostSeen()) {
     if (g_engine.seq().consumeStepChanged()) SendStep();
     // Panel edits/selection mirror to the editor: pattern data after LOAD,

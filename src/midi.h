@@ -39,6 +39,15 @@
 //   0x20                  request config              -> 0x21
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
+//   (CC cutoffCc, default 74, moves the filter; CC cutoffCc+32 = 106 is its
+//    14-bit LSB; see cvdac.h)
+//   0x23                  request CV DAC config        -> 0x24
+//   0x24 <12 cfg bytes> <codeA lo7 hi5> <codeB lo7 hi5>   (cvdac.h Pack order:
+//                         center lo7/hi5, cutoff CC, flags, accent mode,
+//                         VCF amount, VCA amount, decay/10ms, vel threshold,
+//                         res depth, build-up, board variant; then the live
+//                         DAC codes)
+//   0x25 <12 cfg bytes>   set CV DAC config            -> 0x24
 //   0x2F                  switch to the 80C49 emulator (reboots)
 //   0x3B                  bench probe                 -> 0x3C (sysex.h: reset
 //                         cause, USB regs, boot count, previous boot stage)
