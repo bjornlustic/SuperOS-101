@@ -23,6 +23,14 @@ QUADRATIC     y = a + b*x + c*x^2: chi2 25.3 on 1 dof
    params +0.59837+/-0.00732  +0.03317+/-0.00297  +0.00039+/-0.00007
    residuals n36 -0.2043 (-1.4sd)  n60 +0.4245 (+4.5sd)  n72 -0.0644 (-1.7sd)  n99 +0.0004 (+0.1sd)
 
+CORRECTION (CORE, re-derived): the sigmas on the two lines below divide the
+miss by the MEASUREMENT's error alone. A prediction carries its own error, and
+propagating the note 36 and note 99 errors through the two-point extrapolation
+gives prediction sigma 0.0618, so the affine miss is -4.9 sd, not -9.5. The
+refutation stands (4.9 sigma against a law fitted to two of the four points);
+what does not stand is a predicted value quoted with no error bar, which is the
+same class of instrument fault this claim already carries four instances of.
+
 A 2-parameter fit to notes 36+60+99 predicts note 72 at:
   affine through 36 and 99: +2.0661 c   vs measured +1.7122  -> -9.5 sd
   proportional through 36+60: +1.8599 c   vs measured +1.7122  -> -3.9 sd

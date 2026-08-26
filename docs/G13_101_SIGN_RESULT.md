@@ -1,5 +1,39 @@
 # claim-038 G13: the 63:39:0 sign test, run
 
+> **SECOND CORRECTION, 2026-08-26, by the author. THE ONE SENTENCE THIS
+> DOCUMENT MOST WANTS YOU TO BELIEVE IS NOW REFUTED.** The block below ends
+> "the near-vanishing at note 99 survives both defects and is the part I would
+> still defend". **Note 99 does not vanish.** Re-taken as five screened
+> repeats it is **+0.5988 +/- 0.0073 c**, and the old +0.1872 came from
+> reading h7 at -54 dB, the weakest partial in the capture. Everything in this
+> document about note 99 below this line is superseded.
+>
+> **63:39:0 is REFUTED at its control point.** Four rows now exist:
+>
+>     63-cv 63 (note 36)  +4.0224 +/- 0.0754 stat  0.1226 harmonic-systematic
+>     63-cv 39 (note 60)  +2.9062 +/- 0.0918 stat  0.0213
+>     63-cv 27 (note 72)  +1.7122 +/- 0.0286 stat  0.0241
+>     63-cv  0 (note 99)  +0.5988 +/- 0.0073 stat  0.0005
+>
+> **NO low-order law in (63-cv) fits them**: proportional chi2 6714 on 3 dof,
+> affine 52.6 on 2, quadratic 25.3 on 1. **An affine law WAS proposed here
+> earlier today and is also refuted**, by the note-72 row taken specifically to
+> test it: it predicted +2.07 c against a measured +1.71, a 4.9 sigma miss once
+> the prediction's own error is propagated (NOT the 9.5 sigma first written,
+> which divided by the measurement error alone; CORE caught that and it is the
+> same class of fault this claim already carries).
+>
+> **What survives is the SHAPE**: the shift is monotone decreasing in cv across
+> four notes spanning the full DAC range and is largest at cv 0. What fails is
+> every simple law written for it so far.
+>
+> Current: `artifacts/g13/101-four-rows-and-the-law.txt`,
+> `101-note99-and-the-law.txt`, `101-harmonic-level-guard.txt`, and the ledger
+> entry at `claim-038` (2026-08-26). Still open and unchanged: no
+> rail-versus-load attribution, because modes 4 and 8 have never produced a
+> usable cell.
+
+
 > **CORRECTION, same day, by the author.** The first version of this document
 > said 63:39:0 was **refuted as a ratio** at 5.4 sigma. **That was wrong and it
 > is withdrawn.** Two defects in my own analysis, both found by running the
