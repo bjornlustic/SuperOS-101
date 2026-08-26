@@ -83,6 +83,20 @@ SLOT = 6
 SLOT_ALT = 5
 SLOT_ALT_LEN = 4
 
+# Wall-clock ceiling for ONE time-channel case, seconds. The sweep's default of
+# 1.0 s is what skips the 15 long-pattern cases on the device transport (two
+# wraps of a 127-step pattern is 765 clock bytes, ~3 s), and check_time's own
+# docstring says to "run it in the focused suite, not the sweep". THAT ROUTE DID
+# NOT EXIST: nothing could raise the ceiling, so the advice named an action the
+# tool could not perform and the 15 cases went unrun for three sessions. Raising
+# it is deliberate and per-run, never the default:
+#
+#     SUPEROS_101_TIME_BUDGET=10 python3 timing/suite.py 101
+#
+# The suite runner lives in the shared repo and only CORE writes there, so this
+# is an env var in this machine's own adapter rather than a suite option.
+TIME_BUDGET = float(os.environ.get("SUPEROS_101_TIME_BUDGET", "1.0"))
+
 
 # --------------------------------------------------------------------------- #
 # The 101's own rules, reimplemented (src/engine.h)
@@ -913,10 +927,11 @@ class Adapter:
              else self.model(case)["length"])
         ticks = (2 * n + 1) * TICKS_PER_STEP
         budget = ticks * self.link.tick_cost
-        if budget > 1.0:
+        if budget > TIME_BUDGET:
             raise _skip(f"length {n} needs {ticks} ticks = {budget:.1f} s on "
-                        f"the {self.link.kind} transport; run it in the focused "
-                        "suite, not the sweep")
+                        f"the {self.link.kind} transport, over the "
+                        f"{TIME_BUDGET:.1f} s per-case ceiling; re-run with "
+                        f"SUPEROS_101_TIME_BUDGET={budget:.0f} or higher")
         ch.uses("time")
         attempts = []
         for _ in range(3):
