@@ -9,108 +9,246 @@
   :root {
     --black:#000; --white:#fff; --gray-1:#f2f2f2; --gray-2:#e0e0e0; --gray-3:#b0b0b0; --gray-4:#606060;
     --red:#cc0000; --rule:2px solid #000; --rule-sm:1px solid #000;
-    --font:"Helvetica Neue",Helvetica,Arial,sans-serif; --pad:clamp(10px,2.5vw,16px);
+    --font:"Helvetica Neue",Helvetica,Arial,sans-serif; --mono:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --pad:clamp(10px,2.5vw,16px);
   }
   html { background:var(--white); color:var(--black); font-family:var(--font); font-size:14px; -webkit-font-smoothing:antialiased; }
   body { min-height:100vh; overflow-x:hidden; }
-  .app { padding:var(--pad) var(--pad) clamp(16px,3vw,48px); max-width:1400px; margin:0 auto; min-width:0; }
+  .app { padding:var(--pad) var(--pad) clamp(16px,3vw,48px); max-width:1500px; margin:0 auto; min-width:0; }
+
+  /* ── Header ── */
   .header { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 20px;
-            padding-bottom:10px; border-bottom:var(--rule); margin-bottom:clamp(12px,2vw,24px); }
-  .logo { font-size:clamp(20px,4.5vw,30px); font-weight:900; letter-spacing:-0.04em; text-transform:uppercase; line-height:1; }
-  .logo-sub { font-size:11px; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; color:var(--gray-4); }
-  .banner { display:none; padding:8px var(--pad); border:var(--rule); margin-bottom:6px; font-size:10px; font-weight:700;
+            padding-bottom:12px; border-bottom:var(--rule); margin-bottom:clamp(12px,2vw,24px); }
+  .logo { font-size:clamp(22px,5vw,30px); font-weight:900; letter-spacing:-0.04em; text-transform:uppercase; line-height:1; }
+  .logo-sub { font-size:11px; font-weight:700; letter-spacing:0.2em; text-transform:uppercase; color:var(--gray-4); align-self:flex-end; padding-bottom:2px; }
+
+  .banner { display:none; padding:10px 14px; border:var(--rule); margin-bottom:6px; font-size:11px; font-weight:700;
             letter-spacing:0.04em; text-transform:uppercase; background:var(--black); color:var(--white); }
   .banner.visible { display:block; }
+
+  /* ── Control strips ── */
   .strip { display:flex; flex-wrap:wrap; align-items:stretch; border:var(--rule); margin-bottom:6px; min-width:0; }
-  .group { display:flex; align-items:center; padding:0 var(--pad); border-bottom:var(--rule-sm); min-width:0; flex:1 1 100%; }
+  .group { display:flex; align-items:center; padding:0 14px; border-bottom:var(--rule-sm); min-width:0; flex:1 1 100%; }
   .group:last-child { border-bottom:none; }
-  .group-inner { display:flex; align-items:center; gap:6px; padding:5px 0; flex-wrap:wrap; min-width:0; flex:1; }
-  .lbl { font-size:8px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); white-space:nowrap;
-         padding-right:8px; border-right:var(--rule-sm); margin-right:8px; align-self:stretch; display:flex; align-items:center; flex-shrink:0; }
+  .group-inner { display:flex; align-items:center; gap:6px; padding:8px 0; flex-wrap:wrap; min-width:0; flex:1; }
+  .lbl { font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; color:var(--gray-4); white-space:nowrap;
+         padding-right:10px; border-right:var(--rule-sm); margin-right:10px; align-self:stretch; display:flex; align-items:center; flex-shrink:0; }
   @media (min-width:640px) {
     .group { flex:0 1 auto; border-bottom:none; border-right:var(--rule-sm); }
     .group:last-child { border-right:none; }
     .group--grow { flex:1 1 220px; }
   }
   select, input[type="number"] { height:30px; padding:0 8px; background:var(--white); border:var(--rule-sm); color:var(--black);
-    font-family:var(--font); font-size:13px; font-weight:600; outline:none; border-radius:0; appearance:none; }
-  select:focus { background:var(--black); color:var(--white); }
+    font-family:var(--font); font-size:13px; font-weight:600; outline:none; border-radius:0; appearance:none; transition:background .08s; }
+  select:focus, input[type="number"]:focus { background:var(--black); color:var(--white); }
   select { cursor:pointer; padding-right:8px; max-width:100%; }
-  .btn { height:28px; padding:0 10px; background:var(--white); border:var(--rule-sm); color:var(--black); font-family:var(--font);
-         font-size:10px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; white-space:nowrap; border-radius:0; }
+  .btn { height:30px; padding:0 12px; background:var(--white); border:var(--rule-sm); color:var(--black); font-family:var(--font);
+         font-size:10px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; white-space:nowrap;
+         border-radius:0; transition:background .08s, color .08s; }
   .btn:hover:not(:disabled) { background:var(--black); color:var(--white); }
   .btn:disabled { opacity:0.25; cursor:default; }
   .btn-primary { background:var(--black); color:var(--white); border-color:var(--black); font-weight:900; }
   .btn-primary:hover:not(:disabled) { background:var(--gray-4); border-color:var(--gray-4); }
-  .btn-ghost { height:28px; padding:0 10px; background:var(--white); border:var(--rule-sm); font-family:var(--font); font-size:9px;
-               font-weight:900; letter-spacing:0.18em; text-transform:uppercase; cursor:pointer; border-radius:0; }
+  .btn-ghost { height:30px; padding:0 14px; background:var(--white); border:var(--rule-sm); font-family:var(--font); font-size:9px;
+               font-weight:900; letter-spacing:0.18em; text-transform:uppercase; cursor:pointer; border-radius:0; transition:background .08s, color .08s; }
   .btn-ghost:hover, .btn-ghost.is-connected { background:var(--black); color:var(--white); }
-  .btn.is-on { background:var(--black); color:var(--white); }
-  .btn-red { background:var(--red); color:var(--white); border-color:var(--red); }
+  .btn.is-on { background:var(--black); color:var(--white); border-color:var(--black); }
+  .btn.is-live { background:var(--red); color:var(--white); border-color:var(--red); }
   #midiStatus, .status { font-size:11px; font-weight:600; color:var(--gray-3); padding-left:8px; }
   #midiStatus.is-ok, .status.is-ok { color:var(--black); }
-  /* pattern pills */
-  .pat-bar { display:flex; align-items:stretch; border:var(--rule); margin-bottom:6px; overflow-x:auto; }
-  .bank-label { font-size:9px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); padding:0 10px;
-                display:flex; align-items:center; border-right:var(--rule-sm); white-space:nowrap; }
-  .pat-pill { flex:0 0 auto; width:44px; height:38px; border-right:var(--rule-sm); background:var(--white); color:var(--gray-3);
-              font-size:11px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; user-select:none; position:relative; }
+
+  /* ── Pattern pills ── */
+  .bank-group-bar { display:flex; align-items:stretch; flex-wrap:wrap; border:var(--rule); margin-bottom:6px; overflow-x:auto;
+                    -webkit-overflow-scrolling:touch; min-width:0; }
+  .bank-label { font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; color:var(--gray-4); padding:0 12px;
+                display:flex; align-items:center; border-right:var(--rule-sm); white-space:nowrap; flex-shrink:0; }
+  .pat-pills { display:flex; gap:0; flex-shrink:0; }
+  .pat-pill { width:40px; height:38px; border-right:var(--rule-sm); background:var(--white); color:var(--gray-3); font-family:var(--mono);
+              font-size:11px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center;
+              transition:all .08s; position:relative; user-select:none; }
   .pat-pill:hover:not(.is-active) { background:var(--gray-1); color:var(--black); }
-  .pat-pill.is-active { background:var(--black); color:var(--white); }
+  .pat-pill.is-active { background:var(--black); color:var(--white); z-index:1; }
   .pat-pill.is-dirty:not(.is-active) { box-shadow:inset 0 -3px 0 0 var(--red); color:var(--black); }
   .pat-pill.is-dirty.is-active { box-shadow:inset 0 -3px 0 0 var(--red); }
   .pat-pill.is-playing { animation:pill-blink 0.5s steps(1) infinite; }
   .pat-pill.is-playing.is-active { animation:pill-blink-inv 0.5s steps(1) infinite; }
   @keyframes pill-blink { 0%,100%{background:var(--white)} 50%{background:var(--gray-2)} }
   @keyframes pill-blink-inv { 0%,100%{background:var(--black)} 50%{background:var(--gray-4)} }
-  .pat-bar .spacer { flex:1; }
-  /* sequencer */
-  .seq-panel { border:var(--rule); margin-bottom:6px; }
-  .seq-toolbar { display:flex; align-items:center; padding:8px var(--pad); border-bottom:var(--rule); flex-wrap:wrap; gap:8px 12px; }
-  .seq-toolbar .lbl { border-right:none; margin-right:0; padding-right:0; }
-  .steps { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px,1fr)); gap:0; }
-  .step { border-right:var(--rule-sm); border-bottom:var(--rule-sm); display:flex; flex-direction:column; align-items:stretch;
-          user-select:none; position:relative; background:var(--white); padding:14px 4px 4px; gap:3px; }
-  .step .i { position:absolute; top:2px; left:5px; font-size:8px; font-weight:700; color:var(--gray-3); }
-  .step .row { display:flex; align-items:center; justify-content:center; gap:2px; }
-  .step .n { flex:1; text-align:center; font-size:14px; font-weight:900; letter-spacing:-0.02em; cursor:pointer; line-height:22px; }
-  .step .sb { width:20px; height:20px; border:var(--rule-sm); background:var(--white); font-family:var(--font); font-size:9px; font-weight:900;
-              cursor:pointer; border-radius:0; padding:0; line-height:1; color:var(--black); }
-  .step .sb:hover { background:var(--black); color:var(--white); }
-  .step .sb.oct { width:auto; flex:1; font-size:7px; letter-spacing:0.08em; }
-  .step .tb { flex:1; height:18px; border:var(--rule-sm); background:var(--white); font-family:var(--font); font-size:7px; font-weight:900;
-              letter-spacing:0.12em; text-transform:uppercase; cursor:pointer; border-radius:0; padding:0; color:var(--gray-4); margin-right:-1px; }
-  .step .tb.on { background:var(--black); color:var(--white); border-color:var(--black); }
-  .step .tb:hover:not(.on) { background:var(--gray-1); color:var(--black); }
-  .step.rest .n { color:var(--gray-3); }
-  .step.rest { background:var(--gray-1); }
-  .step.legato .n::before { content:"\223F\00a0"; font-weight:400; color:var(--gray-4); }   /* ~ = glide in */
-  .step.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
-  .step.is-play { background:var(--red); } .step.is-play .n, .step.is-play .i { color:var(--white); }
-  .step.is-play .tb:not(.on), .step.is-play .sb { background:var(--white); }
-  .step .hd { position:absolute; top:1px; right:2px; display:flex; gap:1px; }
-  .step .hb { width:16px; height:12px; border:none; background:transparent; font-family:var(--font); font-size:10px; font-weight:900;
-              line-height:1; cursor:pointer; color:var(--gray-3); padding:0; border-radius:0; }
-  .step .hb:hover { color:var(--black); }
-  .step .hb.del:hover { color:var(--red); }
-  .step.is-play .hb { color:var(--white); }
-  .len-ctl { display:flex; align-items:center; gap:0; }
-  .len-ctl input { width:52px; text-align:center; height:28px; border-left:none; border-right:none; }
-  .len-ctl .btn { height:28px; width:28px; padding:0; }
-  .len-ctl .btn.q { width:auto; padding:0 6px; font-size:9px; border-left:none; }
-  .step.add { align-items:center; justify-content:center; color:var(--gray-3); font-size:22px; font-weight:300; cursor:pointer; min-height:96px; }
-  .step.add:hover { background:var(--gray-1); color:var(--black); }
-  .empty { grid-column:1 / -1; padding:18px var(--pad); font-size:11px; color:var(--gray-4); border-bottom:var(--rule-sm); }
-  /* keyboard */
+  .bank-group-bar .spacer { flex:1; }
+  .bar-actions { display:flex; align-items:center; gap:6px; padding:0 12px; flex:0 0 auto; }
+  .edit-live-btn { flex-shrink:0; height:38px; padding:0 14px; background:var(--white); border:none; border-left:var(--rule-sm); border-right:var(--rule-sm);
+                   color:var(--gray-4); font-family:var(--font); font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase;
+                   cursor:pointer; transition:background .08s, color .08s; }
+  .edit-live-btn:hover { background:var(--gray-1); color:var(--black); }
+  .edit-live-btn.is-on { background:var(--red); color:var(--white); }
+
+  /* ── Sequencer panel ── */
+  .seq-panel { border:var(--rule); margin-bottom:6px; min-width:0; }
+  .seq-toolbar { display:flex; align-items:center; padding:10px 14px; border-bottom:var(--rule); flex-wrap:wrap; gap:10px 14px; min-width:0; }
+  .seq-toolbar-lbl { font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; color:var(--gray-4); }
+  .seq-toolbar-steps { display:flex; align-items:center; gap:0; flex-shrink:0; }
+  .seq-pat-len { width:54px; text-align:center; flex-shrink:0; border-left:none; border-right:none; }
+  .len-adj-btn { width:26px; height:30px; padding:0; border:var(--rule-sm); background:var(--white); color:var(--black); font-size:14px;
+                 font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:0; }
+  .len-adj-btn:hover { background:var(--gray-1); }
+  .len-adj-btn:active { background:var(--black); color:var(--white); }
+  .seq-hint { font-size:11px; font-weight:500; color:var(--gray-3); letter-spacing:0.02em; flex:1 1 260px; min-width:0; }
+  .seq-hint b { color:var(--black); font-weight:700; }
+  .seq-grid-wrap { padding:12px; overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; min-width:0; }
+  .seq-grid { display:grid; width:100%; min-width:0; grid-template-columns:repeat(8, minmax(clamp(48px,10vw,78px),1fr));
+              gap:0; border-top:var(--rule-sm); border-left:var(--rule-sm); }
+  .seq-grid.cols-16 { grid-template-columns:repeat(16, minmax(clamp(42px,5.5vw,62px),1fr)); }
+  .seq-empty { padding:18px 14px; font-size:11px; color:var(--gray-4); }
+
+  /* ── Step card ── */
+  .step-card { background:var(--white); border-right:var(--rule-sm); border-bottom:var(--rule-sm); padding:8px; display:flex;
+               flex-direction:column; gap:6px; transition:background .08s; min-width:0; position:relative; }
+  .step-card:hover { background:var(--gray-1); }
+  .step-card.is-note { background:var(--black); color:var(--white); }
+  .step-card.is-note:hover { background:#222; }
+  .step-card.is-tie { background:var(--gray-2); }
+  .step-card.is-tie:hover { background:#d0d0d0; }
+  .step-card.is-rest { opacity:0.52; }
+  .step-card.is-rest:hover { opacity:0.8; }
+  .seq-grid > .step-card:nth-child(4n) { border-right:var(--rule); }
+  .step-card.add-card { align-items:center; justify-content:center; color:var(--gray-3); font-size:24px; font-weight:300;
+                        cursor:pointer; min-height:140px; }
+  .step-card.add-card:hover { background:var(--gray-1); color:var(--black); }
+
+  .step-play-dot { position:absolute; top:3px; right:3px; width:7px; height:7px; border-radius:50%; background:var(--red); display:none; }
+  .step-card.is-playing-step .step-play-dot { display:block; animation:dot-blink .25s steps(1) 2; }
+  @keyframes dot-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  .step-num { font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:0.1em; color:var(--gray-3); line-height:1; }
+  .is-note .step-num { color:rgba(255,255,255,0.4); }
+  .is-tie .step-num { color:var(--gray-4); }
+
+  .step-time { display:flex; gap:0; }
+  .t-btn { flex:1; height:18px; border:var(--rule-sm); margin-right:-1px; font-size:8px; font-weight:900; letter-spacing:0.08em;
+           cursor:pointer; background:var(--white); color:var(--gray-3); font-family:var(--font); text-transform:uppercase;
+           border-radius:0; transition:all .08s; padding:0; }
+  .t-btn:last-child { margin-right:0; }
+  .t-btn:hover { background:var(--gray-2); color:var(--black); }
+  .t-btn.is-on { background:var(--black); border-color:var(--black); color:var(--white); z-index:1; }
+  .is-note .t-btn { background:transparent; border-color:rgba(255,255,255,0.25); color:rgba(255,255,255,0.4); }
+  .is-note .t-btn:hover { background:rgba(255,255,255,0.15); color:var(--white); }
+  .is-note .t-btn.is-on { background:var(--white); border-color:var(--white); color:var(--black); }
+  .is-tie .t-btn { background:transparent; border-color:var(--gray-3); color:var(--gray-4); }
+  .is-tie .t-btn.is-on { background:var(--black); border-color:var(--black); color:var(--white); }
+
+  .step-name { text-align:center; font-size:19px; font-weight:900; letter-spacing:-0.04em; line-height:1; height:22px; overflow:hidden; color:var(--black); }
+  .is-note .step-name { color:var(--white); }
+  .step-name.is-muted { font-size:15px; font-weight:700; color:var(--gray-3); }
+  .is-note .step-name .tie-mark, .step-name .tie-mark { font-weight:400; opacity:0.5; }
+
+  .pitch-knob-wrap { display:flex; flex-direction:row; align-items:stretch; gap:6px; min-height:72px; user-select:none; touch-action:none; }
+  .pitch-knob-track { flex:1; position:relative; height:72px; border:var(--rule-sm); background:var(--gray-1); cursor:ns-resize; }
+  .is-note .pitch-knob-track { border-color:rgba(255,255,255,0.35); background:rgba(255,255,255,0.08); }
+  .is-tie .pitch-knob-track { border-color:var(--gray-3); }
+  .pitch-knob-fill { position:absolute; left:0; right:0; bottom:0; background:var(--gray-3); pointer-events:none; }
+  .is-note .pitch-knob-fill { background:rgba(255,255,255,0.35); }
+  .pitch-knob-thumb { position:absolute; left:-1px; right:-1px; height:6px; margin-bottom:-3px; background:var(--black); pointer-events:none; border:var(--rule-sm); }
+  .is-note .pitch-knob-thumb { background:var(--white); border-color:var(--white); }
+
+  .step-oct-row { display:flex; gap:0; margin-top:2px; }
+  .f-btn-o { flex:1; min-width:0; height:20px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
+             font-size:7px; font-weight:900; letter-spacing:0; line-height:1.05; cursor:pointer; font-family:var(--font);
+             border-radius:0; transition:all .08s; padding:1px 2px; }
+  .f-btn-o:last-child { margin-right:0; }
+  .f-btn-o:hover { background:var(--gray-2); color:var(--black); }
+  .is-note .f-btn-o { border-color:rgba(255,255,255,0.25); color:rgba(255,255,255,0.45); }
+  .is-note .f-btn-o:hover { background:rgba(255,255,255,0.15); color:var(--white); }
+  .is-tie .f-btn-o { border-color:var(--gray-3); color:var(--gray-4); }
+
+  .step-edit-row { display:flex; gap:0; margin-top:2px; }
+  .e-btn { flex:1; min-width:0; height:16px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
+           font-size:8px; font-weight:900; cursor:pointer; font-family:var(--font); border-radius:0; transition:all .08s; padding:0; }
+  .e-btn:last-child { margin-right:0; }
+  .e-btn:hover { background:var(--gray-2); color:var(--black); }
+  .e-btn.e-del:hover { background:var(--red); border-color:var(--red); color:var(--white); }
+  .is-note .e-btn { border-color:rgba(255,255,255,0.25); color:rgba(255,255,255,0.45); }
+  .is-note .e-btn:hover { background:rgba(255,255,255,0.15); color:var(--white); }
+  .is-note .e-btn.e-del:hover { background:var(--red); border-color:var(--red); color:var(--white); }
+  .is-tie .e-btn { border-color:var(--gray-3); color:var(--gray-4); }
+
+  .step-ratchet { display:flex; gap:0; margin-top:2px; }
+  .r-btn { flex:1; min-width:0; height:18px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
+           font-size:7px; font-weight:900; letter-spacing:0; cursor:pointer; font-family:var(--font); border-radius:0; transition:all .08s; padding:0; }
+  .r-btn:last-child { margin-right:0; }
+  .r-btn:hover { background:var(--gray-2); color:var(--black); }
+  .r-btn.is-on { background:var(--black); border-color:var(--black); color:var(--white); z-index:1; }
+  .is-note .r-btn { border-color:rgba(255,255,255,0.25); color:rgba(255,255,255,0.45); }
+  .is-note .r-btn:hover { background:rgba(255,255,255,0.15); color:var(--white); }
+  .is-note .r-btn.is-on { background:var(--white); border-color:var(--white); color:var(--black); }
+  /* Rest cards hide the pitch machinery in CSS, not JS; ratchets need a plain note */
+  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row { display:none !important; }
+  .is-rest .step-ratchet, .is-tie .step-ratchet { display:none !important; }
+  .step-card.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
+  .step-card.is-note.is-sel { outline-color:var(--red); }
+
+  /* ── Collapsible panels (config / menu map / log) ── */
+  .config-panel { border:var(--rule); margin-bottom:6px; min-width:0; }
+  .config-bar { display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer; user-select:none; transition:background .08s; }
+  .config-bar:hover { background:var(--gray-1); }
+  .config-bar.is-open { border-bottom:var(--rule-sm); }
+  .config-bar-label { font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; color:var(--gray-4); }
+  .config-bar-arrow { font-size:8px; color:var(--gray-3); display:inline-block; transition:transform .12s; }
+  .config-bar.is-open .config-bar-arrow { transform:rotate(90deg); }
+  .config-bar-status { margin-left:auto; font-size:10px; font-weight:700; color:var(--gray-3); letter-spacing:0.04em; }
+  .config-body { display:none; }
+  .config-body.is-open { display:block; }
+  .config-inner { padding:14px; display:flex; flex-wrap:wrap; gap:16px 24px; align-items:flex-start; }
+  .config-field { display:flex; flex-direction:column; gap:6px; }
+  .config-field > label { font-size:9px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); }
+  .config-note { font-size:10px; color:var(--gray-4); max-width:420px; line-height:1.5; }
+
+  /* Clock divide selector */
+  .div-grid { display:flex; gap:0; flex-wrap:wrap; }
+  .div-btn { width:56px; height:44px; border:var(--rule-sm); margin-right:-1px; margin-bottom:-1px; background:var(--white);
+             color:var(--gray-4); cursor:pointer; font-family:var(--font); border-radius:0; transition:all .08s;
+             display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; padding:0; }
+  .div-btn .dv { font-size:12px; font-weight:900; letter-spacing:-0.02em; }
+  .div-btn .dk { font-size:6px; font-weight:900; letter-spacing:0.12em; text-transform:uppercase; color:var(--gray-3); }
+  .div-btn:hover:not(.is-on) { background:var(--gray-1); color:var(--black); }
+  .div-btn.is-on { background:var(--black); color:var(--white); z-index:1; }
+  .div-btn.is-on .dk { color:var(--gray-3); }
+
+  /* ── Panel-menu keyboard map ── */
+  .menu-map { display:flex; flex-direction:column; gap:14px; padding:14px; }
+  .mm-kbd { display:flex; align-items:flex-start; height:150px; position:relative; max-width:100%; overflow-x:auto; padding-bottom:4px; }
+  .mm-key { position:relative; flex:0 0 44px; height:104px; border:var(--rule-sm); margin-right:-1px; background:var(--white);
+            display:flex; flex-direction:column; justify-content:flex-end; align-items:center; padding-bottom:4px; }
+  .mm-key.black { flex-basis:30px; height:64px; background:var(--black); z-index:1; margin-left:-15px; margin-right:-16px; }
+  .mm-key .mm-fn { font-size:8px; font-weight:900; letter-spacing:0.02em; text-align:center; line-height:1.2; color:var(--black); padding:0 2px; }
+  .mm-key.black .mm-fn { color:var(--white); }
+  .mm-key .mm-n { position:absolute; top:-14px; left:0; right:0; text-align:center; font-size:7px; font-weight:900; color:var(--gray-3); }
+  .mm-key.is-div .mm-fn { color:var(--red); }
+  .mm-key.black.is-div .mm-fn { color:#ff8a8a; }
+  .mm-legend { display:flex; flex-wrap:wrap; gap:8px 22px; font-size:10px; line-height:1.6; color:var(--gray-4); }
+  .mm-legend b { color:var(--black); }
+  .mm-btn-row { display:flex; flex-wrap:wrap; gap:0; }
+  .mm-btn { border:var(--rule-sm); margin-right:-1px; padding:6px 10px; min-width:96px; }
+  .mm-btn .bt { font-size:9px; font-weight:900; letter-spacing:0.12em; text-transform:uppercase; }
+  .mm-btn .bf { font-size:9px; color:var(--gray-4); margin-top:2px; line-height:1.35; }
+
+  /* ── On-screen keyboard ── */
   .kbd { display:flex; border:var(--rule); margin-bottom:6px; overflow-x:auto; height:70px; }
-  .key { flex:0 0 26px; border-right:var(--rule-sm); display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px; font-size:8px;
-         font-weight:700; color:var(--gray-4); cursor:pointer; user-select:none; background:var(--white); }
+  .key { flex:0 0 26px; border-right:var(--rule-sm); display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px;
+         font-size:8px; font-weight:700; color:var(--gray-4); cursor:pointer; user-select:none; background:var(--white); }
   .key.black { background:var(--black); color:var(--gray-3); flex-basis:20px; height:44px; }
   .key:hover, .key.down { background:var(--red); color:var(--white); }
   .key.inrange { border-bottom:4px solid var(--black); }
-  /* log */
-  .log { border:var(--rule); padding:6px var(--pad); height:150px; overflow:auto; font-family:Menlo,Consolas,monospace; font-size:10px; line-height:1.5; }
-  .log .err { color:var(--red); font-weight:700; } .log .ok { font-weight:700; }
+
+  /* ── Log ── */
+  #log { font-family:Menlo,Consolas,monospace; font-size:10px; font-weight:500; background:var(--gray-1); padding:12px 14px;
+         height:clamp(120px,25vh,220px); overflow:auto; color:var(--gray-4); line-height:1.8; letter-spacing:0.02em; }
+  #log .log-err { color:var(--red); font-weight:700; }
+  #log .log-ok { color:var(--black); font-weight:700; }
+  #log .log-syx { color:var(--black); }
+
+  #errorToast { position:fixed; right:16px; bottom:16px; background:var(--red); color:var(--white); border:2px solid #800;
+                padding:10px 14px; font-size:12px; font-weight:700; letter-spacing:0.04em; z-index:9999; display:none; }
+  #errorToast.visible { display:block; }
   .foot { font-size:9px; color:var(--gray-4); margin-top:8px; letter-spacing:0.04em; }
   kbd { border:var(--rule-sm); padding:0 4px; font-family:inherit; font-size:9px; }
 </style>
@@ -141,25 +279,13 @@
     </div></div>
   </div>
 
-  <!-- Config -->
-  <div class="strip" id="cfgStrip">
-    <div class="group"><span class="lbl">MIDI ch</span><div class="group-inner"><select id="selChan"></select></div></div>
-    <div class="group"><span class="lbl">Clock sync</span><div class="group-inner">
-      <button class="btn" id="btnSync">Off</button>
-      <select id="selDiv"></select>
-    </div></div>
-    <div class="group"><div class="group-inner">
-      <button class="btn btn-primary" id="btnCfgApply" disabled>Apply config</button>
-      <span class="status" id="cfgStatus"></span>
-    </div></div>
-  </div>
-
   <!-- Patterns -->
-  <div class="pat-bar" id="patBar">
+  <div class="bank-group-bar" id="patBar">
     <div class="bank-label">Pattern</div>
-    <div id="pills" style="display:flex"></div>
+    <div class="pat-pills" id="pills"></div>
+    <button class="edit-live-btn is-on" id="btnLive" title="Every edit is sent to the unit immediately (about 100 ms after you stop). Turn off to edit locally and push with Write.">&#9679; Edit live</button>
     <div class="spacer"></div>
-    <div class="group-inner" style="padding:0 var(--pad); flex:0 0 auto; gap:6px">
+    <div class="bar-actions">
       <button class="btn" id="btnPlay" disabled>&#9654; Play</button>
       <button class="btn" id="btnReadAll" disabled>&#8595; Read all</button>
       <button class="btn btn-primary" id="btnWrite" disabled>&#8593; Write pattern</button>
@@ -172,34 +298,93 @@
   <!-- Sequencer -->
   <div class="seq-panel">
     <div class="seq-toolbar">
-      <span class="lbl" id="seqTitle">Pattern 1</span>
-      <span class="lbl">Length</span>
-      <div class="len-ctl">
-        <button class="btn" id="btnLenDn" title="One step shorter">&#8722;</button>
-        <input type="number" id="inLen" min="0" max="128" value="0" title="Number of steps (1..128); adding steps appends copies of the last step" />
-        <button class="btn" id="btnLenUp" title="One step longer">+</button>
-        <button class="btn q" data-len="8">8</button><button class="btn q" data-len="16">16</button><button class="btn q" data-len="32">32</button><button class="btn q" data-len="64">64</button>
+      <span class="seq-toolbar-lbl" id="seqTitle">Pattern 1</span>
+      <div class="seq-toolbar-steps">
+        <span class="seq-toolbar-lbl" style="margin-right:10px">Steps</span>
+        <button class="len-adj-btn" id="btnLenDn" title="One step shorter">&#8722;</button>
+        <input type="number" class="seq-pat-len" id="inLen" min="0" max="128" value="0" />
+        <button class="len-adj-btn" id="btnLenUp" title="One step longer">+</button>
       </div>
-      <span class="status is-ok" id="seqLen">0 steps</span>
-      <span style="flex:1"></span>
-      <span class="lbl">Step</span>
-      <select id="selNote" title="Note of the selected step"></select>
-      <button class="btn" id="btnNote">Note</button>
-      <button class="btn" id="btnRest">Rest</button>
-      <button class="btn" id="btnTie" title="Legato: the gate is not released before this note (no envelope retrigger); with PORTAMENTO on AUTO it glides">Legato</button>
-      <button class="btn" id="btnIns" title="Insert a new step BEFORE the selected step (or use the + on each step to insert after it)">Insert before</button>
-      <button class="btn" id="btnDel" title="Delete the selected step (or use the x on each step)">Delete</button>
-      <button class="btn" id="btnClear">Clear pattern</button>
+      <button class="btn" id="btnUndo" title="Undo the last edit on this pattern (Ctrl/Cmd-Z)">Undo</button>
+      <button class="btn" id="btnClear">Clear</button>
+      <span class="seq-hint"><b>Drag a fader</b> to set the pitch. <b>N</b> note &#183; <b>L</b> legato (held into, glides on AUTO) &#183; <b>R</b> rest.
+        <b>1&#215;/2&#215;/3&#215;</b> ratchet: the note repeats that many times inside the step (on the unit: while recording, UP/DOWN cycles the last step's ratchet).
+        <b>+</b> inserts after, <b>&#215;</b> deletes. Keys: <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd>=octave), <kbd>N</kbd><kbd>R</kbd><kbd>L</kbd>, <kbd>Enter</kbd> append, <kbd>Del</kbd>.
+        Red dot = the unit's playhead.</span>
     </div>
-    <div class="steps" id="steps"></div>
-    <div class="foot" style="padding:6px var(--pad)">Per step: &#8722;/+ semitone, OCT&#8722;/OCT+ octave (range F2..C7, the SH-101 keyboard with octave transpose), Note / Rest / Legato, <b>+</b> inserts a step after, <b>&#215;</b> deletes. Legato = the previous note is held into this one (no envelope retrigger); with PORTAMENTO on AUTO only legato notes glide. Length: type a number, &#8722;/+, or 8/16/32/64. Red step = the unit's playhead. Keyboard: <kbd>&#8593;</kbd>/<kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> = octave), <kbd>&#8592;</kbd>/<kbd>&#8594;</kbd> step, <kbd>N</kbd> <kbd>R</kbd> <kbd>L</kbd> type, <kbd>Del</kbd> delete, <kbd>Enter</kbd> append. Red bar = edits not yet written to the unit (Play writes them first). Patterns recorded or selected on the unit appear here automatically. The unit steps on its LFO clock, or on MIDI clock when sync is on.</div>
+    <div class="seq-grid-wrap"><div class="seq-grid" id="steps"></div><div class="seq-empty" id="seqEmpty" style="display:none">Empty pattern. Click + to add steps, set a length, or record on the unit (LOAD, keys, LOAD).</div></div>
+  </div>
+
+  <!-- Config -->
+  <div class="config-panel">
+    <div class="config-bar is-open" id="cfgBar">
+      <span class="config-bar-arrow">&#9654;</span>
+      <span class="config-bar-label">Config &#183; Clock</span>
+      <span class="config-bar-status" id="cfgStatus"></span>
+    </div>
+    <div class="config-body is-open" id="cfgBody">
+      <div class="config-inner">
+        <div class="config-field">
+          <label>MIDI channel</label>
+          <select id="selChan"></select>
+        </div>
+        <div class="config-field">
+          <label>Clock sync</label>
+          <button class="btn" id="btnSync" title="ON: the sequencer/arp steps on incoming MIDI clock at the division below. OFF: it steps on the LFO / EXT CLK.">Off</button>
+        </div>
+        <div class="config-field">
+          <label>Clock divide (of incoming MIDI clock, 24 ppqn)</label>
+          <div class="div-grid" id="divGrid"></div>
+          <div class="config-note">Changes apply to the unit immediately and are saved in its EEPROM. If the sequencer feels 4&#215; too slow you are on <b>1/4</b>; the default is <b>1/16</b>. The same setting is on the panel menu as the 10 lowest keys (see the menu map below); they are the lowest ten keys counting black keys, not the white keys.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel menu map -->
+  <div class="config-panel">
+    <div class="config-bar" id="mmBar">
+      <span class="config-bar-arrow">&#9654;</span>
+      <span class="config-bar-label">Panel menu map (on the unit itself)</span>
+      <span class="config-bar-status">HOLD + KEY&#8209;TRANSPOSE, 2 s</span>
+    </div>
+    <div class="config-body" id="mmBody">
+      <div class="menu-map">
+        <div class="mm-legend">
+          <span><b>Enter:</b> hold <b>HOLD + KEY-TRANSPOSE</b> for 2 seconds (running or at power-on). The HOLD LED marks the menu; KEY-TRANSP LED = sync on; function LED 1 = 80C49, 2 = SuperOS.</span>
+        </div>
+        <div class="mm-btn-row">
+          <div class="mm-btn"><div class="bt">Load</div><div class="bf">Boot the 80C49 emulator (original ROM)</div></div>
+          <div class="mm-btn"><div class="bt">Play</div><div class="bf">Boot SuperOS</div></div>
+          <div class="mm-btn"><div class="bt">Down</div><div class="bf">Previous clock division</div></div>
+          <div class="mm-btn"><div class="bt">Up &amp; Down</div><div class="bf">Toggle MIDI clock sync</div></div>
+          <div class="mm-btn"><div class="bt">Up</div><div class="bf">Next clock division</div></div>
+          <div class="mm-btn"><div class="bt">Key&#8209;Transpose</div><div class="bf">Exit the menu</div></div>
+        </div>
+        <div class="mm-kbd" id="mmKbd"></div>
+        <div class="mm-legend">
+          <span><b>Keys 1&#8211;10</b> (red, lowest ten keys, black keys included) pick the clock division directly.
+          <b>Key 11</b> = MC-202 accent model &#183; <b>Key 12</b> = TB-303 accent model &#183; <b>Key 13</b> = toggle MIDI filter-cutoff CC.
+          The accent model and CC toggle are panel-menu only; channel, sync and divide can also be set from this page.</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- On-screen keyboard -->
   <div class="kbd" id="kbd" title="Click to play the unit over MIDI (notes with the black bar map onto the SH-101's own keys F3..C6)"></div>
 
-  <div class="log" id="log"></div>
-  <div class="foot">SysEx F0 7D &lt;cmd&gt; ... F7. Patterns are stored in the unit's flash arena; a written pattern is flushed about half a second after the last change.</div>
+  <!-- Log -->
+  <div class="config-panel" style="margin-bottom:0">
+    <div class="config-bar is-open" id="logBar">
+      <span class="config-bar-arrow">&#9654;</span>
+      <span class="config-bar-label">Log</span>
+      <span class="config-bar-status" id="logCount"></span>
+    </div>
+    <div class="config-body is-open" id="logBody"><div id="log"></div></div>
+  </div>
+  <div class="foot">SysEx F0 7D &lt;cmd&gt; ... F7. With Edit live on, notes go to the unit as 0x18 length + 0x16 set-step deltas (or one 0x12 pattern write for big changes); the unit flushes to flash about half a second after the last change. Patterns recorded or selected on the unit appear here automatically.</div>
+  <div id="errorToast"></div>
 </div>
 
 <script>
@@ -209,8 +394,8 @@
 // mirrors the firmware's one-byte-per-step model (cv | type<<6).
 // ---------------------------------------------------------------------------
 const NUM_PATTERNS = 8, MAX_STEPS = 128, MIDI_CV_OFFSET = 36;
-// Editable note range = the SH-101 keyboard with octave transpose: F2..C7 (MIDI 41..96, CV 5..60)
-const CV_MIN = 5, CV_MAX = 60;
+// Full 6-bit DAC range. The SH-101's own keyboard with octave transpose covers CV 5..60.
+const CV_MIN = 0, CV_MAX = 63;
 const clampCv = cv => Math.min(CV_MAX, Math.max(CV_MIN, cv));
 const DIVS = ['1/4','1/4d','1/4t','1/8','1/8d','1/8t','1/16','1/16d','1/16t','1/32'];
 const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -219,6 +404,7 @@ const dirty = new Array(NUM_PATTERNS).fill(false);
 let curPat = 0, selStep = -1, playing = false, playPos = -1, devPat = 0;
 let deviceMode = 'unknown';   // 'superos' | 'emu' | 'unknown'
 let cfg = {chan: 0, sync: 0, div: 6, flash: 1, version: ''};
+let liveEnabled = true;
 
 function noteName(cv) { const n = cv + MIDI_CV_OFFSET; return NAMES[n % 12] + (Math.floor(n / 12) - 1); }
 function log(msg, cls) {
@@ -227,8 +413,14 @@ function log(msg, cls) {
   d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
   el.appendChild(d); el.scrollTop = el.scrollHeight;
   while (el.children.length > 400) el.removeChild(el.firstChild);
+  document.getElementById('logCount').textContent = el.children.length + ' lines';
 }
 const $ = id => document.getElementById(id);
+let toastTimer = null;
+function toast(msg) {
+  const t = $('errorToast'); t.textContent = msg; t.classList.add('visible');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('visible'), 2600);
+}
 
 // ---------------------------------------------------------------------------
 // MIDI
@@ -251,16 +443,16 @@ function unpack7(src) {
   return out;
 }
 function sendSysex(body) {
-  if (!midiOut) { log('no MIDI out', 'err'); return false; }
+  if (!midiOut) { log('no MIDI out', 'log-err'); return false; }
   midiOut.send(new Uint8Array([0xF0, 0x7D, ...body.map(b => b & 0x7F), 0xF7]));
   return true;
 }
 function sendRaw(bytes) { if (midiOut) midiOut.send(new Uint8Array(bytes)); }
 
 async function connect() {
-  if (!navigator.requestMIDIAccess) { log('Web MIDI unavailable (use Chrome/Edge over http/localhost)', 'err'); $('httpBanner').classList.add('visible'); return; }
+  if (!navigator.requestMIDIAccess) { log('Web MIDI unavailable (use Chrome/Edge over http/localhost)', 'log-err'); $('httpBanner').classList.add('visible'); return; }
   try { midiAccess = await navigator.requestMIDIAccess({sysex: true}); }
-  catch (e) { log('MIDI access denied: ' + e, 'err'); return; }
+  catch (e) { log('MIDI access denied: ' + e, 'log-err'); return; }
   $('btnMidi').classList.add('is-connected'); $('btnMidi').textContent = 'MIDI on';
   midiAccess.onstatechange = fillPorts;
   fillPorts();
@@ -293,7 +485,7 @@ function selectPorts() {
   const ok = midiOut && midiIn;
   $('midiStatus').textContent = ok ? ('OUT ' + midiOut.name + '  /  IN ' + midiIn.name) : 'select ports';
   $('midiStatus').className = ok ? 'is-ok' : '';
-  ['btnReadAll','btnWrite','btnPlay','btnCfgApply','btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !ok);
+  ['btnReadAll','btnWrite','btnPlay','btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !ok);
   if (ok) probe();
 }
 $('selOut').onchange = selectPorts; $('selIn').onchange = selectPorts;
@@ -318,11 +510,10 @@ function setMode(m) {
   $('fwStatus').className = 'status is-ok';
   $('btnFwSwitch').textContent = m === 'emu' ? 'Switch to SuperOS' : 'Switch to emulator';
   const ed = m === 'superos';
-  ['btnReadAll','btnWrite','btnPlay','btnCfgApply'].forEach(id => $(id).disabled = !ed);
+  ['btnReadAll','btnWrite','btnPlay'].forEach(id => $(id).disabled = !ed);
 }
 
 // Inbound
-let sxBuf = null;
 function onMidi(e) {
   const d = e.data;
   // Chrome delivers complete SysEx messages in one event
@@ -336,33 +527,36 @@ function handleSysex(b) {
     case 0x21: {   // config
       cfg = {chan: b[2], sync: b[3], div: b[4], flash: b[6], version: String.fromCharCode(...b.slice(7))};
       devPat = b[5];
-      $('selChan').value = cfg.chan; $('selDiv').value = cfg.div;
-      $('btnSync').textContent = cfg.sync ? 'On' : 'Off'; $('btnSync').classList.toggle('is-on', !!cfg.sync);
-      $('cfgStatus').textContent = cfg.flash ? 'flash store OK' : 'FLASH STORE MISSING (reflash bootloader)';
+      renderConfig();
       setMode('superos');
-      if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; }   // follow PLAY+key on the unit
-      log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) + ', v' + cfg.version, 'ok');
+      if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
+      log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) + ', v' + cfg.version, 'log-ok');
       renderAll();
       if (!readAllOnce) { readAllOnce = true; readAll(); }
       break;
     }
-    case 0x41: cfg.version = String.fromCharCode(...b.slice(2)); setMode('emu'); log('emulator firmware v' + cfg.version, 'ok'); break;
+    case 0x41: cfg.version = String.fromCharCode(...b.slice(2)); setMode('emu'); log('emulator firmware v' + cfg.version, 'log-ok'); break;
     case 0x11: {   // pattern data
       const p = b[1], raw = unpack7(b.slice(4));
       let x = 0; raw.forEach(v => x ^= v);
-      if ((x & 0x7F) !== b[2] || ((x >> 7) & 1) !== b[3]) { log('pattern ' + (p + 1) + ': checksum mismatch', 'err'); break; }
-      const len = raw[0]; if (len > MAX_STEPS || raw.length < len + 1) { log('pattern ' + (p + 1) + ': bad length', 'err'); break; }
+      if ((x & 0x7F) !== b[2] || ((x >> 7) & 1) !== b[3]) { log('pattern ' + (p + 1) + ': checksum mismatch', 'log-err'); break; }
+      const len = raw[0]; if (len > MAX_STEPS || raw.length < len + 1) { log('pattern ' + (p + 1) + ': bad length', 'log-err'); break; }
       const wasDirty = dirty[p];
-      patterns[p] = raw.slice(1, 1 + len).map(s => ({cv: s & 0x3F, type: Math.min(2, s >> 6)}));
+      if (wasDirty && !readingAll) { log('pattern ' + (p + 1) + ' changed on the unit; keeping your unsent edits (Read all to discard them)'); break; }
+      const ratTail = raw.slice(1 + len);   // packed ratchet bytes (absent from pre-ratchet firmware)
+      patterns[p] = raw.slice(1, 1 + len).map((s, i) => ({cv: s & 0x3F, type: Math.min(2, s >> 6),
+        rat: ratTail.length > (i >> 2) ? (ratTail[i >> 2] >> ((i & 3) * 2)) & 3 : 0}));
+      patterns[p].forEach(s => { if (s.rat > 2) s.rat = 0; });
       dirty[p] = false;
+      if (p === curPat) lastSent = {pat: p, len, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
       if (selStep >= patterns[p].length) selStep = patterns[p].length - 1;
-      log((readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)' + (wasDirty && !readingAll ? ' (replaced your unsent edits)' : ''), readingAll ? '' : 'ok');
+      log((readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)', readingAll ? '' : 'log-ok');
       renderAll();
       break;
     }
     case 0x14: {
-      const codes = ['written', 'REJECTED: bad checksum', 'REJECTED: bad pattern/length'];
-      log('101: ' + (codes[b[1]] || ('ack ' + b[1])), b[1] ? 'err' : 'ok');
+      const codes = ['written', 'REJECTED: bad checksum', 'REJECTED: bad pattern/length/step'];
+      if (b[1]) { log('101: ' + (codes[b[1]] || ('ack ' + b[1])), 'log-err'); toast('Unit rejected the edit (' + (codes[b[1]] || b[1]) + ')'); }
       if (b[1] === 0 && pendingWrite >= 0) { dirty[pendingWrite] = false; pendingWrite = -1; renderPills(); }
       break;
     }
@@ -379,44 +573,151 @@ function handleSysex(b) {
 let readAllOnce = false, pendingWrite = -1, readingAll = false, unitPlaying = false, playheadTimer = null;
 
 // ---------------------------------------------------------------------------
-// Device actions
+// Device writes: full pattern (0x12) or live deltas (0x18 length + 0x16 steps)
 // ---------------------------------------------------------------------------
+let lastSent = null;   // {pat, len, steps:[{cv,type}]} — device-side mirror for diffing
+let liveTimer = null;
+
 function readAll() { readingAll = true; sendSysex([0x13]); log('reading all patterns...'); setTimeout(() => readingAll = false, 3000); }
+// Packed ratchet tail: 2 bits per step (0 = 1x, 1 = 2x, 2 = 3x), 4 steps/byte.
+function packRatchets(pat) {
+  const out = new Array(Math.ceil(pat.length / 4)).fill(0);
+  pat.forEach((s, i) => { out[i >> 2] |= (s.rat & 3) << ((i & 3) * 2); });
+  return out;
+}
 function writePattern(p) {
-  const raw = [patterns[p].length, ...patterns[p].map(s => (s.cv & 0x3F) | (s.type << 6))];
+  const raw = [patterns[p].length, ...patterns[p].map(s => (s.cv & 0x3F) | (s.type << 6)), ...packRatchets(patterns[p])];
   let x = 0; raw.forEach(v => x ^= v);
   pendingWrite = p;
   sendSysex([0x12, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
-  log('writing pattern ' + (p + 1) + ' (' + patterns[p].length + ' steps)...');
+  lastSent = {pat: p, len: patterns[p].length, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
+  log('write pattern ' + (p + 1) + ' (' + patterns[p].length + ' steps)', 'log-syx');
 }
 function selectDevicePattern(p) { sendSysex([0x1D, p]); }
+
+// One changed step over 0x16. Lane 0 carries the MIDI note (0 = rest) and
+// clears legato, so legato steps get lane 0 then lane 3 = 1.
+function sendStepDelta(p, i, s) {
+  if (s.type === 1) { sendSysex([0x16, p, 0, i, 0]); return 1; }
+  sendSysex([0x16, p, 0, i, s.cv + MIDI_CV_OFFSET]);
+  if (s.type === 2) { sendSysex([0x16, p, 3, i, 1]); return 2; }
+  return 1;
+}
+// Debounced live push of the current pattern: length first (0x16 refuses
+// indices past the device-side length), then per-step deltas; a big diff or
+// no baseline falls back to one full 0x12. Length 0 and 128 only travel via
+// 0x12 (0x18 takes 1..127: 128 does not fit in a MIDI data byte).
+function scheduleLiveSend() {
+  if (!liveEnabled) return;
+  if (!midiOut || deviceMode !== 'superos') return;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    liveTimer = null;
+    const p = curPat, pat = patterns[p], len = pat.length;
+    if (devPat !== p) { selectDevicePattern(p); devPat = p; renderPills(); }
+    const base = (lastSent && lastSent.pat === p) ? lastSent : null;
+    let diff = 0;
+    if (base && len === base.len) {
+      for (let i = 0; i < len; ++i) { const a = pat[i], b = base.steps[i]; if (a.cv !== b.cv || a.type !== b.type || a.rat !== b.rat) ++diff; }
+    } else diff = 1e9;
+    if (!base || len === 0 || len > 127 || diff > 6 || len !== base.len && Math.abs(len - base.len) > 6) { writePattern(p); dirty[p] = false; renderPills(); return; }
+    let sent = 0;
+    if (len !== base.len) { sendSysex([0x18, p, len]); ++sent; }
+    const overlap = Math.min(len, base.len);
+    for (let i = 0; i < len; ++i) {
+      const a = pat[i], b = i < overlap ? base.steps[i] : null;
+      if (!b || a.cv !== b.cv || a.type !== b.type) sent += sendStepDelta(p, i, a);
+      if (!b || a.rat !== b.rat) { sendSysex([0x1B, p, i, a.rat & 3]); ++sent; }
+    }
+    lastSent = {pat: p, len, steps: pat.map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
+    dirty[p] = false; renderPills();
+    if (sent) log('live: ' + sent + ' msg' + (sent === 1 ? '' : 's') + ' to pattern ' + (p + 1), 'log-syx');
+  }, 100);
+}
+function afterEdit() {
+  dirty[curPat] = true;              // cleared when a send actually happens
+  if (liveEnabled) scheduleLiveSend();
+  renderPills();
+}
+
 $('btnReadAll').onclick = readAll;
 $('btnWrite').onclick = () => { writePattern(curPat); if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; renderPills(); } };
+$('btnLive').onclick = () => {
+  liveEnabled = !liveEnabled;
+  $('btnLive').classList.toggle('is-on', liveEnabled);
+  $('btnLive').innerHTML = liveEnabled ? '&#9679; Edit live' : '&#9675; Edit live';
+  log('edit live ' + (liveEnabled ? 'ON: edits go straight to the unit' : 'OFF: use Write pattern to push'), 'log-ok');
+  if (liveEnabled && dirty[curPat]) scheduleLiveSend();
+};
 $('btnPlay').onclick = async () => {
   playing = !playing;
   if (playing) {
-    // Play what is on screen: push unsaved edits to the unit, make sure the
-    // unit has this pattern selected, then start the transport.
-    if (dirty[curPat]) { writePattern(curPat); await new Promise(r => setTimeout(r, 250)); }
-    if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; await new Promise(r => setTimeout(r, 100)); }
-    if (!patterns[curPat].length) log('pattern ' + (curPat + 1) + ' is empty: nothing to play', 'err');
-    if (cfg.sync) log('MIDI clock sync is ON: the sequencer only steps on incoming MIDI clock (turn sync off to use the LFO clock)');
+    // Play what is on screen: push unsaved edits, select this pattern on the unit, start.
+    if (dirty[curPat]) { writePattern(curPat); await new Promise(r => setTimeout(r, 150)); }
+    if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; await new Promise(r => setTimeout(r, 80)); }
+    if (!patterns[curPat].length) log('pattern ' + (curPat + 1) + ' is empty: nothing to play', 'log-err');
+    if (cfg.sync) log('MIDI clock sync is ON: the sequencer steps on incoming MIDI clock at ' + DIVS[cfg.div]);
   }
   sendSysex([0x1E, playing ? 1 : 0]);
-  $('btnPlay').textContent = playing ? '■ Stop' : '▶ Play'; $('btnPlay').classList.toggle('is-on', playing);
+  $('btnPlay').innerHTML = playing ? '&#9632; Stop' : '&#9654; Play'; $('btnPlay').classList.toggle('is-on', playing);
   if (!playing) { playPos = -1; unitPlaying = false; renderPlayhead(); }
   renderPills();
 };
-$('btnCfgApply').onclick = () => { sendSysex([0x22, +$('selChan').value, $('btnSync').classList.contains('is-on') ? 1 : 0, +$('selDiv').value]); log('config sent'); };
-$('btnSync').onclick = () => { const on = !$('btnSync').classList.contains('is-on'); $('btnSync').classList.toggle('is-on', on); $('btnSync').textContent = on ? 'On' : 'Off'; };
 $('btnFwSwitch').onclick = () => {
   sendSysex([deviceMode === 'emu' ? 0x4D : 0x2F]);
   log('firmware switch requested; unit reboots (release all buttons on the panel)');
   setTimeout(() => probe(10), 1500);
 };
+
+// ---------------------------------------------------------------------------
+// Config: channel / sync / divide — applied to the unit on change (SysEx 0x22)
+// ---------------------------------------------------------------------------
+function sendConfig() {
+  if (!sendSysex([0x22, cfg.chan, cfg.sync ? 1 : 0, cfg.div])) return;
+  log('config -> unit: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', divide ' + DIVS[cfg.div], 'log-syx');
+}
+function renderConfig() {
+  $('selChan').value = cfg.chan;
+  $('btnSync').textContent = cfg.sync ? 'On' : 'Off';
+  $('btnSync').classList.toggle('is-on', !!cfg.sync);
+  document.querySelectorAll('.div-btn').forEach((d, i) => d.classList.toggle('is-on', i === cfg.div));
+  $('cfgStatus').textContent = 'ch ' + (cfg.chan + 1) + ' · sync ' + (cfg.sync ? 'ON · ' + DIVS[cfg.div] : 'off') +
+    (cfg.flash ? '' : ' · FLASH STORE MISSING');
+}
 for (let c = 0; c < 16; ++c) { const o = document.createElement('option'); o.value = c; o.textContent = c + 1; $('selChan').appendChild(o); }
-DIVS.forEach((d, i) => { const o = document.createElement('option'); o.value = i; o.textContent = d; $('selDiv').appendChild(o); });
-$('selDiv').value = 6;
+$('selChan').onchange = () => { cfg.chan = +$('selChan').value; sendConfig(); renderConfig(); };
+$('btnSync').onclick = () => { cfg.sync = cfg.sync ? 0 : 1; sendConfig(); renderConfig(); };
+(function buildDivGrid() {
+  const g = $('divGrid');
+  DIVS.forEach((name, i) => {
+    const b = document.createElement('button');
+    b.className = 'div-btn' + (i === cfg.div ? ' is-on' : '');
+    b.innerHTML = '<span class="dv">' + name.replace('d', '&#183;').replace('t', '&#179;') + '</span><span class="dk">key ' + (i + 1) + '</span>';
+    b.title = name.endsWith('d') ? name.slice(0, -1) + ' dotted' : name.endsWith('t') ? name.slice(0, -1) + ' triplet' : name;
+    b.onclick = () => { cfg.div = i; sendConfig(); renderConfig(); };
+    g.appendChild(b);
+  });
+})();
+
+// Collapsible panels
+[['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
+  $(bar).onclick = () => { $(bar).classList.toggle('is-open'); $(body).classList.toggle('is-open'); };
+});
+
+// Panel-menu keyboard map: the 13 lowest keys of the SH-101 keyboard (starts on F).
+(function buildMenuMap() {
+  const el = $('mmKbd');
+  const KEY_FN = ['1/4','1/4 dot','1/4 trip','1/8','1/8 dot','1/8 trip','1/16','1/16 dot','1/16 trip','1/32','MC-202 accent','TB-303 accent','Cutoff CC on/off'];
+  for (let k = 0; k < 13; ++k) {
+    const midi = 53 + k;   // key 0 = F3
+    const black = [1,3,6,8,10].includes(midi % 12);
+    const d = document.createElement('div');
+    d.className = 'mm-key' + (black ? ' black' : '') + (k < 10 ? ' is-div' : '');
+    d.innerHTML = '<span class="mm-n">' + (k + 1) + '</span><span class="mm-fn">' + KEY_FN[k] + '</span>';
+    d.title = 'Key ' + (k + 1) + ' (' + NAMES[midi % 12] + '): ' + KEY_FN[k];
+    el.appendChild(d);
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Firmware update over SysEx (bootloader protocol: F0 7D 01 <page> ... F7, F0 7D 02 F7)
@@ -428,11 +729,11 @@ $('fileSyx').onchange = async ev => {
   const msgs = []; let cur = null;
   for (const b of bytes) { if (b === 0xF0) cur = [b]; else if (cur) { cur.push(b); if (b === 0xF7) { msgs.push(cur); cur = null; } } }
   const pages = msgs.filter(m => m[1] === 0x7D && m[2] === 0x01);
-  if (!pages.length) { log('not a SuperOS-101 update file (no page messages)', 'err'); return; }
+  if (!pages.length) { log('not a SuperOS-101 update file (no page messages)', 'log-err'); return; }
   for (const m of pages) {
     const page = (m[3] << 7) | m[4];
-    if (page >= 0x1F0) { log('REFUSED: file writes the bootloader region (page 0x' + page.toString(16) + ')', 'err'); return; }
-    if (page >= 0x160) { log('REFUSED: file writes into the pattern arena (page 0x' + page.toString(16) + ')', 'err'); return; }
+    if (page >= 0x1F0) { log('REFUSED: file writes the bootloader region (page 0x' + page.toString(16) + ')', 'log-err'); return; }
+    if (page >= 0x160) { log('REFUSED: file writes into the pattern arena (page 0x' + page.toString(16) + ')', 'log-err'); return; }
   }
   if (!confirm('Update the unit with ' + f.name + ' (' + pages.length + ' pages)? The unit reboots into the bootloader; do not power off.')) return;
   log('entering bootloader...'); sendSysex([0x4A]);
@@ -447,7 +748,7 @@ $('fileSyx').onchange = async ev => {
     if (i === 5 && !/SuperOS/i.test(midiOut ? midiOut.name : '')) break;   // DIN interface: no new port coming
   }
   if (target !== midiOut) log('bootloader port: ' + target.name);
-  else if (!midiOut || midiOut.state !== 'connected') { log('lost the MIDI port; power-cycle the unit holding LOAD+PLAY and retry', 'err'); return; }
+  else if (!midiOut || midiOut.state !== 'connected') { log('lost the MIDI port; power-cycle the unit holding LOAD+PLAY and retry', 'log-err'); return; }
   let n = 0;
   for (const m of msgs) {
     target.send(new Uint8Array(m));
@@ -457,126 +758,198 @@ $('fileSyx').onchange = async ev => {
     await new Promise(r => setTimeout(r, m.length > 16 ? 140 : 60));
     if (m[2] === 0x01) log('page ' + (++n) + '/' + pages.length);
   }
-  log('update sent; the unit restarts the app', 'ok');
+  log('update sent; the unit restarts the app', 'log-ok');
   setTimeout(() => probe(10), 3000);
 };
 
 // ---------------------------------------------------------------------------
-// Editing
+// Editing: 303-style step cards with a drag pitch fader per step
 // ---------------------------------------------------------------------------
-function markDirty() { dirty[curPat] = true; renderPills(); }
-function cycleType(s) { s.type = (s.type + 1) % 3; }
+const history = Array.from({length: NUM_PATTERNS}, () => []);
+function pushHistory(p) {
+  const h = history[p];
+  h.push(patterns[p].map(s => ({cv: s.cv, type: s.type})));
+  if (h.length > 100) h.shift();
+}
+function undo() {
+  const h = history[curPat]; if (!h.length) { toast('Nothing to undo'); return; }
+  patterns[curPat] = h.pop();
+  if (selStep >= patterns[curPat].length) selStep = patterns[curPat].length - 1;
+  afterEdit(); renderSteps();
+}
+$('btnUndo').onclick = undo;
+
 function renderPills() {
   const el = $('pills'); el.innerHTML = '';
   for (let p = 0; p < NUM_PATTERNS; ++p) {
     const d = document.createElement('div');
     d.className = 'pat-pill' + (p === curPat ? ' is-active' : '') + (dirty[p] ? ' is-dirty' : '') + ((playing || unitPlaying) && p === devPat ? ' is-playing' : '');
     d.textContent = p + 1; d.title = 'Pattern ' + (p + 1) + (p === devPat ? ' (selected on the unit)' : '');
-    d.onclick = () => { curPat = p; selStep = -1; selectDevicePattern(p); renderAll(); };
+    d.onclick = () => { curPat = p; selStep = -1; lastSent = null; selectDevicePattern(p); devPat = p; renderAll(); };
     el.appendChild(d);
   }
 }
+
+function stepStateClass(t) { return t === 1 ? ' is-rest' : t === 2 ? ' is-tie' : ' is-note'; }
 function renderSteps() {
-  const el = $('steps'); el.innerHTML = '';
+  const el = $('steps');
   const pat = patterns[curPat];
   $('seqTitle').textContent = 'Pattern ' + (curPat + 1);
-  $('seqLen').textContent = pat.length + ' step' + (pat.length === 1 ? '' : 's') + ' / ' + MAX_STEPS;
   $('inLen').value = pat.length;
+  el.classList.toggle('cols-16', pat.length > 16);
+  $('seqEmpty').style.display = pat.length ? 'none' : 'block';
+  el.innerHTML = '';
   const frag = document.createDocumentFragment();
   pat.forEach((s, i) => {
     const d = document.createElement('div');
-    d.className = 'step' + (s.type === 1 ? ' rest' : s.type === 2 ? ' legato' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-play' : '');
+    d.className = 'step-card' + stepStateClass(s.type) + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-playing-step' : '');
     d.dataset.i = i;
+    const name = s.type === 1 ? '&#8212;' : (s.type === 2 ? '<span class="tie-mark">&#8767;</span>' : '') + noteName(s.cv);
     d.innerHTML =
-      '<span class="i">' + (i + 1) + '</span>' +
-      '<span class="hd"><button class="hb" data-a="insa" title="Insert a step after this one">+</button><button class="hb del" data-a="del" title="Delete this step">&#215;</button></span>' +
-      '<div class="row"><button class="sb" data-a="dn" title="Semitone down">&#8722;</button>' +
-      '<span class="n" data-a="sel">' + (s.type === 1 ? '&#8212;' : noteName(s.cv)) + '</span>' +
-      '<button class="sb" data-a="up" title="Semitone up">+</button></div>' +
-      '<div class="row"><button class="sb oct" data-a="odn" title="Octave down">OCT&#8722;</button><button class="sb oct" data-a="oup" title="Octave up">OCT+</button></div>' +
-      '<div class="row"><button class="tb' + (s.type === 0 ? ' on' : '') + '" data-a="t0">Note</button>' +
-      '<button class="tb' + (s.type === 1 ? ' on' : '') + '" data-a="t1">Rest</button>' +
-      '<button class="tb' + (s.type === 2 ? ' on' : '') + '" data-a="t2" title="Legato: no gate gap before this note, glides with PORTAMENTO on AUTO">Leg</button></div>';
+      '<span class="step-play-dot"></span>' +
+      '<span class="step-num">' + String(i + 1).padStart(2, '0') + '</span>' +
+      '<div class="step-time">' +
+        '<button class="t-btn' + (s.type === 0 ? ' is-on' : '') + '" data-a="t0" title="Note">N</button>' +
+        '<button class="t-btn' + (s.type === 2 ? ' is-on' : '') + '" data-a="t2" title="Legato: held into from the previous step, no retrigger; glides with PORTAMENTO on AUTO">L</button>' +
+        '<button class="t-btn' + (s.type === 1 ? ' is-on' : '') + '" data-a="t1" title="Rest">R</button>' +
+      '</div>' +
+      '<div class="step-name' + (s.type === 1 ? ' is-muted' : '') + '">' + name + '</div>' +
+      '<div class="pitch-knob-wrap"><div class="pitch-knob-track">' +
+        '<div class="pitch-knob-fill"></div><div class="pitch-knob-thumb"></div>' +
+      '</div></div>' +
+      '<div class="step-oct-row"><button class="f-btn-o" data-a="odn" title="Octave down">OCT&#8722;</button><button class="f-btn-o" data-a="oup" title="Octave up">OCT+</button></div>' +
+      '<div class="step-ratchet">' +
+        '<button class="r-btn' + (!s.rat ? ' is-on' : '') + '" data-a="r0" title="Single hit">1&#215;</button>' +
+        '<button class="r-btn' + (s.rat === 1 ? ' is-on' : '') + '" data-a="r1" title="Ratchet: two hits in this step">2&#215;</button>' +
+        '<button class="r-btn' + (s.rat === 2 ? ' is-on' : '') + '" data-a="r2" title="Ratchet: three hits in this step">3&#215;</button>' +
+      '</div>' +
+      '<div class="step-edit-row"><button class="e-btn" data-a="insa" title="Insert a step after this one">+</button><button class="e-btn e-del" data-a="del" title="Delete this step">&#215;</button></div>';
     frag.appendChild(d);
+    const wrap = d.querySelector('.pitch-knob-wrap');
+    layoutPitchKnob(wrap, s);
+    bindPitchKnob(wrap, d.querySelector('.pitch-knob-track'), i, d.querySelector('.step-name'));
   });
   if (pat.length < MAX_STEPS) {
-    const a = document.createElement('div'); a.className = 'step add'; a.textContent = '+'; a.title = 'Append a step';
-    a.onclick = () => { appendStep(); };
+    const a = document.createElement('div'); a.className = 'step-card add-card'; a.textContent = '+'; a.title = 'Append a step';
+    a.onclick = () => appendStep();
     frag.appendChild(a);
   }
-  if (!pat.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Empty pattern. Click + to add steps, or record on the unit (LOAD, keys, LOAD).'; frag.appendChild(e); }
   el.appendChild(frag);
-  syncInspector();
 }
-// One delegated handler for all step controls
+
+// ── Pitch fader: vertical drag with pointer capture (from the 303 editor) ──
+function layoutPitchKnob(wrap, s) {
+  const pct = ((s.cv - CV_MIN) / (CV_MAX - CV_MIN)) * 100;
+  wrap.querySelector('.pitch-knob-thumb').style.bottom = pct + '%';
+  wrap.querySelector('.pitch-knob-fill').style.height = pct + '%';
+}
+function bindPitchKnob(wrap, track, stepIdx, nameEl) {
+  let dragging = false, edited = false;
+  const valueFromY = clientY => {
+    const r = track.getBoundingClientRect();
+    const t = r.height > 0 ? (r.bottom - clientY) / r.height : 0;
+    return clampCv(Math.round(CV_MIN + t * (CV_MAX - CV_MIN)));
+  };
+  const applyDrag = clientY => {
+    const s = patterns[curPat][stepIdx];
+    if (!s || s.type === 1) return;
+    const cv = valueFromY(clientY);
+    if (cv === s.cv) return;
+    s.cv = cv; edited = true;
+    layoutPitchKnob(wrap, s);
+    nameEl.innerHTML = (s.type === 2 ? '<span class="tie-mark">&#8767;</span>' : '') + noteName(s.cv);
+  };
+  track.addEventListener('pointerdown', ev => {
+    track.setPointerCapture(ev.pointerId);
+    dragging = true; edited = false;
+    selStep = stepIdx; selectCard();
+    pushHistory(curPat);
+    applyDrag(ev.clientY);
+  });
+  track.addEventListener('pointermove', ev => { if (dragging && track.hasPointerCapture(ev.pointerId)) applyDrag(ev.clientY); });
+  const up = ev => {
+    try { track.releasePointerCapture(ev.pointerId); } catch (_e) {}
+    if (dragging) { dragging = false; if (edited) afterEdit(); else history[curPat].pop(); }
+  };
+  track.addEventListener('pointerup', up);
+  track.addEventListener('pointercancel', up);
+}
+function selectCard() {
+  document.querySelectorAll('#steps .step-card').forEach(d =>
+    d.classList.toggle('is-sel', +d.dataset.i === selStep));
+}
+
+// One delegated handler for the card buttons
 $('steps').addEventListener('click', ev => {
   const btn = ev.target.closest('[data-a]'); if (!btn) return;
-  const cell = ev.target.closest('.step'); if (!cell || cell.dataset.i === undefined) return;
+  const cell = ev.target.closest('.step-card'); if (!cell || cell.dataset.i === undefined) return;
   const i = +cell.dataset.i, s = patterns[curPat][i]; if (!s) return;
   selStep = i;
+  pushHistory(curPat);
   switch (btn.dataset.a) {
-    case 'sel': break;
-    case 'up':  s.cv = clampCv(s.cv + 1);  markDirty(); break;
-    case 'dn':  s.cv = clampCv(s.cv - 1);  markDirty(); break;
-    case 'oup': s.cv = clampCv(s.cv + 12); markDirty(); break;
-    case 'odn': s.cv = clampCv(s.cv - 12); markDirty(); break;
-    case 't0': s.type = 0; markDirty(); break;
-    case 't1': s.type = 1; markDirty(); break;
-    case 't2': s.type = 2; markDirty(); break;
-    case 'insa': if (patterns[curPat].length < MAX_STEPS) { patterns[curPat].splice(i + 1, 0, {cv: s.cv, type: 0}); selStep = i + 1; markDirty(); } break;
-    case 'del': patterns[curPat].splice(i, 1); if (selStep >= patterns[curPat].length) selStep = patterns[curPat].length - 1; markDirty(); break;
+    case 't0': s.type = 0; break;
+    case 't1': s.type = 1; break;
+    case 't2': s.type = 2; break;
+    case 'oup': s.cv = clampCv(s.cv + 12); break;
+    case 'odn': s.cv = clampCv(s.cv - 12); break;
+    case 'r0': s.rat = 0; break;
+    case 'r1': s.rat = 1; break;
+    case 'r2': s.rat = 2; break;
+    case 'insa': if (patterns[curPat].length < MAX_STEPS) { patterns[curPat].splice(i + 1, 0, {cv: s.cv, type: 0, rat: 0}); selStep = i + 1; } break;
+    case 'del': patterns[curPat].splice(i, 1); if (selStep >= patterns[curPat].length) selStep = patterns[curPat].length - 1; break;
+    default: history[curPat].pop(); return;
   }
-  renderSteps();
+  afterEdit(); renderSteps();
 });
-// Pattern length: grow by repeating the last step (or F3 notes), shrink by truncating.
+
+// Pattern length: grow by repeating the last step, shrink by truncating.
 function setLength(n) {
   n = Math.max(0, Math.min(MAX_STEPS, n | 0));
   const pat = patterns[curPat];
+  if (n === pat.length) return;
+  pushHistory(curPat);
   while (pat.length > n) pat.pop();
-  while (pat.length < n) { const last = pat.length ? pat[pat.length - 1] : null; pat.push({cv: last ? last.cv : 17, type: last ? last.type : 0}); }
+  while (pat.length < n) { const last = pat.length ? pat[pat.length - 1] : null; pat.push({cv: last ? last.cv : 17, type: last ? last.type : 0, rat: 0}); }
   if (selStep >= pat.length) selStep = pat.length - 1;
-  markDirty(); renderSteps();
+  afterEdit(); renderSteps();
 }
 $('btnLenDn').onclick = () => setLength(patterns[curPat].length - 1);
 $('btnLenUp').onclick = () => setLength(patterns[curPat].length + 1);
 $('inLen').onchange = () => setLength(+$('inLen').value);
-document.querySelectorAll('.len-ctl .q').forEach(b => b.onclick = () => setLength(+b.dataset.len));
-function renderPlayhead() {
-  const show = unitPlaying && devPat === curPat;
-  document.querySelectorAll('#steps .step').forEach(d => d.classList.toggle('is-play', show && +d.dataset.i === playPos));
-}
-function renderAll() { renderPills(); renderSteps(); }
+$('btnClear').onclick = () => {
+  if (!patterns[curPat].length || confirm('Clear pattern ' + (curPat + 1) + '?')) {
+    pushHistory(curPat); patterns[curPat] = []; selStep = -1; afterEdit(); renderSteps();
+  }
+};
 function appendStep() {
   const pat = patterns[curPat]; if (pat.length >= MAX_STEPS) return;
+  pushHistory(curPat);
   const last = pat.length ? pat[pat.length - 1] : null;
-  pat.push({cv: last ? last.cv : 17, type: 0}); selStep = pat.length - 1; markDirty(); renderSteps();
+  pat.push({cv: last ? last.cv : 17, type: 0, rat: 0}); selStep = pat.length - 1; afterEdit(); renderSteps();
 }
-function syncInspector() {
-  const pat = patterns[curPat], s = pat[selStep];
-  ['selNote','btnNote','btnRest','btnTie','btnIns','btnDel'].forEach(id => $(id).disabled = !s);
-  if (s) $('selNote').value = s.cv;
+function renderPlayhead() {
+  const show = unitPlaying && devPat === curPat;
+  document.querySelectorAll('#steps .step-card').forEach(d =>
+    d.classList.toggle('is-playing-step', show && +d.dataset.i === playPos));
 }
-for (let cv = CV_MAX; cv >= CV_MIN; --cv) { const o = document.createElement('option'); o.value = cv; o.textContent = noteName(cv) + '  (' + (cv + MIDI_CV_OFFSET) + ')'; $('selNote').appendChild(o); }
-$('selNote').onchange = () => { const s = patterns[curPat][selStep]; if (s) { s.cv = +$('selNote').value; markDirty(); renderSteps(); } };
-$('btnNote').onclick = () => setType(0); $('btnRest').onclick = () => setType(1); $('btnTie').onclick = () => setType(2);
-function setType(t) { const s = patterns[curPat][selStep]; if (s) { s.type = t; markDirty(); renderSteps(); } }
-$('btnIns').onclick = () => { const pat = patterns[curPat]; if (selStep < 0 || pat.length >= MAX_STEPS) return; pat.splice(selStep, 0, {cv: pat[selStep].cv, type: 0}); markDirty(); renderSteps(); };
-$('btnDel').onclick = () => { const pat = patterns[curPat]; if (selStep < 0) return; pat.splice(selStep, 1); if (selStep >= pat.length) selStep = pat.length - 1; markDirty(); renderSteps(); };
-$('btnClear').onclick = () => { if (!patterns[curPat].length || confirm('Clear pattern ' + (curPat + 1) + '?')) { patterns[curPat] = []; selStep = -1; markDirty(); renderSteps(); } };
+function renderAll() { renderPills(); renderSteps(); renderConfig(); }
+
 document.addEventListener('keydown', ev => {
   if (['SELECT','INPUT'].includes(document.activeElement.tagName)) return;
+  if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { undo(); ev.preventDefault(); return; }
   const pat = patterns[curPat], s = pat[selStep];
   const k = ev.key;
   if (k === 'Enter') { appendStep(); ev.preventDefault(); return; }
-  if (k === 'ArrowLeft')  { if (pat.length) { selStep = Math.max(0, selStep - 1); renderSteps(); } ev.preventDefault(); return; }
-  if (k === 'ArrowRight') { if (pat.length) { selStep = Math.min(pat.length - 1, selStep + 1); renderSteps(); } ev.preventDefault(); return; }
+  if (k === 'ArrowLeft')  { if (pat.length) { selStep = Math.max(0, selStep - 1); selectCard(); } ev.preventDefault(); return; }
+  if (k === 'ArrowRight') { if (pat.length) { selStep = Math.min(pat.length - 1, selStep + 1); selectCard(); } ev.preventDefault(); return; }
   if (!s) return;
-  if (k === 'ArrowUp')   { s.cv = clampCv(s.cv + (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
-  if (k === 'ArrowDown') { s.cv = clampCv(s.cv - (ev.shiftKey ? 12 : 1)); markDirty(); renderSteps(); ev.preventDefault(); }
-  if (k === 'n' || k === 'N') setType(0);
-  if (k === 'r' || k === 'R') setType(1);
-  if (k === 'l' || k === 'L' || k === 't' || k === 'T') setType(2);
-  if (k === 'Delete' || k === 'Backspace') { $('btnDel').onclick(); ev.preventDefault(); }
+  const edit = fn => { pushHistory(curPat); fn(); afterEdit(); renderSteps(); };
+  if (k === 'ArrowUp')   { edit(() => s.cv = clampCv(s.cv + (ev.shiftKey ? 12 : 1))); ev.preventDefault(); }
+  if (k === 'ArrowDown') { edit(() => s.cv = clampCv(s.cv - (ev.shiftKey ? 12 : 1))); ev.preventDefault(); }
+  if (k === 'n' || k === 'N') edit(() => s.type = 0);
+  if (k === 'r' || k === 'R') edit(() => s.type = 1);
+  if (k === 'l' || k === 'L' || k === 't' || k === 'T') edit(() => s.type = 2);
+  if (k === 'Delete' || k === 'Backspace') { edit(() => { pat.splice(selStep, 1); if (selStep >= pat.length) selStep = pat.length - 1; }); ev.preventDefault(); }
 });
 
 // Save / load all patterns as JSON
@@ -590,9 +963,10 @@ $('fileJson').onchange = async ev => {
   try {
     const j = JSON.parse(await f.text());
     if (!Array.isArray(j.patterns)) throw new Error('no patterns array');
-    j.patterns.slice(0, NUM_PATTERNS).forEach((p, i) => { patterns[i] = p.slice(0, MAX_STEPS).map(s => ({cv: Math.min(63, Math.max(0, s.cv | 0)), type: Math.min(2, Math.max(0, s.type | 0))})); dirty[i] = true; });
-    log('loaded ' + f.name + ' (write each pattern to the unit)', 'ok'); renderAll();
-  } catch (e) { log('bad file: ' + e.message, 'err'); }
+    j.patterns.slice(0, NUM_PATTERNS).forEach((p, i) => { patterns[i] = p.slice(0, MAX_STEPS).map(s => ({cv: Math.min(63, Math.max(0, s.cv | 0)), type: Math.min(2, Math.max(0, s.type | 0)), rat: Math.min(2, Math.max(0, s.rat | 0))})); dirty[i] = true; });
+    lastSent = null;
+    log('loaded ' + f.name + ' (write each pattern to the unit, or edit with live on)', 'log-ok'); renderAll();
+  } catch (e) { log('bad file: ' + e.message, 'log-err'); }
 };
 
 // ---------------------------------------------------------------------------
@@ -615,7 +989,7 @@ $('fileJson').onchange = async ev => {
 
 renderAll();
 if (location.protocol === 'file:') $('httpBanner').classList.add('visible');
-log('SuperOS-101 editor ready. Connect MIDI, pick the UX16 (or the unit) on both ports.');
+log('SuperOS-101 editor ready. Connect MIDI, pick the unit on both ports. Edit live is ON: notes you change land on the unit immediately.');
 </script>
 </body>
 </html>

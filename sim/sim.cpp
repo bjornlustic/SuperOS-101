@@ -539,7 +539,7 @@ static int SelfTest() {
   sim::g_buttons = 1u << 0; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // LOAD (save)
   {
     uint8_t buf[101]; uint8_t n = persist::Store().read(persist::FB_PATTERN_BASE + 0, buf, sizeof(buf));
-    CHECK(n == 4 && buf[0] == 3, "pattern 0 saved to the flash arena (len 3)");
+    CHECK(n == 5 && buf[0] == 3, "pattern 0 saved to the flash arena (len 3 + ratchet byte)");
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
   CHECK(sim::g_sh[0] == 17 && GateOn(), "PLAY -> step 1 sounds immediately (CV 17)");
@@ -649,10 +649,13 @@ static int SelfTest() {
     g_midiOut.clear();
     for (uint8_t b : {0xF0, 0x7D, 0x10, 5, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
     uint8_t body[8] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(g_midiOut.size() - 7), body, sizeof(body));
-    CHECK(g_midiOut[2] == 0x11 && g_midiOut[3] == 5 && m == 4 && memcmp(body, raw, 4) == 0, "SysEx 0x10 -> 0x11 returns the same pattern");
+    // The reply appends the packed ratchet tail (one byte for len 3, all off);
+    // the ratchet-less 0x12 above is the pre-ratchet-host compatibility path.
+    CHECK(g_midiOut[2] == 0x11 && g_midiOut[3] == 5 && m == 5 && memcmp(body, raw, 4) == 0 && body[4] == 0,
+          "SysEx 0x10 -> 0x11 returns the same pattern (+ ratchet tail)");
     for (int i = 0; i < 2000; ++i) { delayMicroseconds(1000); RunLoops(1); }   // > 500 ms quiet: deferred flush
     uint8_t buf[101]; uint8_t k = persist::Store().read(persist::FB_PATTERN_BASE + 5, buf, sizeof(buf));
-    CHECK(k == 4 && buf[0] == 3 && buf[3] == (0x80 | 22), "pattern 5 flushed to the flash arena");
+    CHECK(k == 5 && buf[0] == 3 && buf[3] == (0x80 | 22) && buf[4] == 0, "pattern 5 flushed to the flash arena");
   }
 
   // 0x3B -> 0x3C bench probe, SuperOS LED/gate words (gate G12 observability,
@@ -955,6 +958,45 @@ static int SelfTest() {
   midiclk::SetSync(false);
   ClockTick();
   CHECK(!GateOn(), "sync off: T1 clock works again (rest step -> gate off)");
+
+  // Ratchets: a 2x step retriggers once, evenly inside its clock period
+  // (SysEx 0x1B; needs one measured period first, so play two full steps
+  // before counting). Each MidiByte pass is ~1 ms of virtual time; 6 ticks
+  // spaced 10 passes apart makes a ~60 ms division.
+  puts("ratchets:");
+  {
+    midiclk::SetSync(true); midiclk::SetDiv(6);
+    auto sx14ok = [&]() {                       // send 0x12 for pattern 7: two notes
+      std::vector<uint8_t> raw = {2, (uint8_t)17, (uint8_t)19};
+      raw.push_back(0);                          // packed ratchet byte (none yet)
+      uint16_t x = 0; for (uint8_t v : raw) x ^= v;
+      std::vector<uint8_t> b = {0xF0, 0x7D, 0x12, 7, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)};
+      for (size_t i = 0; i < raw.size(); i += 7) {
+        uint8_t msb = 0; size_t nn = std::min<size_t>(7, raw.size() - i);
+        for (size_t k = 0; k < nn; ++k) if (raw[i + k] & 0x80) msb |= 1 << k;
+        b.push_back(msb); for (size_t k = 0; k < nn; ++k) b.push_back(raw[i + k] & 0x7F);
+      }
+      b.push_back(0xF7);
+      for (uint8_t v : b) g_midiQ.push_back(v); RunLoops(2);
+    };
+    sx14ok();
+    for (uint8_t v : {0xF0, 0x7D, 0x1B, 7, 0, 1, 0xF7}) g_midiQ.push_back(v); RunLoops(2);  // step 0 -> 2x
+    for (uint8_t v : {0xF0, 0x7D, 0x1D, 7, 0xF7}) g_midiQ.push_back(v); RunLoops(2);        // select 7
+    for (uint8_t v : {0xF0, 0x7D, 0x1E, 1, 0xF7}) g_midiQ.push_back(v); RunLoops(2);        // play
+    MidiByte(0xFA);
+    auto division = [&]() { for (int t = 0; t < 6; ++t) { MidiByte(0xF8); RunLoops(10); } };
+    division(); division();                     // two steps: the period is now measured
+    // Next division starts step 0 (2x): sample the gate through the period.
+    int rises = 0; bool prev = GateOn();
+    for (int t = 0; t < 6; ++t) {
+      MidiByte(0xF8);
+      for (int i = 0; i < 10; ++i) { RunLoops(1); bool g = GateOn(); if (g && !prev) ++rises; prev = g; }
+    }
+    // rise 1 = the step's own note start, rise 2 = the ratchet retrigger
+    CHECK(rises >= 2, "2x ratchet: the gate retriggers inside the step");
+    for (uint8_t v : {0xF0, 0x7D, 0x1E, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);        // stop
+    midiclk::SetSync(false);
+  }
 
   // Config menu: HOLD+KEY-TRANSPOSE 2 s -> menu; LOAD -> reboot into the
   // 80C49 emulator (the original mask ROM, if embedded).

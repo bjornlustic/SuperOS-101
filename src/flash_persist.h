@@ -7,7 +7,9 @@
 //                                                   in internal EEPROM today)
 // Pattern payload: [0] len (0..128), [1..len] step bytes = cv(6 bit) | type<<6
 // (type: 0 note, 1 rest, 2 tie), i.e. the SH-101's own one-byte-per-step
-// model. Max 129 bytes per record.
+// model, then ceil(len/4) packed ratchet bytes (2 bits/step, 0 = single hit,
+// 1 = 2x, 2 = 3x). Records from before ratchets are 1+len bytes and load with
+// ratchets off. Max 161 bytes per record (FE_MAX_PAYLOAD is 242).
 #pragma once
 #include <stdint.h>
 #include "flash_eeprom.h"

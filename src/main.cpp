@@ -69,17 +69,24 @@ static void MidiOut(uint8_t cv, bool gate) {
 }
 
 // --- SysEx (editor protocol, see midi.h) -----------------------------------
+// 0x11 payload: [0]=len, [1..len]=steps, then ceil(len/4) packed ratchet
+// bytes (2 bits/step). The checksum XORs every payload byte, so hosts that
+// predate ratchets fail the checksum only if they also parse the tail; ours
+// sends/expects the tail both ways, and 0x12 accepts payloads without it.
 static void SendPattern(uint8_t p) {
   if (p >= engine::NUM_PATTERNS) return;
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t raw[engine::MAX_STEPS + 1];
+  uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4];
   raw[0] = sq.length(p);
   memcpy(raw + 1, sq.steps(p), raw[0]);
-  uint8_t body[4 + 150];   // 4 + PackedLen(129)
+  uint8_t rb = (uint8_t)((raw[0] + 3) >> 2);
+  memcpy(raw + 1 + raw[0], sq.ratchets(p), rb);
+  uint8_t total = (uint8_t)(1 + raw[0] + rb);
+  uint8_t body[4 + 188];   // 4 + PackedLen(161)
   body[0] = 0x11; body[1] = p;
-  uint8_t x = 0; for (uint8_t i = 0; i <= raw[0]; ++i) x ^= raw[i];
+  uint8_t x = 0; for (uint8_t i = 0; i < total; ++i) x ^= raw[i];
   body[2] = x & 0x7F; body[3] = (x >> 7) & 1;
-  uint8_t n = midi::Pack7(raw, (uint8_t)(raw[0] + 1), body + 4);
+  uint8_t n = midi::Pack7(raw, total, body + 4);
   midi::SendSysex(body, (uint8_t)(4 + n));
 }
 static void SendConfig() {
@@ -117,12 +124,15 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     case 0x13: for (uint8_t p = 0; p < engine::NUM_PATTERNS; ++p) SendPattern(p); break;
     case 0x12: {
       if (len < 4) { SendAck(2); break; }
-      uint8_t raw[engine::MAX_STEPS + 1];
+      uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4];
       uint8_t n = midi::Unpack7(body + 4, (uint8_t)(len - 4), raw, sizeof(raw));
       if (n < 1 || raw[0] > engine::MAX_STEPS || n < (uint8_t)(raw[0] + 1) || body[1] >= engine::NUM_PATTERNS) { SendAck(2); break; }
-      uint8_t x = 0; for (uint8_t i = 0; i <= raw[0]; ++i) x ^= raw[i];
+      // Checksum over everything received: old hosts send 1+len bytes, new
+      // ones append the packed ratchet tail; both XOR what they sent.
+      uint8_t x = 0; for (uint8_t i = 0; i < n; ++i) x ^= raw[i];
       if ((x & 0x7F) != body[2] || ((x >> 7) & 1) != body[3]) { SendAck(1); break; }
-      g_engine.seq().set(body[1], raw + 1, raw[0]);
+      uint8_t rb = (uint8_t)(n - 1 - raw[0]);   // 0 for pre-ratchet hosts
+      g_engine.seq().set(body[1], raw + 1, raw[0], rb ? raw + 1 + raw[0] : nullptr, rb);
       g_lastEditMs = millis();
       SendAck(0);
       break;
@@ -138,6 +148,11 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
       break;
     case 0x18:   // SET LENGTH [pat, length]
       if (len >= 3) { bool ok = g_engine.seq().setLength(body[1], body[2]);
+                      if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
+      else SendAck(1);
+      break;
+    case 0x1B:   // SET RATCHET [pat, step, 0..2] (0 = single, 1 = 2x, 2 = 3x)
+      if (len >= 4) { bool ok = g_engine.seq().setRatchet(body[1], body[2], body[3]);
                       if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
       else SendAck(1);
       break;

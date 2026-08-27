@@ -69,7 +69,13 @@ omission, when you describe coverage.
 
 `NUM_PATTERNS` 8, `MAX_STEPS` 128, `MIDI_CV_OFFSET` 36 (cv = note - 36, clamped
 0..63). Edit lanes: 0 = note (value is the MIDI note, 0 = rest), 3 = gate (0
-normal, 1 legato).
+normal, 1 legato). Per-step **ratchets** (2 bits: 0 = single, 1 = 2x, 2 = 3x)
+exist since 2026-08-26: SysEx `0x1B <p><step><val>`, panel UP/DOWN in LOAD mode
+cycles the last recorded step, and `0x11`/`0x12` and the flash record carry a
+packed ceil(len/4)-byte ratchet tail after the step bytes. The tail is optional
+on input (old hosts omit it, checksum is over what was sent) but always present
+on output, so a host that hard-codes the old `1+len` payload size will misparse
+`0x11`.
 
 **But SysEx cannot reach step 128 or length 128** (claim-061). `setLength` accepts
 1..128 and `MAX_STEPS` is 128, yet the length and step-index fields of `0x18` and

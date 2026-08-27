@@ -97,6 +97,12 @@ class Arp {
 // --- sequencer: 8 patterns in RAM, flash-arena backed --------------------------
 class Sequencer {
   uint8_t step_[NUM_PATTERNS][MAX_STEPS];
+  // Per-step ratchet, 2 bits each (0 = single hit, 1 = 2x, 2 = 3x): the step's
+  // note retriggers evenly inside its clock period. Packed 4 steps/byte so the
+  // whole lane costs 256 bytes, not another KB of a 2.5 KB SRAM part.
+  uint8_t rat_[NUM_PATTERNS][MAX_STEPS / 4];
+  static const uint8_t RAT_MAX = 2;
+  static uint8_t RatBytes(uint8_t len) { return (uint8_t)((len + 3) >> 2); }
   uint8_t len_[NUM_PATTERNS];
   uint8_t dirty_ = 0;                 // bit p = pattern p differs from flash
   uint8_t cur_ = 0;                   // selected pattern
@@ -118,7 +124,23 @@ class Sequencer {
   void select(uint8_t p) { if (p < NUM_PATTERNS && p != cur_) { cur_ = p; rewind(); selChanged_ = true; } }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
   void markEdited() { edited_ |= (uint8_t)(1u << cur_); }
-  void clear() { len_[cur_] = 0; pos_ = 0; dirty_ |= (uint8_t)(1u << cur_); }
+  void clear() { len_[cur_] = 0; pos_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); dirty_ |= (uint8_t)(1u << cur_); }
+  uint8_t ratchet(uint8_t p, uint8_t i) const {
+    return (uint8_t)((rat_[p < NUM_PATTERNS ? p : 0][i >> 2] >> ((i & 3) * 2)) & 3);
+  }
+  uint8_t ratchetCur() const { return ratchet(cur_, pos_); }
+  void ratchetRaw(uint8_t p, uint8_t i, uint8_t v) {
+    uint8_t sh = (uint8_t)((i & 3) * 2);
+    rat_[p][i >> 2] = (uint8_t)((rat_[p][i >> 2] & ~(3u << sh)) | ((v & 3u) << sh));
+  }
+  // SysEx 0x1B SET RATCHET [pat, step, 0..2] (0 = off/1x). ack 2 when out of range.
+  bool setRatchet(uint8_t p, uint8_t idx, uint8_t v) {
+    if (p >= NUM_PATTERNS || idx >= len_[p] || v > RAT_MAX) return false;
+    ratchetRaw(p, idx, v);
+    dirty_ |= (uint8_t)(1u << p);
+    if (p == cur_) stepChanged_ = true;
+    return true;
+  }
   // rewind so the NEXT advance() plays step 0 (advance pre-increments). A
   // pattern that STARTS with a legato step glides from the last pitch of the
   // pattern (across the loop point, 303-style), so seed the held CV from the
@@ -130,17 +152,34 @@ class Sequencer {
     curGate_ = false;
   }
   void record(uint8_t cv, StepType t) {
-    if (len_[cur_] < MAX_STEPS) { step_[cur_][len_[cur_]++] = StepByte(cv, t); dirty_ |= (uint8_t)(1u << cur_); }
+    if (len_[cur_] < MAX_STEPS) {
+      ratchetRaw(cur_, len_[cur_], 0);
+      step_[cur_][len_[cur_]++] = StepByte(cv, t);
+      dirty_ |= (uint8_t)(1u << cur_);
+    }
+  }
+  // Panel LOAD mode: cycle the last recorded step's ratchet (UP button).
+  void cycleLastRatchet(int8_t dir) {
+    if (!len_[cur_]) return;
+    uint8_t i = (uint8_t)(len_[cur_] - 1);
+    uint8_t r = ratchet(cur_, i);
+    r = (uint8_t)((r + (dir > 0 ? 1 : RAT_MAX)) % (RAT_MAX + 1));
+    ratchetRaw(cur_, i, r);
+    dirty_ |= (uint8_t)(1u << cur_);
   }
   // Replace pattern p wholesale (SysEx 0x12). Marks dirty; flush() persists.
-  bool set(uint8_t p, const uint8_t* steps, uint8_t len) {
+  // rat: optional packed ratchet bytes after the steps (old hosts send none).
+  bool set(uint8_t p, const uint8_t* steps, uint8_t len, const uint8_t* rat = nullptr, uint8_t ratBytes = 0) {
     if (p >= NUM_PATTERNS || len > MAX_STEPS) return false;
     memcpy(step_[p], steps, len);
+    memset(rat_[p], 0, sizeof(rat_[p]));
+    if (rat && ratBytes) memcpy(rat_[p], rat, ratBytes > RatBytes(len) ? RatBytes(len) : ratBytes);
     len_[p] = len;
     dirty_ |= (uint8_t)(1u << p);
     if (p == cur_ && pos_ >= len) rewind();
     return true;
   }
+  const uint8_t* ratchets(uint8_t p) const { return rat_[p < NUM_PATTERNS ? p : 0]; }
 
   // Live host edits (SysEx 0x16/0x18/0x15, docs/EDIT_OPCODES.md), atomic in place
   // so an edit under clock does not rewrite the whole pattern (gate G4). The 101
@@ -241,16 +280,21 @@ class Sequencer {
   uint8_t cv()   const { return curCv_; }
   bool    gate() const { return curGate_; }
 
-  // --- persistence (flash arena; payload [0]=len [1..]=steps) ---
+  // --- persistence (flash arena; payload [0]=len [1..len]=steps, then
+  // RatBytes(len) packed ratchet bytes; records written before ratchets
+  // existed are exactly 1+len and load with every ratchet off) ---
   void loadAll() {
-    uint8_t buf[MAX_STEPS + 1];
+    uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4];
     for (uint8_t p = 0; p < NUM_PATTERNS; ++p) {
       len_[p] = 0;
+      memset(rat_[p], 0, sizeof(rat_[p]));
       if (!persist::Available()) continue;
       uint8_t n = persist::Store().read((uint16_t)(persist::FB_PATTERN_BASE + p), buf, sizeof(buf));
       if (n >= 1 && buf[0] <= MAX_STEPS && n >= (uint8_t)(1 + buf[0])) {
         len_[p] = buf[0];
         memcpy(step_[p], buf + 1, len_[p]);
+        if (n >= (uint8_t)(1 + len_[p] + RatBytes(len_[p])))
+          memcpy(rat_[p], buf + 1 + len_[p], RatBytes(len_[p]));
       }
     }
     dirty_ = 0;
@@ -264,10 +308,11 @@ class Sequencer {
       if (!(dirty_ & (1u << p))) continue;
       dirty_ &= (uint8_t)~(1u << p);
       if (!persist::Available()) return false;
-      uint8_t buf[MAX_STEPS + 1];
+      uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4];
       buf[0] = len_[p];
       memcpy(buf + 1, step_[p], len_[p]);
-      persist::Store().write((uint16_t)(persist::FB_PATTERN_BASE + p), buf, (uint8_t)(len_[p] + 1));
+      memcpy(buf + 1 + len_[p], rat_[p], RatBytes(len_[p]));
+      persist::Store().write((uint16_t)(persist::FB_PATTERN_BASE + p), buf, (uint8_t)(len_[p] + 1 + RatBytes(len_[p])));
       return true;
     }
     return false;
@@ -288,6 +333,13 @@ class NoteEngine {
   bool     playHeldUsed_ = false;  // PLAY+key selected a pattern (suppress toggle)
   bool     playStart_ = false;     // pulse CLOCK RESET once when play begins
   int16_t  prevExtCv_ = -1;
+  // Ratchet playback: the step's extra hits are scheduled inside the measured
+  // clock period (works for the LFO and the divided MIDI clock alike; the
+  // first step after play start has no period yet and plays single).
+  uint32_t lastEdgeMs_ = 0;
+  uint16_t periodMs_   = 0;
+  uint32_t stepStartMs_ = 0;
+  uint8_t  subTotal_ = 1, subLeft_ = 0;
 
   uint8_t noteCv(int8_t key, const controls::Panel& p) const {
     int v = key + (int)p.octaveOffset + keyShift_ + CV_BASE;
@@ -309,9 +361,16 @@ class NoteEngine {
   }
   void selectMode(controls::Buttons& b, uint32_t rawKeys) {
     using namespace controls;
+    if (mode_ == MODE_SEQ_LOAD) {
+      // While recording, UP/DOWN cycle the last recorded step's ratchet
+      // (1x -> 2x -> 3x) instead of switching into an arp mid-recording.
+      if (b.pressed(BTN_UP))   seq_.cycleLastRatchet(+1);
+      if (b.pressed(BTN_DOWN)) seq_.cycleLastRatchet(-1);
+    } else {
     if (b.pressed(BTN_UP))   mode_ = (mode_ == MODE_ARP_UP)     ? MODE_KEYBOARD : MODE_ARP_UP;
     if (b.pressed(BTN_DOWN)) mode_ = (mode_ == MODE_ARP_DOWN)   ? MODE_KEYBOARD : MODE_ARP_DOWN;
     if (b.pressed(BTN_UD))   mode_ = (mode_ == MODE_ARP_UPDOWN) ? MODE_KEYBOARD : MODE_ARP_UPDOWN;
+    }
     // PLAY: held + one of the 8 lowest keys selects the pattern; a plain
     // press/release toggles sequencer play (toggle happens on release so the
     // select gesture does not also start/stop the sequencer).
@@ -403,10 +462,32 @@ class NoteEngine {
             clockEdge = false; halfEdge = false;
           }
         }
-        if (clockEdge) { if (seq_.advance()) o.portaOff = true; lastCv_ = seq_.cv(); }
-        if (halfEdge) seq_.halfStep();
+        if (clockEdge) {
+          uint32_t now = millis();
+          if (lastEdgeMs_) { uint32_t d = now - lastEdgeMs_; if (d > 0 && d < 4000) periodMs_ = (uint16_t)d; }
+          lastEdgeMs_ = now;
+          bool fresh = seq_.advance();
+          if (fresh) o.portaOff = true;
+          lastCv_ = seq_.cv();
+          // Ratchet: a NOTE step (fresh) with ratchet r plays r extra evenly
+          // spaced hits inside this period; needs a measured period first.
+          uint8_t r = (fresh && periodMs_) ? seq_.ratchetCur() : 0;
+          subTotal_ = (uint8_t)(r + 1);
+          subLeft_  = r;
+          stepStartMs_ = now;
+        }
+        if (halfEdge && subTotal_ <= 1) seq_.halfStep();   // ratcheted steps gate by sub-hit instead
         o.cv = seq_.gate() ? seq_.cv() : lastCv_;
         o.gate = seq_.gate();
+        if (subLeft_ && periodMs_ && seq_.gate()) {
+          uint32_t now = millis();
+          uint8_t  done = (uint8_t)(subTotal_ - subLeft_);
+          uint32_t at = stepStartMs_ + (uint32_t)periodMs_ * done / subTotal_;
+          uint16_t gap = (uint16_t)(periodMs_ / (subTotal_ * 4));
+          if (gap < 2) gap = 2; else if (gap > 12) gap = 12;
+          if ((int32_t)(now - at) >= 0) { --subLeft_; o.portaOff = true; }  // sub-hit: fresh attack
+          else if ((int32_t)(now - (at - gap)) >= 0) o.gate = false;       // gate gap before it
+        }
         break;
 
       case MODE_SEQ_LOAD: {

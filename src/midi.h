@@ -57,6 +57,12 @@
 //                           pattern is panel-only. Same limit on 0x16's step
 //                           index. A test that writes 128 is sending a
 //                           malformed message, not exercising a boundary.
+//   0x1B <p><step><val>   SET RATCHET (0 single, 1 = 2x, 2 = 3x): the step's
+//                           note retriggers evenly inside its clock period.
+//                           Same opcode number as the 303's ratchet. The lane
+//                           travels as a packed tail on 0x11/0x12 (2 bits per
+//                           step after the step bytes; absent = all off) and
+//                           in the flash record the same way.            -> 0x14
 //   0x1D <p>              select pattern p (as PLAY + key on the panel)
 //   0x1E <x>              transport: SuperOS x=1 play / 0 stop; the emulator
 //                         taps its PLAY button (toggle) for any x
@@ -106,7 +112,7 @@ namespace midi {
 
 static const uint8_t RX_CAP  = 64;    // power of two
 static const uint8_t TX_CAP  = 128;   // power of two
-static const uint8_t SX_MAX  = 160;   // largest inbound SysEx body (0x12 = 152)
+static const uint8_t SX_MAX  = 192;   // largest inbound SysEx body (0x12 with the ratchet tail = 188)
 
 // Port bitmask (Send / reply routing).
 enum : uint8_t { PORT_DIN = 0x01, PORT_USB = 0x02, PORT_ALL = 0x03 };
