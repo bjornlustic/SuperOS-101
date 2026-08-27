@@ -1006,11 +1006,16 @@ static int SelfTest() {
     MidiByte(0xF8);
     CHECK(GateOn() && sim::g_sh[0] == 17, "unanchored clock: step 0 lands on the next tick");
     sxPlay(0);
-    // (3) an 0xFA-anchored stream keeps its phase: PLAY waits for the
-    // host's own next division boundary instead of re-anchoring.
-    MidiByte(0xFA); MidiClocks(3);          // downbeat + 3 of 6 ticks
+    // (3) an 0xFA-anchored stream keeps its phase: a LOCAL play press while
+    // the host runs waits for the host's own next division boundary instead
+    // of re-anchoring (quantized launch). 0xFA itself now starts play (sync
+    // on = transport slave), so stop locally first to test the re-arm.
+    MidiByte(0xFA); MidiClocks(1);          // downbeat: playing, step 0
+    CHECK(GateOn() && sim::g_sh[0] == 17, "0xFA started play at the downbeat");
+    sxPlay(0);                              // local stop; the host keeps ticking
+    MidiClocks(2);                          // mid-division
     sxPlay(1);
-    MidiByte(0xF8);
+    MidiByte(0xF8);                         // tick 4 of 6: still inside the division
     CHECK(!GateOn(), "anchored clock: PLAY holds for the host's boundary");
     MidiClocks(3);                          // ticks 5,6,7: the edge fires on tick 7 (tick counter back at 0)
     CHECK(GateOn() && sim::g_sh[0] == 17, "anchored clock: step 0 lands on the boundary");
@@ -1024,6 +1029,21 @@ static int SelfTest() {
     waitMs(8); ClockTick();
     CHECK(sim::g_sh[0] == 19, "after host Stop: the LFO steps the pattern");
     sxPlay(0);
+    // (5b) sync ON is full transport slaving: the host's 0xFA starts the
+    // sequencer from silence, and 0xFC stops it (back to keyboard mode).
+    waitMs(320);
+    MidiByte(0xFA); MidiByte(0xF8);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "sync on: 0xFA starts the sequencer itself (step 0)");
+    MidiClocks(6);
+    CHECK(sim::g_sh[0] == 19, "sync on: it keeps stepping on the host's divisions");
+    MidiByte(0xFC); RunLoops(2);
+    waitMs(20); ClockTick();
+    CHECK(sim::g_sh[0] == 19 && !GateOn(), "sync on: 0xFC stops it (keyboard mode, T1 steps nothing)");
+    // sync OFF keeps the old semantics: 0xFA never force-starts
+    midiclk::SetSync(false); RunLoops(2);
+    MidiByte(0xFA); MidiByte(0xF8); RunLoops(2);
+    CHECK(!GateOn(), "sync off: 0xFA does not start the sequencer");
+    midiclk::SetSync(true); RunLoops(2);
     // (5) after a Stop, a fresh Start-less stream is an implicit continue:
     // the machine clocks from it again (0xFC must not permanently silence a
     // host that never sends Start), and PLAY locks to it.

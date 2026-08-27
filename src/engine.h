@@ -411,6 +411,12 @@ class NoteEngine {
   }
   // MIDI Start: align the sequence and arpeggiator to the incoming downbeat.
   void restart() { seq_.rewind(); arp_.reset(); playStart_ = true; }
+  // Host transport start (0xFA with sync on): enter play mode WITHOUT the
+  // local-press playNow_. Timing begins at the first 0xF8 after Start (MIDI
+  // spec), and that tick's boundary edge sounds step 0; an immediate
+  // fallback start here would play step 0 twice (once at the Start, again
+  // one loop pass later on the downbeat tick).
+  void playFromHost() { if (mode_ != MODE_SEQ_LOAD) mode_ = MODE_SEQ_PLAY; }
   // SysEx 0x1D / editor: select a pattern (ignored while recording).
   void selectPattern(uint8_t p) { if (mode_ != MODE_SEQ_LOAD) seq_.select(p); }
   void setPlaying(bool on) {

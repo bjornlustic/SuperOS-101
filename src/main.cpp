@@ -291,7 +291,15 @@ void superos_loop() {
   // MIDI: notes, SysEx, realtime (divided clock + transport via midiclock.h)
   midi::Poll();
   bool divEdge = midiclk::ConsumeEdge();
-  if (midiclk::ConsumeStart()) g_engine.restart();
+  // Sync ON makes the 101 a real transport slave: the host's Start STARTS
+  // the sequencer (play in the DAW and the machine plays; nobody has to
+  // also press PLAY here or send 0x1E), and Stop stops it. Sync OFF keeps
+  // the old behaviour: Start only aligns an already-playing sequencer.
+  if (midiclk::ConsumeStart()) {
+    g_engine.restart();
+    if (midiclk::SyncOn()) g_engine.playFromHost();   // step 0 sounds on the downbeat tick
+  }
+  if (midiclk::ConsumeStop() && midiclk::SyncOn()) g_engine.setPlaying(false);
   // Sync ON only rules while the host's clock is actually on the wire
   // (midiclock.h Driving); otherwise the LFO/EXT-CLK steps the machine so a
   // PLAY press is never silent.
