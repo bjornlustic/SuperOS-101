@@ -1037,6 +1037,73 @@ static int SelfTest() {
     midiclk::SetSync(false); RunLoops(2);
   }
 
+  // Jitter smoothing (midiclock.h Sched): ticks arrive with pseudo-random
+  // jitter; the step boundaries must land on the smoothed timebase, tighter
+  // than the arrival jitter they were carried by.
+  puts("clock jitter smoothing:");
+  {
+    auto sxP = [&](uint8_t on) {
+      for (uint8_t v : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x1E, on, (uint8_t)0xF7}) g_midiQ.push_back(v);
+      RunLoops(2);
+    };
+    midiclk::SetSync(true); midiclk::SetDiv(6); midiclk::SetLfoSync(false);
+    {   // pattern 6: four NOTE steps, so every division retriggers the gate
+      std::vector<uint8_t> raw = {4, 17, 21, 24, 29, 0};   // len, steps, ratchet byte
+      uint16_t x = 0; for (uint8_t v : raw) x ^= v;
+      std::vector<uint8_t> b2 = {0xF0, 0x7D, 0x12, 6, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)};
+      for (size_t i = 0; i < raw.size(); i += 7) {
+        uint8_t msb = 0; size_t nn = std::min<size_t>(7, raw.size() - i);
+        for (size_t k = 0; k < nn; ++k) if (raw[i + k] & 0x80) msb |= 1 << k;
+        b2.push_back(msb); for (size_t k = 0; k < nn; ++k) b2.push_back(raw[i + k] & 0x7F);
+      }
+      b2.push_back(0xF7);
+      for (uint8_t v : b2) g_midiQ.push_back(v); RunLoops(2);
+      for (uint8_t v : {0xF0, 0x7D, 0x1D, 6, 0xF7}) g_midiQ.push_back(v); RunLoops(2);
+    }
+    sxP(1);
+    MidiByte(0xFA);
+    // 20 ms ticks (25 BPM-ish virtual, irrelevant) with +/-2.5 ms jitter:
+    // the ratio matches a real USB host (a few ms on a 20.8 ms tick), and a
+    // raw-arrival stepper would show interval deviations up to twice the
+    // jitter (~5 ms).
+    const uint32_t TICK_US = 20000;              // -> 120 ms divisions
+    uint32_t base = micros();
+    uint32_t lcg = 12345;
+    std::vector<uint32_t> rises;
+    bool prevGate = GateOn();
+    int32_t maxInJit = 0;
+    for (int t = 1; t <= 6 * 30; ++t) {
+      lcg = lcg * 1103515245u + 12345u;
+      int32_t jit = (int32_t)((lcg >> 16) % 5001) - 2500;   // -2.5..+2.5 ms
+      if (jit > maxInJit) maxInJit = jit; if (-jit > maxInJit) maxInJit = -jit;
+      uint32_t target = base + (uint32_t)t * TICK_US + (uint32_t)jit;
+      while ((int32_t)(target - micros()) > 0) {
+        RunLoops(1);
+        bool g = GateOn();
+        if (g && !prevGate) rises.push_back(micros());
+        prevGate = g;
+      }
+      MidiByte(0xF8);
+      bool g = GateOn(); if (g && !prevGate) rises.push_back(micros()); prevGate = g;
+    }
+    sxP(0); MidiByte(0xFC);
+    for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);   // pattern 0 back
+    midiclk::SetSync(false); RunLoops(2);
+    // Skip the first few intervals: the period EMA is still converging from
+    // its 120 BPM seed to the driven tempo there, which is a tempo change,
+    // not jitter.
+    int32_t maxDev = 0;
+    for (size_t i = 5; i < rises.size(); ++i) {
+      int32_t dev = (int32_t)(rises[i] - rises[i - 1]) - 120000;
+      if (dev > maxDev) maxDev = dev; if (-dev > maxDev) maxDev = -dev;
+    }
+    printf("  (%d step onsets; worst interval dev %+.1f ms against +/-%.1f ms tick jitter)\n",
+           (int)rises.size(), maxDev / 1000.0, maxInJit / 1000.0);
+
+    CHECK(rises.size() >= 25, "jittered clock: one step per division, none dropped");
+    CHECK(maxDev < 2500, "jittered clock: step intervals smoother than the wire (raw would be ~5 ms)");
+  }
+
   // AUTO LFO division (lfoDiv 127): the division follows the measured
   // free-running LFO period against the incoming tick spacing.
   puts("LFO auto division:");
@@ -1055,7 +1122,20 @@ static int SelfTest() {
         RunLoops(1);
       }
     }
-    CHECK(midiclk::LfoDivEff() == 3, "AUTO picks 1/8 for a ~120 ms LFO at ~10 ms ticks");
+    // Expected division: the nearest LfoTicks(i)*tickMs to the measured LFO
+    // period, computed from what the firmware actually measured (sim loop
+    // granularity stretches the driven 10 ms ticks to ~12 ms).
+    {
+      uint8_t want = 0; uint32_t bestE = 0xFFFFFFFF;
+      for (uint8_t i = 0; i < midiclk::LFO_DIV_COUNT; ++i) {
+        uint32_t p = (uint32_t)midiclk::LfoTicks(i) * midiclk::S().tickMs;
+        uint32_t e = p > midiclk::LfoPeriodMs() ? p - midiclk::LfoPeriodMs() : midiclk::LfoPeriodMs() - p;
+        if (e < bestE) { bestE = e; want = i; }
+      }
+      printf("  (AUTO: measured LFO %u ms, tick %u ms -> chose %u, nearest is %u)\n",
+             midiclk::LfoPeriodMs(), midiclk::S().tickMs, midiclk::LfoDivEff(), want);
+      CHECK(midiclk::LfoDivEff() == want, "AUTO picks the division nearest the measured LFO period");
+    }
     CHECK(midiclk::LfoPeriodMs() > 90 && midiclk::LfoPeriodMs() < 150,
           "AUTO's measured LFO period is in range");
     // extended LFO divisions: 10 = 1/2, 11 = 1/1 accepted and reported
