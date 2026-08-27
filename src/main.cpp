@@ -349,18 +349,23 @@ void superos_loop() {
       g_rstSinceFall = false;
     }
   }
-  if (!driving) {
+  if (!midiclk::SyncOn()) {
     if ((int32_t)(g_rstUntilMs + CLK_SETTLE_MS - millis()) > 0) {
       clockEdge = false; halfEdge = false; g_clkResync = true;
     } else if (g_clkResync) {
       clockEdge = false; halfEdge = false; g_clkResync = false;
     }
-  }
-  if (driving) {
-    clockEdge = divEdge;
-    halfEdge = midiclk::ConsumeHalfEdge();
-    if (divEdge) g_rndHeld = random;
-    random = g_rndHeld;
+  } else {
+    // Sync ON is STRICT: only the divided MIDI clock steps the machine. When
+    // the host's ticks stop, the machine freezes; the LFO never stands in
+    // (the player asked for a slave, and a slave with a mind of its own is
+    // worse than a silent one).
+    clockEdge = driving ? divEdge : false;
+    halfEdge = driving ? midiclk::ConsumeHalfEdge() : false;
+    if (driving) {
+      if (divEdge) g_rndHeld = random;
+      random = g_rndHeld;
+    }
   }
   hw::DacWrite(random, ROUTE_RANDOM);
 

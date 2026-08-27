@@ -415,8 +415,11 @@ class NoteEngine {
   // local-press playNow_. Timing begins at the first 0xF8 after Start (MIDI
   // spec), and that tick's boundary edge sounds step 0; an immediate
   // fallback start here would play step 0 twice (once at the Start, again
-  // one loop pass later on the downbeat tick).
-  void playFromHost() { if (mode_ != MODE_SEQ_LOAD) mode_ = MODE_SEQ_PLAY; }
+  // one loop pass later on the downbeat tick). Only from idle keyboard
+  // mode: an active arp is already a clock-driven performance and the
+  // host's Start must not stomp it into sequencer play (recording is
+  // likewise left alone).
+  void playFromHost() { if (mode_ == MODE_KEYBOARD) mode_ = MODE_SEQ_PLAY; }
   // SysEx 0x1D / editor: select a pattern (ignored while recording).
   void selectPattern(uint8_t p) { if (mode_ != MODE_SEQ_LOAD) seq_.select(p); }
   void setPlaying(bool on) {
@@ -475,17 +478,17 @@ class NoteEngine {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
           subTotal_ = 1; subLeft_ = 0; lastEdgeMs_ = 0;   // no stale ratchet state into a new run
           // Panel/editor PLAY (playNow_), internal clock only: step 1 sounds
-          // NOW, the LFO hard-reset gives step 2 one period later. With the
-          // host's clock actually driving (midiclock.h Driving) the press
-          // only ARMS: step 1 lands on the next division edge of an
-          // 0xFA-anchored stream, or on the very next tick of a never-started
-          // stream (UserPlay re-anchored the divider at the press), so arming
-          // does not blurt a note and the groove stays on the host's beat.
-          // Sync ON with a silent host steps from the LFO like sync OFF:
-          // PLAY is never a silent button. 0xFA never sets playNow_.
+          // NOW, the LFO hard-reset gives step 2 one period later. With sync
+          // ON the press only ARMS: step 1 lands on the next division edge
+          // of an 0xFA-anchored stream, on the very next tick of a
+          // never-started stream (UserPlay re-anchored the divider at the
+          // press), or, with no clock on the wire at all, whenever the
+          // host's clock shows up. A synced machine NEVER free-runs: the
+          // host's transport and clock are the only things that make it
+          // step. 0xFA never sets playNow_.
           if (playNow_) {
             playNow_ = false;
-            if (!midiclk::Driving(millis())) {
+            if (!midiclk::SyncOn()) {
               if (seq_.advance()) o.portaOff = true;
               lastCv_ = seq_.cv();
               clockEdge = false; halfEdge = false;

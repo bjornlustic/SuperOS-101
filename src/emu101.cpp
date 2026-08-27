@@ -429,17 +429,9 @@ static const uint8_t T1_PENDING_MAX = 2;   // small: a clock faster than the ROM
 static volatile uint32_t g_t1CandUs = 0;   // micros() of the last unqualified falling edge
 static volatile bool     g_t1Cand   = false;
 static const uint16_t    T1_QUALIFY_US = 1500;   // about the original's shortest pass
-#endif
-// Whether the divided MIDI clock is driving T1 right now (sync on AND the
-// host's 0xF8 stream alive, midiclock.h Driving). Sampled once per pass into
-// a plain bool: the ISR cannot make midiclk's multi-byte liveness check
-// atomically, and every T1 site must agree within a pass anyway. Sync ON with
-// a dead host falls back to the real T1 pin, so PLAY still plays.
-static volatile bool g_clkDriving = false;
-#ifdef __AVR__
 ISR(INT0_vect) {
   ++g_edgeAcc;
-  if (!g_clkDriving) { g_t1CandUs = micros(); g_t1Cand = true; }
+  if (!midiclk::SyncOn()) { g_t1CandUs = micros(); g_t1Cand = true; }
 }
 static inline void T1Qualify() {
   if (!g_t1Cand) return;
@@ -461,15 +453,18 @@ static inline void T1PinEdgeInit() {}
 static inline void T1Qualify() {}
 #endif
 
+// Sync ON is STRICT: T1 is the divided MIDI clock, full stop. When the host's
+// ticks stop, the divider freezes and so does the ROM's sequencer; the LFO pin
+// never steps a synced machine (the player asked for a slave, not a fallback).
 static inline bool T1Source() {
-  if (g_clkDriving) return midiclk::T1Level();
+  if (midiclk::SyncOn()) return midiclk::T1Level();
   return (PIND & (1u << T1_CLOCK_BIT)) != 0;
 }
 static inline void T1Watch() {
   bool lvl = T1Source();
   if (g_t1Level && !lvl) ++g_pollEdgeAcc;   // diagnostic: edges as a slow poll sees them
 #ifdef __AVR__
-  bool countHere = g_clkDriving;          // pin edges arrive via INT0
+  bool countHere = midiclk::SyncOn();     // pin edges arrive via INT0
 #else
   bool countHere = true;
 #endif
@@ -483,7 +478,7 @@ static inline void T1Watch() {
 }
 bool    mcs48_t1() {
   T1Watch();
-  if (!g_clkDriving) T1Qualify();
+  if (!midiclk::SyncOn()) T1Qualify();
   if (g_t1Pending) {
     if (g_t1Shown) {                                       // deliver the edge
       g_t1Shown = false;
@@ -512,7 +507,7 @@ static void T1PlayStartAssert(void) {
   // Pin-clocked only: whatever the freeze does to the LFO line is not a step;
   // drop queued edges. With the divided MIDI clock driving, the T1 queue
   // carries the host's grid and must not be touched at the arm.
-  if (g_clkDriving) return;
+  if (midiclk::SyncOn()) return;
   cli(); g_t1Pending = 0; sei();
 #ifdef __AVR__
   cli(); g_t1Cand = false; sei();
@@ -523,7 +518,7 @@ static void T1PlayStartRelease(void) {
   // the release and the restarted LFO's period begins with it. With the
   // divided clock driving, the arm stays silent until the host's next
   // division edge.
-  if (g_clkDriving) return;
+  if (midiclk::SyncOn()) return;
   cli(); g_t1Pending = 1; sei();
 #ifdef __AVR__
   cli(); g_t1Cand = false; sei();
@@ -740,7 +735,7 @@ void loop() {
     // S/H refresh at a SuperOS-like cadence (see ShRefresh); time-based, since
     // the droop is per real millisecond however slow the interpreter runs.
     if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { if (ShRefresh()) { s_shLastUs = nowUs; g_shUsAcc += micros() - nowUs; } }
-    if (g_clkDriving) T1Watch();        // divided-clock edges (pin edges arrive via INT0)
+    if (midiclk::SyncOn()) T1Watch();   // divided-clock edges (pin edges arrive via INT0)
     else T1Qualify();                    // promote a settled INT0 edge to a pending clock
     GateTick(nowUs);                     // gate hold / hole deadlines
   }
@@ -767,7 +762,24 @@ void loop() {
 
   midi::Poll();   // notes into the matrix, divided clock (emulated T1), SysEx
   uint32_t ms = millis();
-  g_clkDriving = midiclk::Driving(ms);   // one liveness sample rules the whole pass
+  // Sync ON slaves the ROM's transport too: the host's Start taps the PLAY
+  // button when the machine is idle (no function LED lit), Stop taps it when
+  // the PLAY LED is lit (the ROM's own button toggles, and the function-LED
+  // select is the mode readback). An active arp or LOAD mode is left alone:
+  // Start must not stomp a clock-driven performance into sequencer play.
+  {
+    bool started = midiclk::ConsumeStart(), stopped = midiclk::ConsumeStop();
+    if (midiclk::SyncOn()) {
+      // Function select: 1 LOAD, 2 PLAY, 3-5 arps; 0/6/7 light nothing (the
+      // 4556 only wires 1-5, and the ROM's idle image uses select 7).
+      uint8_t fn = (uint8_t)(g_p2Rom & 0x07);
+      bool idle = (fn == 0 || fn > 5);
+      if ((started && idle) || (stopped && fn == 2)) {
+        g_virtButtons |= (1u << 1);
+        g_virtUntilMs = ms + 60;
+      }
+    }
+  }
   T1Watch();      // sync-clock edge right after Poll advanced it
   RateTick(ms, ran);
   RamPersistTick(ms);

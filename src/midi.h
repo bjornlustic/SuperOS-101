@@ -80,10 +80,14 @@
 //                           LFO RATE slider (measured free-run period vs the
 //                           incoming tick spacing, midiclock.h). SuperOS
 //                           only; the 80C49 mode never hard-synced its LFO.
-//                           Sync ON steps from the divided clock only while
-//                           0xF8s actually arrive; a silent or stopped host
-//                           falls back to the LFO/EXT-CLK (midiclock.h
-//                           Driving/FallbackToLfo), so PLAY always plays.
+//                           Sync ON is STRICT transport slaving: 0xFA starts
+//                           the sequencer (from idle; an active arp is left
+//                           alone), 0xFC stops it, and only the divided
+//                           clock ever steps it. A synced machine with no
+//                           clock on the wire stays silent; a local PLAY
+//                           press arms it for the moment the clock speaks.
+//                           In 80C49 mode Start/Stop tap the ROM's PLAY
+//                           button, keyed on the function-LED readback.
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
 //   (CC cutoffCc, default 74, moves the filter; CC cutoffCc+32 = 106 is its

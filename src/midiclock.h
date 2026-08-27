@@ -8,12 +8,11 @@
 // and gates the random S/H so it steps on the beat. In 80C49 mode the divided
 // clock is injected on the emulated T1 pin instead.
 //
-// Sync ON with NO clock on the wire falls back to the LFO/EXT-CLK, so a PLAY
-// press always plays: "sync on" means "the host's clock wins when it is
-// speaking", not "the machine is mute until a host shows up". The one
-// exception is an explicit 0xFC: the host said stop, so the fallback stays
-// silent until the next 0xFA/0xFB or until the player presses PLAY here
-// (UserPlay), which is fresh local intent and overrides the host's stop.
+// Sync ON is STRICT transport slaving: the host's Start starts the sequencer,
+// Stop stops it, and only the divided clock ever steps it. A synced machine
+// with no clock on the wire stays silent (a local PLAY press arms it, and it
+// starts the moment the host's clock speaks). The LFO/EXT-CLK steps the
+// machine only with sync OFF.
 //
 // All divisions are integer tick counts at 24 ppqn, so there is no drift.
 #pragma once
@@ -188,12 +187,6 @@ inline bool TickAlive(uint32_t nowMs) {
 inline bool Driving(uint32_t nowMs) {
   return S().sync && S().running && TickAlive(nowMs);
 }
-// Sync is configured on but the host is silent or stopped: the LFO/EXT-CLK
-// steps the machine instead, EXCEPT after an explicit 0xFC (host said stop),
-// which stays silent until 0xFA/0xFB or a local PLAY press.
-inline bool FallbackToLfo(uint32_t nowMs) {
-  return S().sync && !Driving(nowMs) && !S().hostStopped;
-}
 // A local PLAY press (panel or SysEx 0x1E): fresh intent, overrides a host
 // stop. If a clock is alive but the host never sent 0xFA (free-streaming
 // clock, phase meaningless), re-anchor the divider so step 1 lands on the
@@ -228,10 +221,14 @@ inline void OnRealtime(uint8_t b) {
           // A fresh stream after a dead gap: phase unknown, and it counts as
           // an implicit continue. A host that streams clock without ever
           // sending Start must still clock the machine, including after an
-          // earlier 0xFC ended its previous stream.
+          // earlier 0xFC ended its previous stream. The old phase is
+          // meaningless, so the new stream's first tick IS a boundary: an
+          // armed PLAY starts right here instead of waiting out a stale
+          // mid-division counter.
           s.anchored = false;
           s.running = true;
           s.hostStopped = false;
+          s.tick = 0; s.lfoTick = 0;
           fresh = true;
         } else if (d <= 60) s.tickMs = (uint8_t)(((uint16_t)s.tickMs * 3 + d + 2) / 4);
       }

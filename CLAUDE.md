@@ -11,13 +11,15 @@ fleet got wrong), `coord/briefs/A101.md` (this machine's brief).
 
 ## The traps
 
-**MIDI Start does not start the sequencer.** `0xFA` sets the clock running and
-calls `Engine::restart()`, which rewinds. Nothing calls `setPlaying()` except
-SysEx `0x1E`. So a 101 that is slaved, sync on, divider set and receiving clock
-will sit **silent** through an entire capture unless you also send
-`F0 7D 1E 01 F7`. This cost a whole clocked run once (finding 13) and it is not
-visible from the panel or from any read-back: the machine looks correctly
-configured. `timing/sync_test.py` sends it; anything you write yourself must too.
+**MIDI Start DOES start the sequencer now, but only with sync ON and only from
+idle.** Since 2026-08-27 sync ON is strict transport slaving: `0xFA` calls
+`playFromHost()` (SuperOS) or taps the ROM's PLAY button (80C49 mode), `0xFC`
+stops it, and with sync ON nothing but the divided clock ever steps the machine
+(no LFO fallback; a silent wire = a silent machine, and a local PLAY press only
+ARMS it). The old trap survives in two forms: with sync OFF, `0xFA` still only
+rewinds (finding 13 behaviour), and `0xFA` never interrupts an active arp or
+LOAD mode. `timing/sync_test.py` still sends `F0 7D 1E 01 F7`, which remains
+correct in every mode.
 
 **`0x15` is directional, and `EDIT_OPCODES.md` is wrong about it.** The shared
 spec lists `0x15` as free for RANDOMIZE. On the 101 it is a get/set pair:

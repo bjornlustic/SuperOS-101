@@ -948,16 +948,16 @@ static int SelfTest() {
   puts("MIDI clock sync:");
   midiclk::SetSync(true); midiclk::SetDiv(6);   // 1/16 = 6 ticks at 24 ppqn
   midiclk::SetLfoSync(true); midiclk::SetLfoDiv(6);   // LFO hard-sync on the same boundary
-  // Sync ON with a silent host: the LFO/EXT-CLK still steps the machine
-  // (midiclock.h FallbackToLfo), so PLAY is never a silent button.
+  // Sync ON is STRICT: with no host clock on the wire the machine freezes;
+  // the LFO/EXT-CLK never stands in.
   {
     uint32_t until = millis() + 320;               // ticks from earlier tests age out
     while ((int32_t)(until - millis()) > 0) RunLoops(1);
   }
   uint8_t cvBeforeSync = sim::g_sh[0];
   ClockTick();
-  CHECK(sim::g_sh[0] != cvBeforeSync, "sync on, no host clock: T1 (LFO) still steps (fallback)");
-  MidiClocks(2);                                 // ticks arrive: the host's clock takes over
+  CHECK(sim::g_sh[0] == cvBeforeSync, "sync on, no host clock: T1 (LFO) steps NOTHING (strict slave)");
+  MidiClocks(2);                                 // ticks arrive: the host's clock drives
   uint8_t cvUnderClock = sim::g_sh[0];
   ClockTick();
   CHECK(sim::g_sh[0] == cvUnderClock, "sync on, host clock alive: T1 (LFO) clock is ignored");
@@ -992,11 +992,14 @@ static int SelfTest() {
     midiclk::SetSync(true); midiclk::SetDiv(6);
     sxPlay(0); RunLoops(2);
     waitMs(320);                            // ticks from the tests above age out
-    // (1) sync on, host silent: PLAY sounds step 0 immediately (no clock needed)
+    // (1) sync on, host silent: PLAY only ARMS (strict slave, no LFO
+    // fallback); the machine starts the moment the host's clock speaks.
     sxPlay(1);
-    CHECK(GateOn() && sim::g_sh[0] == 17, "sync on, silent host: PLAY sounds step 0 NOW");
+    CHECK(!GateOn(), "sync on, silent host: PLAY arms silently (strict slave)");
     waitMs(8); ClockTick();
-    CHECK(sim::g_sh[0] == 19, "sync on, silent host: the LFO keeps stepping the pattern");
+    CHECK(!GateOn(), "sync on, silent host: the LFO steps nothing");
+    MidiByte(0xF8);                         // the host's clock speaks: step 0
+    CHECK(GateOn() && sim::g_sh[0] == 17, "armed PLAY starts on the first host tick");
     sxPlay(0);
     // (2) host ticks without ever sending Start (phase unknown): PLAY
     // re-anchors the divider, so step 0 lands on the very next tick.
@@ -1020,14 +1023,16 @@ static int SelfTest() {
     MidiClocks(3);                          // ticks 5,6,7: the edge fires on tick 7 (tick counter back at 0)
     CHECK(GateOn() && sim::g_sh[0] == 17, "anchored clock: step 0 lands on the boundary");
     sxPlay(0);
-    // (4) host sent Stop, then the player presses PLAY: local intent wins,
-    // the machine plays from the LFO instead of staying silent.
+    // (4) host sent Stop, then the player presses PLAY: still strict, the
+    // machine arms and waits for the host's clock.
     MidiByte(0xFC);
     waitMs(320);                            // the dead stream ages out
     sxPlay(1);
-    CHECK(GateOn() && sim::g_sh[0] == 17, "after host Stop: PLAY still plays (LFO fallback)");
+    CHECK(!GateOn(), "after host Stop: PLAY arms, nothing free-runs");
     waitMs(8); ClockTick();
-    CHECK(sim::g_sh[0] == 19, "after host Stop: the LFO steps the pattern");
+    CHECK(!GateOn(), "after host Stop: the LFO still steps nothing");
+    MidiByte(0xF8);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "after host Stop: the armed PLAY starts when ticks resume");
     sxPlay(0);
     // (5b) sync ON is full transport slaving: the host's 0xFA starts the
     // sequencer from silence, and 0xFC stops it (back to keyboard mode).
@@ -1281,6 +1286,17 @@ static int SelfTest() {
       int nz = 0; for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i) if (eeprom_read_byte(EE_EMU_RAM + i)) ++nz;
       CHECK(magic && nz > 0, "ROM sequence persisted to EEPROM (magic + data)");
       CHECK(eeprom_read_byte(EE_EMU_RAM + 10) == 0, "EEPROM image carries the ROM's zeros after the last step (not 0xFF)");
+    }
+
+    // Sync ON slaves the ROM's transport: Start taps PLAY from idle, Stop
+    // taps it back off (the LED select is the mode readback).
+    {
+      midiclk::SetSync(true); RunLoops(30);
+      g_midiQ.push_back(0xFA); RunLoops(400);
+      CHECK((emu101::romP2() & 0x07) == 2, "ROM + sync on: 0xFA starts the ROM's sequencer (PLAY LED)");
+      g_midiQ.push_back(0xFC); RunLoops(400);
+      CHECK((emu101::romP2() & 0x07) != 2, "ROM + sync on: 0xFC stops it");
+      midiclk::SetSync(false); RunLoops(30);
     }
 
     // Menu works from the emulator side too: PLAY -> back to SuperOS.
