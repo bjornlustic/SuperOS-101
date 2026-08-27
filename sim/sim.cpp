@@ -28,7 +28,7 @@
 
 // Combined-build hooks (src/combined.h / boot.cpp / emu101.h / midiclock.h)
 uint8_t combined_current_fw();
-void RebootTo(uint8_t fw);
+void SwitchTo(uint8_t fw);
 namespace emu101 { bool available(); const uint8_t* ram(); uint8_t romP2(); }
 #include "midiclock.h"   // inline; resolved via -I ../src
 #include "midi.h"
@@ -399,7 +399,7 @@ static void Repl() {
     } else if (cmd == "mode") {
       std::string val; ss >> val;
       if (val == "emu" && !emu101::available()) { puts("no ROM embedded"); continue; }
-      if (val == "emu" || val == "superos") RebootTo(val == "emu" ? 1 : 0); // longjmps
+      if (val == "emu" || val == "superos") { SwitchTo(val == "emu" ? 1 : 0); RunLoops(2); } // in-process
       puts("usage: mode emu|superos");
       continue;
     } else {
@@ -1105,26 +1105,23 @@ static int SelfTest() {
     midiclk::SetSync(false);
   }
 
-  // Config menu: HOLD+KEY-TRANSPOSE 2 s -> menu; LOAD -> reboot into the
-  // 80C49 emulator (the original mask ROM, if embedded).
+  // Config menu: HOLD+KEY-TRANSPOSE 2 s -> menu; LOAD -> switch into the
+  // 80C49 emulator (the original mask ROM, if embedded). The switch runs IN
+  // PROCESS (combined.h SwitchTo): no reboot, no longjmp, no USB drop.
   puts("config menu / combined boot:");
   if (emu101::available()) {
-    if (!setjmp(g_rebootJmp)) {
-      sim::g_buttons = (1u << 5) | (1u << 7);   // HOLD + KEY-TRANSPOSE
-      RunLoops(40000);                          // > 2 s virtual, enters menu
-      sim::g_buttons = 0; RunLoops(2);
-      sim::g_buttons = 1u << 3; RunLoops(1);    // UP&DOWN: toggle MIDI sync on
-      sim::g_buttons = 0; RunLoops(1);
-      CHECK(midiclk::SyncOn(), "menu UP&DOWN toggles MIDI sync on");
-      sim::g_buttons = 1u << 3; RunLoops(1);    // and back off
-      sim::g_buttons = 0; RunLoops(1);
-      CHECK(!midiclk::SyncOn(), "menu UP&DOWN toggles MIDI sync off");
-      sim::g_buttons = 1u << 0; RunLoops(1);    // LOAD -> RebootTo(FW_EMU)
-      CHECK(false, "menu LOAD should have rebooted");
-    } else {
-      setup();                                  // boot lands in emulator mode
-    }
-    CHECK(combined_current_fw() == SIM_FW_EMU, "menu LOAD -> rebooted into emulator");
+    sim::g_buttons = (1u << 5) | (1u << 7);   // HOLD + KEY-TRANSPOSE
+    RunLoops(40000);                          // > 2 s virtual, enters menu
+    sim::g_buttons = 0; RunLoops(2);
+    sim::g_buttons = 1u << 3; RunLoops(1);    // UP&DOWN: toggle MIDI sync on
+    sim::g_buttons = 0; RunLoops(1);
+    CHECK(midiclk::SyncOn(), "menu UP&DOWN toggles MIDI sync on");
+    sim::g_buttons = 1u << 3; RunLoops(1);    // and back off
+    sim::g_buttons = 0; RunLoops(1);
+    CHECK(!midiclk::SyncOn(), "menu UP&DOWN toggles MIDI sync off");
+    sim::g_buttons = 1u << 0; RunLoops(1);    // LOAD -> SwitchTo(FW_EMU)
+    sim::g_buttons = 0; RunLoops(2);          // the pending switch runs next pass
+    CHECK(combined_current_fw() == SIM_FW_EMU, "menu LOAD -> switched into the emulator (no reboot)");
 
     puts("80C49 emulator (original mask ROM):");
     sim::g_buttons = 0;
@@ -1187,16 +1184,12 @@ static int SelfTest() {
     }
 
     // Menu works from the emulator side too: PLAY -> back to SuperOS.
-    if (!setjmp(g_rebootJmp)) {
-      sim::g_buttons = (1u << 5) | (1u << 7);
-      RunLoops(4800);                           // 2 s at 500 us/slice
-      sim::g_buttons = 0; RunLoops(4);
-      sim::g_buttons = 1u << 1; RunLoops(1);    // PLAY -> RebootTo(FW_SUPEROS)
-      CHECK(false, "menu PLAY should have rebooted");
-    } else {
-      setup();
-    }
-    CHECK(combined_current_fw() != SIM_FW_EMU, "menu PLAY -> rebooted into SuperOS");
+    sim::g_buttons = (1u << 5) | (1u << 7);
+    RunLoops(4800);                           // 2 s at 500 us/slice
+    sim::g_buttons = 0; RunLoops(4);
+    sim::g_buttons = 1u << 1; RunLoops(1);    // PLAY -> SwitchTo(FW_SUPEROS)
+    sim::g_buttons = 0; RunLoops(2);          // the pending switch runs next pass
+    CHECK(combined_current_fw() != SIM_FW_EMU, "menu PLAY -> switched into SuperOS (no reboot)");
   } else {
     puts("  SKIP  no mask ROM embedded (SH101-reference dump absent)");
   }
@@ -1568,7 +1561,7 @@ int Main() {
   if (setjmp(g_rebootJmp) == 0) setup(); else setup();
   RunAll(g_sos);
 
-  if (setjmp(g_rebootJmp) == 0) { RebootTo(1); } else { setup(); }
+  SwitchTo(1); RunLoops(1);   // in-process switch, performed at the next pass
   if (combined_current_fw() != SIM_FW_EMU) {
     puts("failed to reach emulator mode; no comparison possible");
     return 2;

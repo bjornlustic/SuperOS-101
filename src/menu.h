@@ -108,9 +108,9 @@ inline void Poll() {
   if (keyRise & (1UL << 13)) midiclk::SetLfoSync(!midiclk::LfoSyncOn());
 
   if (rise & (1u << controls::BTN_LOAD)) {
-    if (emu101::available()) RebootTo(FW_EMU);   // no ROM embedded -> ignore
+    if (emu101::available()) SwitchTo(FW_EMU);   // no ROM embedded -> ignore
   }
-  if (rise & (1u << controls::BTN_PLAY))     RebootTo(FW_SUPEROS);
+  if (rise & (1u << controls::BTN_PLAY))     SwitchTo(FW_SUPEROS);
   if (rise & (1u << controls::BTN_KEYTRANS)) Exit();
 }
 

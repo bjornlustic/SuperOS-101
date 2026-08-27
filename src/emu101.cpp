@@ -681,8 +681,34 @@ void setup() {
   // 80C49 reset state: all port latches high (gate off, LEDs per reset).
   BUS_PORT = 0xFF;
   P2_PORT  = 0xFF;
+  // Re-entry (in-process firmware switch): no stale edges or virtual buttons
+  // from a previous stint in this mode.
+  cli(); g_t1Pending = 0; sei();
+  g_t1Shown = true; g_t1Level = false;
+  g_virtButtons = 0;
+  g_midiKeys = 0;
   mcs48_reset(g_cpu);
   RamLoad();          // the "battery" kept the sequence: restore it before the ROM runs
+}
+
+// In-process firmware switch (combined.h SwitchTo): leave nothing running.
+// The battery RAM persists NOW rather than waiting out the 1 s quiet window,
+// so a switch cannot lose the steps the ROM just recorded.
+void teardown() {
+#ifdef __AVR__
+  EIMSK &= (uint8_t)~(1u << INT0);
+  cli(); g_t1Cand = false; sei();
+#endif
+  cli(); g_t1Pending = 0; sei();
+  g_virtButtons = 0;
+  g_midiKeys = 0;
+  if (g_echoNote >= 0) { midi::NoteOff((uint8_t)g_echoNote); g_echoNote = -1; }
+  for (uint8_t i = 0; i < EMU_RAM_COUNT; ++i) {
+    uint8_t v = g_cpu.ram[EMU_RAM_FIRST + i];
+    if (v != g_ramShadow[i]) { eeprom_update_byte(EE_EMU_RAM + i, v); g_ramShadow[i] = v; }
+  }
+  eeprom_update_byte(EE_EMU_MAGIC, EE_EMU_MAGIC_VAL);
+  g_ramDirty = false;
 }
 
 // Slices: 30 instructions (~48 cycles = 120 us of emulated time, ~0.4 ms real

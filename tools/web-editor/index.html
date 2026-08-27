@@ -770,8 +770,8 @@ $('btnPlay').onclick = async () => {
 };
 $('btnFwSwitch').onclick = () => {
   sendSysex([deviceMode === 'emu' ? 0x4D : 0x2F]);
-  log('firmware switch requested; unit reboots (release all buttons on the panel)');
-  setTimeout(() => probe(10), 1500);
+  log('firmware switch requested; USB stays connected (release the panel buttons if held)');
+  setTimeout(probe, 800);   // the keepalive picks the new fw byte up within a probe or two
 };
 
 // ---------------------------------------------------------------------------

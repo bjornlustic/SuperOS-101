@@ -113,6 +113,12 @@ class Sequencer {
   uint8_t edited_ = 0;                // bit p = edited on the panel since last consume
  public:
   uint8_t consumeEdited() { uint8_t e = edited_; edited_ = 0; return e; }
+  // Runtime state back to boot values (in-process firmware switch); pattern
+  // CONTENT is not touched here, loadAll() reloads it from flash right after.
+  void resetRuntime() {
+    dirty_ = 0; cur_ = 0; pos_ = 0; curCv_ = CV_BASE; curGate_ = false;
+    stepChanged_ = false; selChanged_ = false; edited_ = 0;
+  }
   Sequencer() { memset(len_, 0, sizeof(len_)); }
   uint8_t current() const { return cur_; }
   uint8_t length(uint8_t p) const { return p < NUM_PATTERNS ? len_[p] : 0; }
@@ -394,6 +400,15 @@ class NoteEngine {
   Mode mode() const { return mode_; }
   Sequencer& seq() { return seq_; }
   void begin() { seq_.loadAll(); }
+  // Every member back to its boot value (in-process firmware switch): a
+  // stale mode or held-key mask from an earlier stint must not leak in.
+  // Keep in step with the member list above.
+  void reset() {
+    mode_ = MODE_KEYBOARD; arp_.reset(); seq_.resetRuntime();
+    prevMask_ = 0; holdMask_ = 0; heldKey_ = -1; lastCv_ = CV_BASE; keyShift_ = 0;
+    playHeldUsed_ = false; playStart_ = false; playNow_ = false; prevExtCv_ = -1;
+    lastEdgeMs_ = 0; periodMs_ = 0; stepStartMs_ = 0; subTotal_ = 1; subLeft_ = 0;
+  }
   // MIDI Start: align the sequence and arpeggiator to the incoming downbeat.
   void restart() { seq_.rewind(); arp_.reset(); playStart_ = true; }
   // SysEx 0x1D / editor: select a pattern (ignored while recording).

@@ -5,6 +5,8 @@ namespace emu101 {
 bool available();   // true when the mask ROM is embedded (rom101_data.h)
 void setup();
 void loop();
+void teardown();    // in-process firmware switch (combined.h SwitchTo): INT0
+                    // off, battery RAM persisted NOW, echo note released
 const uint8_t* ram();   // the emulated 80C49's 128 B RAM (inspection only)
 // The LAST P2 BYTE THE ROM ITSELF WROTE, before this firmware's gate shaping
 // (emu101.cpp "gate gap shaping"). Inspection only, and it exists because the

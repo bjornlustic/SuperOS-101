@@ -35,20 +35,21 @@ void superos_loop();
 extern "C" void usb_init(void) {}
 #endif
 
-// Drop off the USB bus (if this build has USB at all) before a reset or a
-// bootloader jump: the host registers the detach, so the next identity
-// (bootloader, or the app again after a firmware switch) enumerates cleanly
-// instead of confusing the host with a device that changed under it.
+// Drop off the USB bus before a bootloader jump: the bootloader IS a new
+// identity, so the host must register the detach and enumerate it cleanly.
+// A firmware switch no longer detaches (SwitchTo below runs in process).
+#ifdef __AVR__
 static void UsbDetach() {
-#if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
+#if defined(SUPEROS_USB_MIDI)
   usb_gate_detach();
-#elif defined(__AVR__) && !defined(USB_DISABLED)
+#elif !defined(USB_DISABLED)
   UDCON |= (1 << DETACH);        // drop USB cleanly if the core brought it up
   _delay_ms(30);                 // host must register the detach first
   USBCON = 0;
   PLLCSR = 0;
 #endif
 }
+#endif
 
 static uint8_t g_fw = FW_SUPEROS;
 #if defined(__AVR__) && defined(SUPEROS_USB_MIDI)
@@ -77,8 +78,9 @@ static uint8_t g_baseClkps = 0;
 #ifdef __AVR__
 // Boot counter that survives watchdog/brown-out resets (RAM is not cleared by
 // a reset; .noinit is not zeroed by crt0). Reported by SysEx 0x3B (sysex.h):
-// a firmware switch or bootloader round trip is exactly one boot; anything
-// more means the watchdog had to recover the unit. Magic guards power-on.
+// a bootloader round trip is exactly one boot, a firmware switch is ZERO (it
+// runs in process since SwitchTo); anything more means the watchdog had to
+// recover the unit. Magic guards power-on.
 static uint16_t g_bootMagic __attribute__((section(".noinit")));
 static uint8_t  g_bootCount __attribute__((section(".noinit")));
 // Boot-stage breadcrumb of the PREVIOUS boot (where it was when it ended):
@@ -169,10 +171,23 @@ void EnterBootloader() {
 #endif
 }
 
-void RebootTo(uint8_t fw) {
-  Stage(0x10);
-  eeprom_update_byte(EE_FW_SELECT, fw);
+// In-process firmware switch (see combined.h). Requested from inside the
+// running firmware's own dispatch (SysEx handler, config menu), so it is only
+// LATCHED here and performed at the top of the next loop() pass, where neither
+// firmware is mid-update.
+static uint8_t g_fwPending = 0xFF;
+void superos_teardown();     // main.cpp: flush dirty patterns, release notes
+
+void SwitchTo(uint8_t fw) { g_fwPending = fw; }
+
+static void DoSwitch(uint8_t fw) {
+  eeprom_update_byte(EE_FW_SELECT, fw);   // a power cycle keeps the choice
   menu::Exit();
+
+  // The side being left cleans up after itself: dirty patterns / battery RAM
+  // persist NOW (a switch must not lose edits), hanging MIDI notes end, and
+  // the emulator's INT0 edge source goes quiet.
+  if (g_fw == FW_EMU) emu101::teardown(); else superos_teardown();
 
   // Everything off during the switch: gate off, portamento off, no LED lit
   // (HOLD LED off = P25 high, KT LED off = P26 low, function select 0), so
@@ -181,11 +196,12 @@ void RebootTo(uint8_t fw) {
   BUS_PORT = 0xFF;
 
   // Input lockout (same as SuperOS-303): the finger that pressed LOAD/PLAY is
-  // still on the button when the reset lands, and the other firmware would
-  // boot with it held (the ROM enters step-LOAD mode, SuperOS toggles into
-  // sequencer PLAY). Wait until every button and key has read released for
-  // 250 ms straight; hard 4 s timeout so a stuck line cannot block the
-  // switch (a floating P1 reads all-pressed).
+  // still on the button, and the other firmware would come up with it held
+  // (the ROM enters step-LOAD mode, SuperOS toggles into sequencer PLAY).
+  // Wait until every button and key has read released for 250 ms straight;
+  // hard 4 s timeout so a stuck line cannot block the switch (a floating P1
+  // reads all-pressed). USB stays alive throughout: control transfers are
+  // ISR-driven and bulk data just waits in the endpoint banks.
   {
     const uint32_t t0 = millis();
     uint32_t idleSince = millis();
@@ -204,16 +220,8 @@ void RebootTo(uint8_t fw) {
 #endif
     }
   }
-#ifdef __AVR__
-  // Hardware reset via watchdog: the bootloader wdt_disable()s on entry and
-  // falls straight through to the app, which reads the new select byte.
-  cli();
-  UsbDetach();
-  wdt_enable(WDTO_15MS);
-  for (;;) {}
-#else
-  sim_reboot();
-#endif
+  g_fw = (fw == FW_EMU && emu101::available()) ? FW_EMU : FW_SUPEROS;
+  if (g_fw == FW_EMU) emu101::setup(); else superos_setup();
 }
 
 void setup() {
@@ -345,6 +353,7 @@ void loop() {
     }
   }
 #endif
+  if (g_fwPending != 0xFF) { uint8_t fw = g_fwPending; g_fwPending = 0xFF; DoSwitch(fw); }
   if (menu::Active()) { menu::Poll(); return; }
   if (g_fw == FW_EMU) emu101::loop(); else superos_loop();
 #ifdef __AVR__

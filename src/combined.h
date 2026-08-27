@@ -85,5 +85,12 @@ uint8_t combined_boot_count();  // boots since power-on (survives resets; SysEx 
 uint8_t combined_prev_stage();  // where the previous boot ended (SysEx 0x3B)
 uint16_t combined_pass_us(bool clearMax); // loop pass time: last (false) / max since last clear (true)
 void combined_pass_skip_next();  // drop the next recorded pass from the max (the probe's own reply pass)
-void RebootTo(uint8_t fw);   // persist the select byte, then reset the MCU
+// Switch firmware IN PROCESS: persist the select byte, tear one side down,
+// bring the other up. No MCU reset and no USB detach: both firmwares are one
+// image with one USB identity, so the host keeps its bindings (a reboot here
+// used to re-enumerate and strand every host that had the port open:
+// finding 8, and stale Chrome/Ableton clients on this bench). The request is
+// deferred to the top of the next loop() pass, since it arrives from inside
+// the running firmware's own dispatch.
+void SwitchTo(uint8_t fw);
 void EnterBootloader();      // park BOOT_MAGIC in GPIOR0, jump to 0x1F000

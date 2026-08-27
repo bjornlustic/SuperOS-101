@@ -375,8 +375,11 @@ inline bool HandleCommon(const uint8_t* body, uint8_t len) {
       if (len >= 3) { g_benchMode = body[1]; g_benchUntil = millis() + (uint32_t)body[2] * 1000; }
 #endif
       return true;
-    case 0x2F: if (emu101::available()) RebootTo(FW_EMU); return true;   // does not return
-    case 0x4D: RebootTo(FW_SUPEROS); return true;
+    // Firmware switches run IN PROCESS at the top of the next loop() pass
+    // (combined.h SwitchTo): the USB link never drops, so the host keeps its
+    // port bindings and the editor just sees the 0x21 fw byte change.
+    case 0x2F: if (emu101::available()) SwitchTo(FW_EMU); return true;
+    case 0x4D: SwitchTo(FW_SUPEROS); return true;
     case 0x4A: EnterBootloader(); return true;
     case 0x40: if (combined_current_fw() == FW_EMU) SendEmuStatus(); return true;
     default: return false;

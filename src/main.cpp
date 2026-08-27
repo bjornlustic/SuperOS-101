@@ -256,6 +256,14 @@ static uint8_t ClockAndRandom(bool &edge, bool &halfEdge) {
 // setup()/loop() and dispatches here or to the 80C49 emulator (emu101.cpp).
 void superos_setup() {
   hw::Init();
+  // Re-entry (in-process firmware switch, combined.h SwitchTo): every piece
+  // of loop state back to its boot value, so a stint in the other firmware
+  // cannot leak into this one (a stale MODE_SEQ_PLAY would start the
+  // sequencer at the switch).
+  g_engine.reset();
+  g_lastVel = 0; g_prevGate = false; g_midiMask = 0; g_extN = 0; g_outNote = -1;
+  g_lastClock = false; g_rstUntilMs = 0; g_clkResync = false; g_portaUntilMs = 0;
+  g_lastEditMs = 0; g_lastRawFallMs = 0; g_rstSinceFall = false; g_rndHeld = 0;
   g_engine.begin();
   // Prime the button edge detector with the current state so a button that
   // is still held from a firmware switch / power-on does not register as a
@@ -270,6 +278,13 @@ void superos_setup() {
 #ifdef USB_SERIAL
   Serial.begin(115200);
 #endif
+}
+
+// In-process firmware switch (combined.h SwitchTo): edits made here must
+// survive the switch, and no note may hang on MIDI OUT.
+void superos_teardown() {
+  g_engine.seq().flushAll();
+  if (g_outNote >= 0) { midi::NoteOff((uint8_t)g_outNote); g_outNote = -1; }
 }
 
 void superos_loop() {
