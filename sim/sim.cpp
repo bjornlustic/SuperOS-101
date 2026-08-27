@@ -226,7 +226,9 @@ static bool ClockReset() { return  (sim_portf & 0x10) == 0; }   // active-LOW pu
 static void SettleClockReset() {
   int guard = 0;
   while (ClockReset() && ++guard < 10000) RunLoops(1);
-  RunLoops(1);   // the re-priming pass consumes its one swallowed edge
+  uint32_t until = millis() + 5;               // CLK_SETTLE_MS + margin
+  while ((int32_t)(until - millis()) > 0 && ++guard < 20000) RunLoops(1);
+  RunLoops(1);                                 // clears the resync latch
 }
 
 static void PrintState() {
@@ -543,6 +545,11 @@ static int SelfTest() {
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
   CHECK(sim::g_sh[0] == 17 && GateOn(), "PLAY -> step 1 sounds immediately (CV 17)");
+  // The LFO-restart glitch right after the reset pulse must NOT advance the
+  // sequencer off step 1 (it read as an edge once, and step 1 sounded
+  // skipped on hardware): blip the clock inside the settle window.
+  sim::g_clock = true; RunLoops(1); sim::g_clock = false; RunLoops(1);
+  CHECK(sim::g_sh[0] == 17, "reset-release glitch does not skip step 1");
   SettleClockReset();
   ClockTick(); CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step 2 -> note 2 (CV 19)");
   ClockTick(); CHECK(!GateOn(), "seq rest -> gate off");

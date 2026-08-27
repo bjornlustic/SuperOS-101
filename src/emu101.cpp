@@ -307,6 +307,8 @@ static bool     g_rstRomLow = false;   // ROM currently holds P24 low
 static bool     g_rstCapped = false;   // cap expired: pin forced back high
 static uint32_t g_rstStartUs = 0;
 static bool g_rstCappedView(void) { return g_rstCapped; }
+static void T1PlayStartAssert(void);    // defined below the T1 machinery
+static void T1PlayStartRelease(void);
 static inline bool RomArpMode() { return (g_cpu.ram[0x15] & 0x1C) != 0; }   // UP / U&D / DOWN latched
 static inline void GateOpenHole(uint32_t now) {
   g_gatePending = false; g_gateGap = true; g_gateT = now + GATE_GAP_US;
@@ -334,6 +336,15 @@ static inline void GateTick(uint32_t now) {
   if (g_portaPulse && (int32_t)(now - g_portaT) >= 0) { g_portaPulse = false; GateApply(); }
   if (g_rstRomLow && !g_rstCapped && (int32_t)(now - (g_rstStartUs + RST_MAX_US)) >= 0) {
     g_rstCapped = true; GateApply();                       // pulse cap: unfreeze the LFO
+    // Play start (the ROM only ever pulses CLOCK RESET here): the LFO's
+    // period starts NOW, at the release. Edges the freeze itself produced
+    // were dropped at the assert; hand the ROM exactly one edge now so
+    // note 1 triggers at the same instant the period starts, and
+    // note1->note2 measures one period like every later step. Without this
+    // the ROM triggered note 1 off the freeze-entry transition and the
+    // first interval measured ~12 ms long in recorded audio (period start
+    // offset by the pulse, plus the edge queue's delivery jitter).
+    T1PlayStartRelease();
   }
 }
 
@@ -350,8 +361,14 @@ void    mcs48_p2_write(uint8_t v)     {
     bool rstLow = !(v & (1u << P2_CLOCK_RST));
     if (rstLow != g_rstRomLow) {
       g_rstRomLow = rstLow;
-      if (rstLow) { g_rstStartUs = micros(); g_rstCapped = false; }
-      else g_rstCapped = false;
+      if (rstLow) {
+        g_rstStartUs = micros(); g_rstCapped = false;
+        // Entering the reset: whatever the freeze does to the T1 line is not
+        // a clock. Drop captured/candidate edges; the cap release injects
+        // the one edge that starts note 1 (sync off; with sync on T1 is the
+        // divided MIDI clock and the pin path is ignored anyway).
+        T1PlayStartAssert();
+      } else g_rstCapped = false;
     }
   }
   {
@@ -474,6 +491,29 @@ bool    mcs48_t1() {
   // the double-triggered steps heard against SuperOS, about 1 step in 5).
   if (g_t1Level) g_t1Shown = true;
   return g_t1Shown;
+}
+
+// Play-start CLOCK RESET vs the T1 clock (sync off; with sync on T1 is the
+// divided MIDI clock and the pin path is ignored). The freeze's own line
+// transitions are not clock: drop them at the assert, and at the cap release
+// hand the ROM exactly one edge, so note 1 triggers at the same instant the
+// restarted LFO's period begins and note1->note2 measures one period like
+// every later step (recorded audio had it ~12 ms long: period offset by the
+// pulse plus the queue's delivery jitter).
+static void T1PlayStartAssert(void) {
+  if (midiclk::SyncOn()) return;
+  cli(); g_t1Pending = 0; sei();
+#ifdef __AVR__
+  cli(); g_t1Cand = false; sei();
+#endif
+}
+static void T1PlayStartRelease(void) {
+  if (midiclk::SyncOn()) return;
+  cli(); g_t1Pending = 1; sei();
+#ifdef __AVR__
+  cli(); g_t1Cand = false; sei();
+#endif
+  g_t1Shown = false;                    // deliver as H on one read, L on the next
 }
 
 namespace emu101 {

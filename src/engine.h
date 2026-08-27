@@ -456,6 +456,7 @@ class NoteEngine {
           // own transition read as an edge): first note off-grid, then a
           // period-long gap before step 1. With MIDI sync the downbeat is
           // the first 0xF8 after Start, so we wait for the divided edge.
+          subTotal_ = 1; subLeft_ = 0; lastEdgeMs_ = 0;   // no stale ratchet state into a new run
           if (!midiclk::SyncOn()) {
             if (seq_.advance()) o.portaOff = true;
             lastCv_ = seq_.cv();

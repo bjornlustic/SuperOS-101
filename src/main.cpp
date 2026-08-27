@@ -289,12 +289,17 @@ void superos_loop() {
   uint8_t random = ClockAndRandom(clockEdge, halfEdge);
   // A CLOCK-RESET pulse restarts the analog LFO, and the level transitions
   // the restart causes must not read as clock edges: the stale detector state
-  // turned them into a spurious step right after play start. Swallow edges
-  // while the pulse is active and for one pass after it ends (the release
-  // transition); ClockAndRandom keeps g_lastClock primed throughout. Only
-  // the LFO path needs this; with sync ON the edges below are MIDI-derived.
+  // turned them into a spurious step right after play start. One pass of
+  // grace after the pulse proved too short on hardware: the release glitch
+  // landed a pass later, advanced the sequencer off the just-played step 0,
+  // and the first step sounded skipped. Swallow edges while the pulse is
+  // active and for a CLK_SETTLE_MS settle window after it ends
+  // (ClockAndRandom keeps g_lastClock primed throughout); 3 ms is well under
+  // the shortest real clock half-period. Only the LFO path needs this; with
+  // sync ON the edges below are MIDI-derived.
+  static const uint8_t CLK_SETTLE_MS = 3;
   if (!midiclk::SyncOn()) {
-    if ((int32_t)(g_rstUntilMs - millis()) > 0) {
+    if ((int32_t)(g_rstUntilMs + CLK_SETTLE_MS - millis()) > 0) {
       clockEdge = false; halfEdge = false; g_clkResync = true;
     } else if (g_clkResync) {
       clockEdge = false; halfEdge = false; g_clkResync = false;
