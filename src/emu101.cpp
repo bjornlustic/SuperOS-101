@@ -265,9 +265,11 @@ static uint32_t g_gateT       = 0;         // hole end
 static uint32_t g_physOffUs = 0; static uint16_t g_physGapUs = 0; static bool g_physLast = false;   // probe
 static bool     g_portaPulse = false;   // PORTAMENTO OFF raised by the host (retriggered step)
 static uint32_t g_portaT     = 0;
+static bool g_rstCappedView(void);   // fwd: reset-pulse cap, defined below PortaPulse
 static inline void GateApply() {
   uint8_t p2 = (uint8_t)((g_p2Rom | (1u << P2_GATE)) & (g_gatePhys ? (uint8_t)~(1u << P2_GATE) : 0xFF));
   if (g_portaPulse) p2 |= (uint8_t)(1u << P2_PORTA_OFF);
+  if (g_rstCappedView()) p2 |= (uint8_t)(1u << P2_CLOCK_RST);   // release a capped CLOCK RESET early
   P2_PORT = p2;
   if (g_gatePhys != g_physLast) {
     g_physLast = g_gatePhys;
@@ -291,6 +293,20 @@ static inline bool RomRetriggerCertain() {
 // no retrigger) still glides, which is what AUTO is for.
 static const uint16_t PORTA_PULSE_US = 4000;
 static inline void PortaPulse(uint32_t now) { g_portaPulse = true; g_portaT = now + PORTA_PULSE_US; }
+// CLOCK RESET (P24): the ROM holds it low for one of ITS passes. On the
+// original that is 1.5-3.5 ms; here the emulated ROM runs at its accepted
+// ~25% of real time, so the relayed pulse ran ~4x longer and the analog LFO
+// sat frozen the whole time. That freeze lands inside the FIRST sequencer
+// note after PLAY (its gate-off edge only comes from the restarted LFO), so
+// note 1 was audibly longer than the rest. The reset circuit needs >=2 ms
+// (SuperOS stretches its own pulses to that), so cap the relayed pulse at
+// the original's pass length and release the pin early; the ROM's own view
+// of P2 (g_p2Rom, the probe) is not touched.
+static const uint16_t RST_MAX_US = 3500;
+static bool     g_rstRomLow = false;   // ROM currently holds P24 low
+static bool     g_rstCapped = false;   // cap expired: pin forced back high
+static uint32_t g_rstStartUs = 0;
+static bool g_rstCappedView(void) { return g_rstCapped; }
 static inline bool RomArpMode() { return (g_cpu.ram[0x15] & 0x1C) != 0; }   // UP / U&D / DOWN latched
 static inline void GateOpenHole(uint32_t now) {
   g_gatePending = false; g_gateGap = true; g_gateT = now + GATE_GAP_US;
@@ -316,6 +332,9 @@ static inline void GateOnRomChange(bool gate, uint32_t now) {
 static inline void GateTick(uint32_t now) {
   if (g_gateGap && (int32_t)(now - g_gateT) >= 0) { g_gateGap = false; g_gatePhys = true; GateApply(); }
   if (g_portaPulse && (int32_t)(now - g_portaT) >= 0) { g_portaPulse = false; GateApply(); }
+  if (g_rstRomLow && !g_rstCapped && (int32_t)(now - (g_rstStartUs + RST_MAX_US)) >= 0) {
+    g_rstCapped = true; GateApply();                       // pulse cap: unfreeze the LFO
+  }
 }
 
 void    mcs48_p2_write(uint8_t v)     {
@@ -327,6 +346,14 @@ void    mcs48_p2_write(uint8_t v)     {
   }
   g_p2Rom = v;
   { uint8_t d = (uint8_t)(v ^ g_p2Prev); g_p2Prev = v; for (uint8_t b = 0; b < 8; ++b) if (d & (1u << b)) ++g_p2TogAcc[b]; }
+  {
+    bool rstLow = !(v & (1u << P2_CLOCK_RST));
+    if (rstLow != g_rstRomLow) {
+      g_rstRomLow = rstLow;
+      if (rstLow) { g_rstStartUs = micros(); g_rstCapped = false; }
+      else g_rstCapped = false;
+    }
+  }
   {
     bool porta = (v & (1u << P2_PORTA_OFF)) != 0;
     if (porta != g_portaLast) {
