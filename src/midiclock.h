@@ -93,10 +93,12 @@ struct State {
 // boundary would otherwise slip past unfired.
 struct Sched {
   uint32_t dueUs = 0;
-  uint16_t forTick = 0;
+  uint16_t forTick = 0xFFFF;   // boundary identity; 0xFFFF = none yet
   bool     armed = false;
   bool     fire  = false;   // latched immediate fire
-  void reset() { armed = false; fire = false; }
+  // reset() forgets the identity too: after a transport event the next
+  // boundary must count as unscheduled and fire on arrival.
+  void reset() { armed = false; fire = false; forTick = 0xFFFF; }
 };
 inline Sched& EdgeSched() { static Sched s; return s; }
 inline Sched& HalfSched() { static Sched s; return s; }
@@ -273,14 +275,18 @@ inline void OnRealtime(uint8_t b) {
         const uint8_t ticksN = DIV_TICKS[s.divIdx];
         const uint8_t lfoN   = LfoTicks(LfoDivEff());
         ++s.tickAbs;
-        // A boundary arriving with nothing armed for it (downbeat after
-        // Start, first tick of a stream, post-re-anchor) fires immediately:
-        // there was no earlier tick to schedule it from.
-        if (s.tick == 0 && !(EdgeSched().armed && EdgeSched().forTick == s.tickAbs))
+        // A boundary arriving that was never SCHEDULED (downbeat after Start,
+        // first tick of a stream, post-re-anchor) fires immediately: there
+        // was no earlier tick to schedule it from. Identity, not armed-ness:
+        // a boundary whose predicted time ran slightly early has already
+        // fired via its due poll and is no longer armed, and firing it again
+        // here double-stepped the sequencer (measured on hardware: a ~2.5 ms
+        // double step about once per pattern loop).
+        if (s.tick == 0 && EdgeSched().forTick != s.tickAbs)
           EdgeSched().fire = true;
-        if (s.tick == ticksN / 2 && !(HalfSched().armed && HalfSched().forTick == s.tickAbs))
+        if (s.tick == ticksN / 2 && HalfSched().forTick != s.tickAbs)
           HalfSched().fire = true;
-        if (s.lfoTick == 0 && !(LfoSched().armed && LfoSched().forTick == s.tickAbs))
+        if (s.lfoTick == 0 && LfoSched().forTick != s.tickAbs)
           LfoSched().fire = true;
         if (++s.tick >= ticksN) s.tick = 0;
         if (++s.lfoTick >= lfoN) s.lfoTick = 0;
