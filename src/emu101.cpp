@@ -501,18 +501,24 @@ bool    mcs48_t1() {
 // every later step (recorded audio had it ~12 ms long: period offset by the
 // pulse plus the queue's delivery jitter).
 static void T1PlayStartAssert(void) {
-  if (midiclk::SyncOn()) return;
+  // Whatever the freeze does to the clock is not a step; drop queued edges.
   cli(); g_t1Pending = 0; sei();
 #ifdef __AVR__
   cli(); g_t1Cand = false; sei();
 #endif
 }
 static void T1PlayStartRelease(void) {
-  if (midiclk::SyncOn()) return;
+  // Hand the ROM exactly one edge NOW: note 1 sounds at the release, and
+  // the clock phase starts with it. Sync off, the restarted LFO provides
+  // the following edges; sync on, the divider is re-phased to this moment
+  // (tempo stays locked to the incoming clock; a MIDI Start still re-aligns
+  // the downbeat via its tick reset).
+  if (midiclk::SyncOn()) midiclk::Rephase();
   cli(); g_t1Pending = 1; sei();
 #ifdef __AVR__
   cli(); g_t1Cand = false; sei();
 #endif
+  g_t1Level = false;                    // the rephased/reset source reads low; not another edge
   g_t1Shown = false;                    // deliver as H on one read, L on the next
 }
 

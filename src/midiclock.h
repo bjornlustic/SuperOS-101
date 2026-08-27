@@ -84,6 +84,11 @@ inline void OnRealtime(uint8_t b) {
   }
 }
 
+// Re-anchor the division phase to NOW (panel/editor play start): the next
+// edge fires a full division from this moment. Tempo stays locked to the
+// incoming clock; an explicit MIDI Start still re-aligns the downbeat.
+inline void Rephase() { S().tick = 1; S().edge = false; S().half = false; }
+
 inline bool ConsumeEdge()    { bool e = S().edge;    S().edge = false;    return e; }
 inline bool ConsumeHalfEdge(){ bool h = S().half;    S().half = false;    return h; }
 inline bool ConsumeStart()   { bool s = S().started; S().started = false; return s; }

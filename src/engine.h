@@ -332,6 +332,7 @@ class NoteEngine {
   uint8_t  keyShift_ = 0;      // KEY TRANSPOSE (TODO: SH101.asm:844-866)
   bool     playHeldUsed_ = false;  // PLAY+key selected a pattern (suppress toggle)
   bool     playStart_ = false;     // pulse CLOCK RESET once when play begins
+  bool     playNow_   = false;     // panel/editor play: step 1 sounds at the press (0xFA leaves this clear)
   int16_t  prevExtCv_ = -1;
   // Ratchet playback: the step's extra hits are scheduled inside the measured
   // clock period (works for the LFO and the divided MIDI clock alike; the
@@ -381,7 +382,7 @@ class NoteEngine {
     }
     if (b.released(BTN_PLAY) && !playHeldUsed_) {
       if (mode_ == MODE_SEQ_PLAY) mode_ = MODE_KEYBOARD;
-      else { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; }
+      else { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; playNow_ = true; }
     }
     if (b.pressed(BTN_LOAD)) {
       if (mode_ == MODE_SEQ_LOAD) { seq_.flushAll(); seq_.markEdited(); mode_ = MODE_KEYBOARD; }
@@ -398,7 +399,7 @@ class NoteEngine {
   void selectPattern(uint8_t p) { if (mode_ != MODE_SEQ_LOAD) seq_.select(p); }
   void setPlaying(bool on) {
     if (mode_ == MODE_SEQ_LOAD) return;
-    if (on && mode_ != MODE_SEQ_PLAY) { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; }
+    if (on && mode_ != MODE_SEQ_PLAY) { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; playNow_ = true; }
     else if (!on && mode_ == MODE_SEQ_PLAY) mode_ = MODE_KEYBOARD;
   }
   // Function-LED select for the current mode (4556 one-hot, SH101.asm:90-128):
@@ -449,15 +450,17 @@ class NoteEngine {
       case MODE_SEQ_PLAY:
         if (playStart_) {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
-          // Internal clock: play step 0 NOW, in the same instant as the LFO
-          // reset, so step 1 lands exactly one clock period later. Without
-          // this the first audible step came from whatever LFO phase the
-          // free-running clock happened to be at (or from the reset pulse's
-          // own transition read as an edge): first note off-grid, then a
-          // period-long gap before step 1. With MIDI sync the downbeat is
-          // the first 0xF8 after Start, so we wait for the divided edge.
           subTotal_ = 1; subLeft_ = 0; lastEdgeMs_ = 0;   // no stale ratchet state into a new run
-          if (!midiclk::SyncOn()) {
+          // Panel/editor PLAY (playNow_): step 1 sounds NOW in BOTH clock
+          // modes, and the clock phase re-anchors to the press, so step 2
+          // lands one period/division later. Sync off, the LFO is hard-reset
+          // by o.clockReset; sync on, the divider re-phases while the tempo
+          // stays locked to the incoming clock. MIDI Start (0xFA) does NOT
+          // set playNow_: its first 0xF8 is the downbeat per the MIDI spec,
+          // so a host-started run still waits for that edge.
+          if (playNow_) {
+            playNow_ = false;
+            midiclk::Rephase();
             if (seq_.advance()) o.portaOff = true;
             lastCv_ = seq_.cv();
             clockEdge = false; halfEdge = false;
