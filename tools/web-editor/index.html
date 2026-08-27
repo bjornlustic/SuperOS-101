@@ -440,7 +440,16 @@ function toast(msg) {
 // MIDI
 // ---------------------------------------------------------------------------
 let midiAccess = null, midiOut = null, midiIn = null;
-let probeTimer = null, probeTries = 0;
+let probeTimer = null;
+// The link is CONNECTED only when the synth has actually answered a probe on
+// the selected ports (303-editor behaviour): sends into a dead port pair look
+// identical to success otherwise, and a stale browser MIDI service (common
+// right after a firmware reflash) claimed "connected" while nothing moved.
+let verified = false, lastReplyMs = 0, everSynced = false;
+function setStatus(txt, ok) {
+  $('midiStatus').textContent = txt;
+  $('midiStatus').className = ok ? 'is-ok' : '';
+}
 
 function pack7(src) {
   const out = [];
@@ -467,7 +476,6 @@ async function connect() {
   if (!navigator.requestMIDIAccess) { log('Web MIDI unavailable (use Chrome/Edge over http/localhost)', 'log-err'); $('httpBanner').classList.add('visible'); return; }
   try { midiAccess = await navigator.requestMIDIAccess({sysex: true}); }
   catch (e) { log('MIDI access denied: ' + e, 'log-err'); return; }
-  $('btnMidi').classList.add('is-connected'); $('btnMidi').textContent = 'MIDI on';
   midiAccess.onstatechange = fillPorts;
   fillPorts();
 }
@@ -496,38 +504,83 @@ function selectPorts() {
   if (midiIn && midiIn !== i) midiIn.onmidimessage = null;
   midiOut = o || null; midiIn = i || null;
   if (midiIn) midiIn.onmidimessage = onMidi;
-  const ok = midiOut && midiIn;
-  $('midiStatus').textContent = ok ? ('OUT ' + midiOut.name + '  /  IN ' + midiIn.name) : 'select ports';
-  $('midiStatus').className = ok ? 'is-ok' : '';
-  ['btnResync','btnPull','btnPushAll','btnWrite','btnPlay','btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !ok);
-  if (ok) probe();
+  verified = false;
+  updateLinkUi();
+  if (midiOut && midiIn) probe();
 }
 $('selOut').onchange = selectPorts; $('selIn').onchange = selectPorts;
 $('btnMidi').onclick = connect;
 
-// Probe: 0x20 (SuperOS answers 0x21) + 0x40 (emulator answers 0x41)
-function probe(tries) {
-  probeTries = tries || 3;
+// Probe every 1.5 s until the synth answers: 0x20 (SuperOS -> 0x21) + 0x40
+// (emulator -> 0x41). Never gives up silently; after 5 s without a reply the
+// status says so out loud. Once verified, the same timer is the keepalive: a
+// link that stops answering (unplugged, reflash, stale browser MIDI) drops
+// back to "no reply" instead of pretending.
+let probeStartMs = 0;
+function probe() {
   clearInterval(probeTimer);
+  probeStartMs = Date.now();
+  setStatus('Verifying — waiting for the synth to answer...', false);
   const once = () => {
-    if (!midiOut) return;
-    sendSysex([0x20]); sendSysex([0x40]);
-    if (--probeTries <= 0) clearInterval(probeTimer);
+    if (!midiOut || !midiIn) return;
+    sendSysex([0x20]);
+    if (deviceMode !== 'superos') sendSysex([0x40]);
+    const quiet = Date.now() - (lastReplyMs || probeStartMs);
+    if (verified && quiet > 6000) {
+      verified = false;
+      updateLinkUi();
+      log('link lost: the synth stopped answering (unplugged? reflashed? if Chrome was open across a reflash, quit Chrome fully and reopen)', 'log-err');
+    } else if (!verified && quiet > 5000 && Date.now() - probeStartMs > 5000) {
+      setStatus('No reply from the synth on these ports — check the port pickers and that it is on; after a firmware update quit Chrome fully', false);
+    }
   };
-  once(); probeTimer = setInterval(once, 1500);
+  once(); probeTimer = setInterval(once, 2000);
+}
+function updateLinkUi() {
+  const ed = verified && deviceMode === 'superos';
+  ['btnResync','btnPull','btnPushAll','btnWrite'].forEach(id => $(id).disabled = !ed);
+  $('btnPlay').disabled = !verified;
+  ['btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !verified);
+  $('btnMidi').classList.toggle('is-connected', verified);
+  $('btnMidi').textContent = verified ? 'Connected' : (midiAccess ? 'Connect MIDI' : 'Connect MIDI');
+  if (verified) {
+    setStatus('Connected · ' + (deviceMode === 'emu' ? '80C49 emulator ' : 'SuperOS ') + cfg.version +
+              '  (' + midiOut.name + ')', true);
+  } else if (midiOut && midiIn) {
+    // probe() owns the status text while verifying
+  } else if (midiAccess) {
+    setStatus('Select the SuperOS-101 on both port pickers', false);
+  } else {
+    setStatus('Not connected', false);
+  }
+}
+// The synth answered: the link is real. First contact after a page load pulls
+// EVERYTHING from the synth (config + CV + all patterns), so the editor is
+// up to date the moment it connects. A re-verify after a dropout refreshes
+// the config only and leaves local edits alone.
+function onDeviceReply(mode) {
+  lastReplyMs = Date.now();
+  const first = !verified;
+  if (first) {
+    verified = true;
+    setMode(mode);
+    log('synth verified on ' + midiOut.name, 'log-ok');
+    if (!everSynced) {
+      everSynced = true;
+      if (mode === 'superos') { sendSysex([0x23]); pullAll(); }
+    } else if (mode === 'superos') {
+      log('reconnected; local edits kept (Resync to reload from the synth)');
+    }
+    updateLinkUi();
+  } else if (mode !== deviceMode) setMode(mode);
 }
 function setMode(m) {
   deviceMode = m;
-  clearInterval(probeTimer);
   $('emuBanner').classList.toggle('visible', m === 'emu');
   $('fwStatus').textContent = m === 'superos' ? ('Firmware: SuperOS ' + cfg.version) : m === 'emu' ? ('Firmware: 80C49 emulator ' + cfg.version) : 'Firmware: unknown';
   $('fwStatus').className = 'status is-ok';
   $('btnFwSwitch').textContent = m === 'emu' ? 'Switch to SuperOS' : 'Switch to emulator';
-  const ed = m === 'superos';
-  // Pattern read/write are SuperOS-only; Play (0x1E taps the ROM's PLAY
-  // button) and the config controls work in both firmwares.
-  ['btnResync','btnPull','btnPushAll','btnWrite'].forEach(id => $(id).disabled = !ed);
-  $('btnPlay').disabled = m === 'unknown';
+  updateLinkUi();
 }
 
 // Inbound
@@ -540,20 +593,29 @@ function onMidi(e) {
 }
 function handleSysex(b) {
   const cmd = b[0];
+  lastReplyMs = Date.now();   // any reply proves the wire; 0x21/0x41 verify the mode
   switch (cmd) {
     case 0x21: {   // config (<fw><chan><sync><div><pat><storeOk><lfoSync><lfoDiv><version...>)
-      cfg = {chan: b[2], sync: b[3], div: b[4], flash: b[6], lfoSync: b[7], lfoDiv: b[8], version: String.fromCharCode(...b.slice(9))};
-      devPat = b[5];
-      log('device config reply: sync ' + (cfg.sync ? 'on' : 'off') + ', lfo ' + (cfg.lfoSync ? 'locked ' + lfoDivName(cfg.lfoDiv) : 'free'));
-      renderConfig();
-      setMode(b[1] === 1 ? 'emu' : 'superos');   // fw byte: both firmwares answer 0x20 now
-      if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
-      log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) + ', v' + cfg.version, 'log-ok');
-      renderAll();
-      if (!readAllOnce) { readAllOnce = true; readAll(); }
+      // The keepalive probe lands here every 2 s: stay quiet (no log, no
+      // re-render) unless something actually changed, so a reply cannot
+      // rebuild the step grid mid-drag.
+      const nc = {chan: b[2], sync: b[3], div: b[4], flash: b[6], lfoSync: b[7], lfoDiv: b[8], version: String.fromCharCode(...b.slice(9))};
+      const changed = JSON.stringify(nc) !== JSON.stringify(cfg) || b[5] !== devPat;
+      cfg = nc; devPat = b[5];
+      onDeviceReply(b[1] === 1 ? 'emu' : 'superos');   // fw byte: both firmwares answer 0x20
+      if (changed) {
+        if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
+        log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) +
+            ', LFO ' + (cfg.lfoSync ? lfoDivName(cfg.lfoDiv) : 'free') + ', v' + cfg.version, 'log-ok');
+        renderAll();
+        updateLinkUi();
+      }
       break;
     }
-    case 0x41: cfg.version = String.fromCharCode(...b.slice(2)); setMode('emu'); log('emulator firmware v' + cfg.version, 'log-ok'); break;
+    case 0x41:   // emulator status; the 0x21 fw byte is authoritative (both
+                 // firmwares answer 0x20), so this only decides when 0x21 is absent
+      if (deviceMode === 'unknown') { cfg.version = String.fromCharCode(...b.slice(2)); onDeviceReply('emu'); }
+      break;
     case 0x11: {   // pattern data
       const p = b[1], raw = unpack7(b.slice(4));
       let x = 0; raw.forEach(v => x ^= v);
@@ -585,10 +647,11 @@ function handleSysex(b) {
       clearTimeout(playheadTimer);
       playheadTimer = setTimeout(() => { unitPlaying = false; playPos = -1; renderPlayhead(); renderPills(); }, 2500);
       break;
+    case 0x24: break;   // CV DAC config reply (no UI here yet; requested by Resync)
     default: log('101: unknown SysEx cmd 0x' + cmd.toString(16));
   }
 }
-let readAllOnce = false, pendingWrite = -1, readingAll = false, unitPlaying = false, playheadTimer = null;
+let pendingWrite = -1, readingAll = false, unitPlaying = false, playheadTimer = null;
 
 // ---------------------------------------------------------------------------
 // Device writes: full pattern (0x12) or live deltas (0x18 length + 0x16 steps)
