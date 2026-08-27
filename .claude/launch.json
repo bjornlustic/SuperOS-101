@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "web-editor",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd tools/web-editor && exec /opt/homebrew/bin/python3 -m http.server 3101 --bind 127.0.0.1"],
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "3101", "--directory", "tools/web-editor"],
       "port": 3101
     }
   ]

@@ -1043,6 +1043,15 @@ $('fileJson').onchange = async ev => {
 renderAll();
 if (location.protocol === 'file:') $('httpBanner').classList.add('visible');
 log('SuperOS-101 editor ready. Connect MIDI, pick the unit on both ports. Edit live is ON: notes you change land on the unit immediately.');
+// Auto-connect when the MIDI permission is already granted (no prompt fires):
+// opening the page then loads config + all patterns from the synth by itself.
+(async () => {
+  try {
+    if (!navigator.permissions || !navigator.requestMIDIAccess) return;
+    const st = await navigator.permissions.query({name: 'midi', sysex: true});
+    if (st.state === 'granted') { log('MIDI permission already granted: auto-connecting'); connect(); }
+  } catch (_e) { /* browsers without midi permission query: keep the button */ }
+})();
 </script>
 </body>
 </html>
