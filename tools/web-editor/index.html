@@ -517,7 +517,10 @@ function setMode(m) {
   $('fwStatus').className = 'status is-ok';
   $('btnFwSwitch').textContent = m === 'emu' ? 'Switch to SuperOS' : 'Switch to emulator';
   const ed = m === 'superos';
-  ['btnReadAll','btnWrite','btnPlay'].forEach(id => $(id).disabled = !ed);
+  // Pattern read/write are SuperOS-only; Play (0x1E taps the ROM's PLAY
+  // button) and the config controls work in both firmwares.
+  ['btnReadAll','btnWrite'].forEach(id => $(id).disabled = !ed);
+  $('btnPlay').disabled = m === 'unknown';
 }
 
 // Inbound
@@ -536,7 +539,7 @@ function handleSysex(b) {
       devPat = b[5];
       log('device config reply: sync ' + (cfg.sync ? 'on' : 'off') + ', lfo ' + (cfg.lfoSync ? 'locked ' + DIVS[cfg.lfoDiv] : 'free'));
       renderConfig();
-      setMode('superos');
+      setMode(b[1] === 1 ? 'emu' : 'superos');   // fw byte: both firmwares answer 0x20 now
       if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
       log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) + ', v' + cfg.version, 'log-ok');
       renderAll();

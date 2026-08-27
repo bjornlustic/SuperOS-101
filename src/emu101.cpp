@@ -560,6 +560,32 @@ uint16_t benchB(uint8_t i) { return i < 6 ? g_benchB[i] : 0; }
 
 static void OnSysex(const uint8_t* body, uint8_t len) {
   if (sysex::HandleCommon(body, len)) return;
+  // 0x20/0x22: config works in THIS firmware too. The sync/div/LFO settings
+  // are shared midiclk state (the T1 divider uses them here), and ignoring
+  // 0x22 made the editor's sync toggle look broken whenever the unit was in
+  // 80C49 mode: the click changed nothing and no 0x21 ever answered.
+  if (body[0] == 0x20 || (body[0] == 0x22 && len >= 4)) {
+    if (body[0] == 0x22) {
+      midi::SetChannel(body[1]);
+      sysex::SaveChannel(body[1]);
+      midiclk::SetSync(body[2] != 0);
+      midiclk::SetDiv(body[3]);
+      if (len >= 6) { midiclk::SetLfoSync(body[4] != 0); midiclk::SetLfoDiv(body[5]); }
+    }
+    uint8_t b[9 + 24];
+    b[0] = 0x21; b[1] = 1;                       // fw 1 = 80C49 emulator
+    b[2] = midi::Channel();
+    b[3] = midiclk::SyncOn() ? 1 : 0;
+    b[4] = midiclk::DivIdx();
+    b[5] = 0;                                    // pattern select: not tracked here
+    b[6] = 1;
+    b[7] = midiclk::LfoSyncOn() ? 1 : 0;
+    b[8] = midiclk::LfoDivIdx();
+    uint8_t n = 9;
+    for (const char* v = SUPEROS_VERSION; *v && n < sizeof(b); ++v) b[n++] = (uint8_t)(*v & 0x7F);
+    midi::SendSysex(b, n);
+    return;
+  }
   // 0x1E <x>: transport from the editor. The ROM's PLAY button toggles, so
   // any value taps PLAY (the editor tracks the state from the note echo).
   if (body[0] == 0x1E) { g_virtButtons |= (1u << 1); g_virtUntilMs = millis() + 60; }
