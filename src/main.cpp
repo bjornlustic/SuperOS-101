@@ -376,13 +376,15 @@ void superos_loop() {
     // Sync ON is STRICT: only the divided MIDI clock steps the machine. When
     // the host's ticks stop, the machine freezes; the LFO never stands in
     // (the player asked for a slave, and a slave with a mind of its own is
-    // worse than a silent one).
+    // worse than a silent one). The random S/H is HELD whenever sync is on,
+    // including while the host is silent: leaving it on the free-running
+    // xorshift rewrote the S/H with fresh noise every ~1 ms pass, a
+    // loop-rate buzz through the S&H/noise mod path whenever the VCA was
+    // open (the "CPU hum" regression).
     clockEdge = driving ? divEdge : false;
     halfEdge = driving ? midiclk::ConsumeHalfEdge() : false;
-    if (driving) {
-      if (divEdge) g_rndHeld = random;
-      random = g_rndHeld;
-    }
+    if (driving && divEdge) g_rndHeld = random;
+    random = g_rndHeld;
   }
   hw::DacWrite(random, ROUTE_RANDOM);
 
