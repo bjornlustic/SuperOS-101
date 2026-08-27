@@ -22,6 +22,7 @@
 #include "controls.h"
 #include "combined.h"
 #include "flash_persist.h"
+#include "midiclock.h"
 
 namespace engine {
 
@@ -387,7 +388,21 @@ class NoteEngine {
         break;
 
       case MODE_SEQ_PLAY:
-        if (playStart_) { o.clockReset = true; playStart_ = false; }   // LFO in phase with step 1
+        if (playStart_) {
+          o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
+          // Internal clock: play step 0 NOW, in the same instant as the LFO
+          // reset, so step 1 lands exactly one clock period later. Without
+          // this the first audible step came from whatever LFO phase the
+          // free-running clock happened to be at (or from the reset pulse's
+          // own transition read as an edge): first note off-grid, then a
+          // period-long gap before step 1. With MIDI sync the downbeat is
+          // the first 0xF8 after Start, so we wait for the divided edge.
+          if (!midiclk::SyncOn()) {
+            if (seq_.advance()) o.portaOff = true;
+            lastCv_ = seq_.cv();
+            clockEdge = false; halfEdge = false;
+          }
+        }
         if (clockEdge) { if (seq_.advance()) o.portaOff = true; lastCv_ = seq_.cv(); }
         if (halfEdge) seq_.halfStep();
         o.cv = seq_.gate() ? seq_.cv() : lastCv_;

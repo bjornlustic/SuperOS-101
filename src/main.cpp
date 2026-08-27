@@ -25,6 +25,7 @@ static bool                  g_lastClock = false;
 static uint8_t               g_rnd = 0xA5;
 static uint8_t               g_rndHeld = 0;       // synced S&H latch (MIDI sync on)
 static uint32_t              g_rstUntilMs = 0;    // CLOCK-RESET pulse stretcher
+static bool                  g_clkResync = false; // re-prime the clock edge detector after a reset pulse
 static uint32_t              g_portaUntilMs = 0;  // PORTAMENTO OFF pulse (non-legato notes)
 static uint32_t              g_lastEditMs = 0;    // for the deferred flash flush
 
@@ -271,6 +272,19 @@ void superos_loop() {
   // the random S&H steps once per division instead of free-running.
   bool clockEdge, halfEdge;
   uint8_t random = ClockAndRandom(clockEdge, halfEdge);
+  // A CLOCK-RESET pulse restarts the analog LFO, and the level transitions
+  // the restart causes must not read as clock edges: the stale detector state
+  // turned them into a spurious step right after play start. Swallow edges
+  // while the pulse is active and for one pass after it ends (the release
+  // transition); ClockAndRandom keeps g_lastClock primed throughout. Only
+  // the LFO path needs this; with sync ON the edges below are MIDI-derived.
+  if (!midiclk::SyncOn()) {
+    if ((int32_t)(g_rstUntilMs - millis()) > 0) {
+      clockEdge = false; halfEdge = false; g_clkResync = true;
+    } else if (g_clkResync) {
+      clockEdge = false; halfEdge = false; g_clkResync = false;
+    }
+  }
   if (midiclk::SyncOn()) {
     clockEdge = divEdge;
     halfEdge = midiclk::ConsumeHalfEdge();

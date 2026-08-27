@@ -368,7 +368,8 @@ bool    mcs48_t0() { return (PIND & (1u << T0_HOLD_BIT))  != 0; }
 // pulse shorter than a loop pass counts; the host sim polls the pin instead.
 // With MIDI sync ON the divided MIDI clock (midiclock.h) is the source
 // instead of the pin (polled after midi::Poll, which is what advances it).
-static bool             g_t1Level   = true;   // last source level seen
+static bool             g_t1Level   = false;  // last source level seen (false: the first
+                                              // Watch can never read a phantom H->L edge)
 static volatile uint8_t g_t1Pending = 0;      // falling edges captured, not yet shown to the ROM
 static bool             g_t1Shown   = true;   // last level returned to the ROM
 static const uint8_t T1_PENDING_MAX = 2;   // small: a clock faster than the ROM can follow drops edges instead of lagging

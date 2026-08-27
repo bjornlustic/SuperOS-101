@@ -25,7 +25,11 @@ static const uint8_t DIV_DEFAULT = 6;   // 1/16
 struct State {
   bool    sync    = false;
   uint8_t divIdx  = DIV_DEFAULT;
-  bool    running = false;
+  // running defaults TRUE: a host that streams 0xF8 without ever sending
+  // Start (common over USB, where a Start can be lost to re-enumeration)
+  // still clocks the machine. An explicit 0xFC is honoured until the next
+  // 0xFA/0xFB; toggling sync re-arms it.
+  bool    running = true;
   uint8_t tick    = 0;      // 0..ticks-1 within the current division
   bool    edge    = false;  // division boundary since last Consume
   bool    half    = false;  // half-division point since last Consume (gate off)
@@ -51,14 +55,19 @@ inline void Begin() {
 
 inline bool    SyncOn() { return S().sync; }
 inline uint8_t DivIdx() { return S().divIdx; }
-inline void SetSync(bool on) { S().sync = on; Save(); }
+inline void SetSync(bool on) { S().sync = on; S().running = true; S().tick = 0; Save(); }
 inline void SetDiv(uint8_t i) {
   if (i < DIV_COUNT) { S().divIdx = i; S().tick = 0; Save(); }
 }
 
 // --- realtime bytes (from midi::Handlers.realtime) --------------------------
 // The first 0xF8 after Start is the downbeat (MIDI spec), so the edge fires
-// on tick 0 of each division.
+// on tick 0 of each division. running defaults true (see State): a host that
+// streams clock without ever sending Start still steps the machine; only an
+// explicit Stop silences the divider, until the next Start/Continue or a
+// sync toggle. (Gating ticks on a Start-only running flag left the machine
+// silent with sync ON in both firmwares whenever the Start was never seen;
+// the 80C49 path pins T1Level() to a constant when tick never moves.)
 inline void OnRealtime(uint8_t b) {
   switch (b) {
     case 0xF8:

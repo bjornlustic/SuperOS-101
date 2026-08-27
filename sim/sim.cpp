@@ -219,6 +219,16 @@ static void ClockTick() {
 static bool GateOn()     { return !(sim_portf & 0x80); }
 static bool ClockReset() { return  (sim_portf & 0x10) == 0; }   // active-LOW pulse
 
+// Arp/seq play start fires a CLOCK-RESET pulse, and the firmware swallows
+// T1 edges while the pulse is active plus one re-priming pass after it (the
+// LFO restart's own transitions must not read as clock edges). Let that
+// window pass before driving test clock edges.
+static void SettleClockReset() {
+  int guard = 0;
+  while (ClockReset() && ++guard < 10000) RunLoops(1);
+  RunLoops(1);   // the re-priming pass consumes its one swallowed edge
+}
+
 static void PrintState() {
   printf("[%s] cv=%2u  gate=%s  vco-range=%2u  random=%2u  clkrst=%d  p2=%02X  keys=%08X  virt=%lluus\n",
          combined_current_fw() == SIM_FW_EMU ? "emu" : "sos",
@@ -510,6 +520,8 @@ static int SelfTest() {
   puts("arpeggiator:");
   sim::g_buttons = 1u << 4; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // tap UP
   sim::g_keys = (1UL << 0) | (1UL << 4) | (1UL << 7);
+  RunLoops(1);          // arp start pass: fires the CLOCK-RESET pulse
+  SettleClockReset();
   ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "arp step 1 = key 0");
   ClockTick(); CHECK(sim::g_sh[0] == 21, "arp step 2 = key 4");
   ClockTick(); CHECK(sim::g_sh[0] == 24, "arp step 3 = key 7");
@@ -530,7 +542,8 @@ static int SelfTest() {
     CHECK(n == 4 && buf[0] == 3, "pattern 0 saved to the flash arena (len 3)");
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
-  ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "seq starts at step 1 -> note 0 (CV 17)");
+  CHECK(sim::g_sh[0] == 17 && GateOn(), "PLAY -> step 1 sounds immediately (CV 17)");
+  SettleClockReset();
   ClockTick(); CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step 2 -> note 2 (CV 19)");
   ClockTick(); CHECK(!GateOn(), "seq rest -> gate off");
   ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "seq wraps -> note 0 (CV 17)");
