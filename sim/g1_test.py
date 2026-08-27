@@ -60,14 +60,14 @@ check("TRANSPOSE down = one octave lower (manual: Panel Switches/TRANSPOSE)",
       len(ons) >= 2 and (max(ons) - min(ons)) == 12, str(ons))
 
 # --- 4. arpeggiator UP steps across held keys ----------------------------------
-s = run("mode superos\nrun 20\nmidi sync on\nmidi div 6\nbtn up tap\nkey 0 down\nkey 4 down\nrun 3\n"
+s = run("mode superos\nrun 20\nmidi sync on\nmidi div 6\nbtn up tap\nrun 100\nkey 0 down\nkey 4 down\nrun 3\n"
         "midi start\nmidi clock 6\nstate\nmidi clock 6\nstate\nmidi clock 6\nstate\nmidi clock 6\nstate\nquit\n")
 arp_cvs = {st["cv"] for st in s}
 check("arpeggiator UP alternates held keys (manual: The Arpeggiator)",
       len(arp_cvs & {17, 21}) == 2, str(sorted(arp_cvs)))
 
 # --- 5. sequencer record + play under clock ------------------------------------
-s = run("mode superos\nrun 20\nbtn load tap\nkey 0 down\nrun 2\nkey 0 up\nrun 2\nkey 4 down\nrun 2\n"
+s = run("mode superos\nrun 20\nbtn load tap\nrun 100\nkey 0 down\nrun 2\nkey 0 up\nrun 2\nkey 4 down\nrun 2\n"
         "key 4 up\nrun 2\nkey 7 down\nrun 2\nkey 7 up\nrun 2\nbtn load tap\nmidi sync on\nmidi div 6\n"
         "btn play tap\nmidi start\nmidi clock 6\nstate\nmidi clock 6\nstate\nmidi clock 6\nstate\nquit\n")
 play_cvs = [st["cv"] for st in s]

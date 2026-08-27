@@ -525,6 +525,8 @@ class NoteEngine {
 
       case MODE_SEQ_LOAD: {
         // record: KEY-TRANSPOSE = rest, HOLD-held = legato, else the note.
+        // (The fn-button mask guard above keeps the LOAD press's own scan
+        // bleed from ever appearing as a fresh key here.)
         if (b.pressed(controls::BTN_KEYTRANS)) seq_.record(lastCv_, STEP_REST);
         uint32_t fresh = mask & ~prevMask_;
         if (fresh) { int8_t k = lowestKey(fresh); if (k >= 0) seq_.record(noteCv(k, p), b.down(controls::BTN_HOLD) ? STEP_LEGATO : STEP_NOTE); }

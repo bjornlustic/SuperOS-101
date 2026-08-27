@@ -29,6 +29,8 @@ static bool                  g_clkResync = false; // re-prime the clock edge det
 static uint32_t              g_portaUntilMs = 0;  // PORTAMENTO OFF pulse (non-legato notes)
 static uint32_t              g_lastEditMs = 0;    // for the deferred flash flush
 static uint32_t              g_lastRawFallMs = 0; // raw T1 fall (AUTO LFO div measurement)
+static uint32_t              g_btnQuietMs = 0;    // scan-bleed guard window (see loop)
+static uint32_t              g_prevPanelKeys = 0; // last accepted panel-key mask
 static bool                  g_rstSinceFall = false; // a reset pulse polluted this interval
 
 // --- MIDI note input ----------------------------------------------------------
@@ -313,9 +315,24 @@ void superos_loop() {
   hw::DacWrite(panel.rangeOffset, ROUTE_VCO);
 
   // 5. KEYBOARD READ + 8. FUNCTION SWITCH READ
-  uint32_t keys = ReadKeyboard() | g_midiMask;
   g_buttons.Scan();
   menu::NotifyButtons(g_buttons.now, millis());  // HOLD+KEY-TRANSP 2 s -> config menu
+  // Scan-bleed guard: no NEW panel key may appear while a function button is
+  // down or within 30 ms of one (press or release bounce). A button press
+  // can read as a phantom key on the button's own P1 row; measured on
+  // hardware, pressing LOAD recorded key 8 (LOAD's row-mate on bank 1) as
+  // step 0 of the pattern and played it as a stray note. Keys already held
+  // keep working, MIDI notes are exempt (they cannot scan-bleed), and so are
+  // HOLD (held through legato recording) and KEY-TRANSPOSE (the rest button).
+  uint32_t panelKeys = ReadKeyboard();
+  {
+    uint8_t fn = (uint8_t)((g_buttons.now | g_buttons.prev) &
+                           (uint8_t)~((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS)));
+    if (fn) g_btnQuietMs = nowMs + 30;
+    if ((int32_t)(g_btnQuietMs - nowMs) > 0) panelKeys &= g_prevPanelKeys;
+    g_prevPanelKeys = panelKeys;
+  }
+  uint32_t keys = panelKeys | g_midiMask;
 
   // 6/7. CLOCK CHECK + RANDOM DATA OUTPUT -> RANDOM sample/hold
   // Sync ON: the divided MIDI clock replaces the T1 (LFO/EXT-CLK) edge, and
@@ -451,6 +468,12 @@ void superos_loop() {
   // and pulses it low; holding it low freezes the LFO).
   uint8_t p2 = (uint8_t)(P2_IDLE | g_engine.ledSelect());
   if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
+  // KEY-TRANSPOSE LED blinks at the locked LFO division while the host's
+  // clock drives and the LFO is clock-locked: a visible beat for the lock
+  // rate (AUTO included). The LED is otherwise unused outside the config
+  // menu (KEY TRANSPOSE itself is still a TODO). 1 = lit (TR10 inverts).
+  if (driving && midiclk::LfoSyncOn() && midiclk::LfoPhaseLit())
+    p2 |= (uint8_t)(1u << P2_LED_KTRANS);
   if (out.gate)        p2 &= (uint8_t)~(1u << P2_GATE);      // bit=0 -> gate ON
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
     p2 &= (uint8_t)~(1u << P2_CLOCK_RST);                    // pulse LOW

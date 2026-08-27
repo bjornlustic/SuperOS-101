@@ -210,6 +210,14 @@ extern "C" void sim_flash_read(uint16_t page, uint8_t* buf) {
 // ---------------------------------------------------------------------------
 static void RunLoops(int n) { while (n-- > 0) loop(); }
 
+// Advance virtual time. Panel tests need this after tapping a function
+// button: fresh keys are ignored for 30 ms after button activity (the
+// engine's scan-bleed guard), exactly as a human's timing naturally allows.
+static void WaitVirtMs(uint16_t ms) {
+  uint32_t until = millis() + ms;
+  while ((int32_t)(until - millis()) > 0) RunLoops(1);
+}
+
 // One clock pulse: T1 high for a loop pass, then low (the firmware fires on H->L).
 static void ClockTick() {
   sim::g_clock = true;  RunLoops(1);
@@ -521,6 +529,7 @@ static int SelfTest() {
   // Arpeggiator UP over {0, 4, 7}, clock-advanced.
   puts("arpeggiator:");
   sim::g_buttons = 1u << 4; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // tap UP
+  WaitVirtMs(35);                                     // scan-bleed guard after the tap
   sim::g_keys = (1UL << 0) | (1UL << 4) | (1UL << 7);
   RunLoops(1);          // arp start pass: fires the CLOCK-RESET pulse
   SettleClockReset();
@@ -535,6 +544,7 @@ static int SelfTest() {
   // Sequencer: record 0, 2, rest; save; play back.
   puts("sequencer:");
   sim::g_buttons = 1u << 0; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // LOAD (record)
+  WaitVirtMs(35);                                     // scan-bleed guard after the tap
   sim::g_keys = 1UL << 0; RunLoops(1); sim::g_keys = 0; RunLoops(1);
   sim::g_keys = 1UL << 2; RunLoops(1); sim::g_keys = 0; RunLoops(1);
   sim::g_buttons = 1u << 7; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // KEY-TRANSP = rest
@@ -976,6 +986,31 @@ static int SelfTest() {
   midiclk::SetSync(false);
   ClockTick();
   CHECK(!GateOn(), "sync off: T1 clock works again (rest step -> gate off)");
+
+  // Panel scan bleed: a function-button press can read as a phantom key on
+  // the button's own P1 row (hardware finding: pressing LOAD recorded key 8
+  // as step 0). The engine must neither sound nor record such a key.
+  puts("panel scan bleed guard:");
+  {
+    midiclk::SetSync(false); RunLoops(2);
+    for (uint8_t v : {0xF0, 0x7D, 0x1D, 5, 0xF7}) g_midiQ.push_back(v); RunLoops(2);   // work on pattern 5
+    sim::g_buttons = 1u << 0; sim::g_keys = 1UL << 8; RunLoops(3);   // LOAD + bleed key 8
+    sim::g_buttons = 0; sim::g_keys = 0; RunLoops(3);
+    CHECK(!GateOn(), "LOAD press with scan-bleed key: nothing sounds");
+    { uint32_t until = millis() + 140; while ((int32_t)(until - millis()) > 0) RunLoops(1); }
+    sim::g_keys = 1UL << 2; RunLoops(20); sim::g_keys = 0; RunLoops(5);   // record two real notes
+    sim::g_keys = 1UL << 5; RunLoops(20); sim::g_keys = 0; RunLoops(5);
+    sim::g_buttons = 1u << 0; RunLoops(2); sim::g_buttons = 0; RunLoops(3);  // LOAD: exit
+    sim::g_buttons = 1u << 1; RunLoops(2); sim::g_buttons = 0; RunLoops(3);  // PLAY (sync off: step 1 now)
+    CHECK(GateOn() && sim::g_sh[0] == 19, "pattern starts at the FIRST REAL note (no phantom step 0)");
+    SettleClockReset();
+    ClockTick();
+    CHECK(sim::g_sh[0] == 22, "second recorded note follows");
+    ClockTick();
+    CHECK(sim::g_sh[0] == 19, "and the pattern is exactly two steps (wraps)");
+    sim::g_buttons = 1u << 1; RunLoops(2); sim::g_buttons = 0; RunLoops(3);  // stop
+    for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);   // pattern 0 back
+  }
 
   // PLAY vs the host clock's actual state (midiclock.h Driving / UserPlay):
   // the four ways a player meets "sync on" and none of them is silent.
