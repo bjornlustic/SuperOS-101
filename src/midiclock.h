@@ -145,6 +145,7 @@ inline bool FallbackToLfo(uint32_t nowMs) {
 inline void UserPlay(uint32_t nowMs) {
   S().hostStopped = false;
   if (!TickAlive(nowMs)) S().anchored = false;
+  else S().running = true;   // ticks are live: lock to them, even after an 0xFC
   if (Driving(nowMs) && !S().anchored) { S().tick = 0; S().lfoTick = 0; }
 }
 
@@ -162,8 +163,15 @@ inline void OnRealtime(uint8_t b) {
       uint32_t now = millis();
       if (S().lastTickMs != 0) {
         uint32_t d = now - S().lastTickMs;
-        if (d > TICK_TIMEOUT_MS) S().anchored = false;   // a fresh stream: phase unknown
-        else if (d <= 60) S().tickMs = (uint8_t)(((uint16_t)S().tickMs * 3 + d + 2) / 4);
+        if (d > TICK_TIMEOUT_MS) {
+          // A fresh stream after a dead gap: phase unknown, and it counts as
+          // an implicit continue. A host that streams clock without ever
+          // sending Start must still clock the machine, including after an
+          // earlier 0xFC ended its previous stream.
+          S().anchored = false;
+          S().running = true;
+          S().hostStopped = false;
+        } else if (d <= 60) S().tickMs = (uint8_t)(((uint16_t)S().tickMs * 3 + d + 2) / 4);
       }
       S().lastTickMs = now;
       if (S().running) {

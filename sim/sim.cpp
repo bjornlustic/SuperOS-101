@@ -1024,6 +1024,16 @@ static int SelfTest() {
     waitMs(8); ClockTick();
     CHECK(sim::g_sh[0] == 19, "after host Stop: the LFO steps the pattern");
     sxPlay(0);
+    // (5) after a Stop, a fresh Start-less stream is an implicit continue:
+    // the machine clocks from it again (0xFC must not permanently silence a
+    // host that never sends Start), and PLAY locks to it.
+    MidiClocks(2);
+    sxPlay(1);
+    MidiByte(0xF8);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "resumed Start-less stream: PLAY locks, step 0 on the next tick");
+    MidiClocks(6);
+    CHECK(sim::g_sh[0] == 19, "resumed Start-less stream: steps follow the division, not the LFO");
+    sxPlay(0);
     midiclk::SetSync(false); RunLoops(2);
   }
 
