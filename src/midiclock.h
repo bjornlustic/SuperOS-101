@@ -366,10 +366,5 @@ inline bool T1Level() {
   return (uint16_t)S().tick * 2 >= DIV_TICKS[S().divIdx];
 }
 
-// LFO-lock blink phase: lit through the first half of each LFO division
-// (KEY-TRANSPOSE LED while the clock drives and the LFO is locked).
-inline bool LfoPhaseLit() {
-  return (uint16_t)S().lfoTick * 2 < LfoTicks(LfoDivEff());
-}
 
 } // namespace midiclk

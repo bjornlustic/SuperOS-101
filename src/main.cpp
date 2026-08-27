@@ -470,12 +470,6 @@ void superos_loop() {
   // and pulses it low; holding it low freezes the LFO).
   uint8_t p2 = (uint8_t)(P2_IDLE | g_engine.ledSelect());
   if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
-  // KEY-TRANSPOSE LED blinks at the locked LFO division while the host's
-  // clock drives and the LFO is clock-locked: a visible beat for the lock
-  // rate (AUTO included). The LED is otherwise unused outside the config
-  // menu (KEY TRANSPOSE itself is still a TODO). 1 = lit (TR10 inverts).
-  if (driving && midiclk::LfoSyncOn() && midiclk::LfoPhaseLit())
-    p2 |= (uint8_t)(1u << P2_LED_KTRANS);
   if (out.gate)        p2 &= (uint8_t)~(1u << P2_GATE);      // bit=0 -> gate ON
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
     p2 &= (uint8_t)~(1u << P2_CLOCK_RST);                    // pulse LOW
