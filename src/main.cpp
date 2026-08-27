@@ -97,7 +97,9 @@ static void SendConfig() {
   body[4] = midiclk::DivIdx();
   body[5] = g_engine.seq().current();
   body[6] = persist::Available() ? 1 : 0;
-  uint8_t n = 7;
+  body[7] = midiclk::LfoSyncOn() ? 1 : 0;
+  body[8] = midiclk::LfoDivIdx();
+  uint8_t n = 9;
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
@@ -211,11 +213,14 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
       break;
     }
     case 0x22:
+      // <chan><sync><div>[<lfoSync><lfoDiv>] — the LFO pair is optional so
+      // pre-LFO-sync hosts keep working (their 4-byte form leaves it alone).
       if (len >= 4) {
         midi::SetChannel(body[1]);
         sysex::SaveChannel(body[1]);
         midiclk::SetSync(body[2] != 0);
         midiclk::SetDiv(body[3]);
+        if (len >= 6) { midiclk::SetLfoSync(body[4] != 0); midiclk::SetLfoDiv(body[5]); }
         SendConfig();
       }
       break;
@@ -340,20 +345,37 @@ void superos_loop() {
 
   // Deferred pattern persistence: SysEx writes and panel edits land in RAM;
   // flush one dirty pattern per pass once things have been quiet for 500 ms
-  // and we are not recording (a page write halts the CPU for a few ms).
-  if (g_engine.seq().dirty() && g_engine.mode() != engine::MODE_SEQ_LOAD &&
-      millis() - g_lastEditMs > 500) {
-    g_engine.seq().flushOne();
-    g_lastEditMs = millis();
+  // and we are neither recording nor CLOCKED (a page write halts the CPU for
+  // a few ms, which under playback/arp was an audible timing hitch whenever
+  // the editor's live edits went dirty mid-run). Edits made while playing
+  // persist at stop; flushAll on LOAD exit is unchanged.
+  {
+    engine::Mode m = g_engine.mode();
+    bool clocked = (m == engine::MODE_SEQ_PLAY || m == engine::MODE_SEQ_LOAD ||
+                    m == engine::MODE_ARP_UP || m == engine::MODE_ARP_DOWN ||
+                    m == engine::MODE_ARP_UPDOWN);
+    if (g_engine.seq().dirty() && !clocked && millis() - g_lastEditMs > 500) {
+      g_engine.seq().flushOne();
+      g_lastEditMs = millis();
+    }
   }
 
   // 13. GATE / CLOCK-RESET / PORTAMENTO OFF / LEDs
-  // CLOCK RESET fires on engine events and, with sync ON, on every division
-  // boundary (hard-syncs the analog LFO). Stretched to >=2 ms: our loop pass
-  // is far shorter than the original's 3.5 ms, so a 1-pass pulse would be
-  // too narrow for the LFO reset circuit.
-  if (out.clockReset || (midiclk::SyncOn() && divEdge))
-    g_rstUntilMs = millis() + 2;
+  // CLOCK RESET fires on engine events and, with sync ON + LFO sync ON, on
+  // every LFO-division boundary (hard-syncs the analog LFO to the clock at
+  // its own musical rate, midiclock.h lfoDiv). With LFO sync OFF the LFO
+  // free-runs for modulation while the sequencer still steps from the
+  // divided clock, so the engine's play-arm reset is suppressed too (only
+  // in play mode: the ADSR=LFO keyboard retrigger stays). Stretched to
+  // >=2 ms: our loop pass is far shorter than the original's 3.5 ms, so a
+  // 1-pass pulse would be too narrow for the LFO reset circuit.
+  {
+    bool lfoEdge = midiclk::ConsumeLfoEdge();
+    bool engineReset = out.clockReset &&
+      !(midiclk::SyncOn() && !midiclk::LfoSyncOn() && g_engine.mode() == engine::MODE_SEQ_PLAY);
+    if (engineReset || (midiclk::SyncOn() && midiclk::LfoSyncOn() && lfoEdge))
+      g_rstUntilMs = millis() + 2;
+  }
   // PORTAMENTO OFF (P23, active-high; the ROM idles it low and raises it
   // briefly on a fresh, non-legato note): the S/H jumps instead of gliding.
   // With the panel switch on AUTO this is what makes only legato notes glide;

@@ -451,19 +451,19 @@ class NoteEngine {
         if (playStart_) {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
           subTotal_ = 1; subLeft_ = 0; lastEdgeMs_ = 0;   // no stale ratchet state into a new run
-          // Panel/editor PLAY (playNow_): step 1 sounds NOW in BOTH clock
-          // modes, and the clock phase re-anchors to the press, so step 2
-          // lands one period/division later. Sync off, the LFO is hard-reset
-          // by o.clockReset; sync on, the divider re-phases while the tempo
-          // stays locked to the incoming clock. MIDI Start (0xFA) does NOT
-          // set playNow_: its first 0xF8 is the downbeat per the MIDI spec,
-          // so a host-started run still waits for that edge.
+          // Panel/editor PLAY (playNow_), internal clock only: step 1 sounds
+          // NOW, the LFO hard-reset gives step 2 one period later. With MIDI
+          // sync the press only ARMS: the machine stays silent until the
+          // host's grid delivers the next division edge (or the 0xFA
+          // downbeat), so arming does not blurt a note and the groove stays
+          // on the host's beat. 0xFA never sets playNow_.
           if (playNow_) {
             playNow_ = false;
-            midiclk::Rephase();
-            if (seq_.advance()) o.portaOff = true;
-            lastCv_ = seq_.cv();
-            clockEdge = false; halfEdge = false;
+            if (!midiclk::SyncOn()) {
+              if (seq_.advance()) o.portaOff = true;
+              lastCv_ = seq_.cv();
+              clockEdge = false; halfEdge = false;
+            }
           }
         }
         if (clockEdge) {

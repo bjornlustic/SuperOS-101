@@ -947,6 +947,7 @@ static int SelfTest() {
   // 3-step sequence (note 0, note 2, rest) from the tests above.
   puts("MIDI clock sync:");
   midiclk::SetSync(true); midiclk::SetDiv(6);   // 1/16 = 6 ticks at 24 ppqn
+  midiclk::SetLfoSync(true); midiclk::SetLfoDiv(6);   // LFO hard-sync on the same boundary
   uint8_t cvBeforeSync = sim::g_sh[0];
   ClockTick();
   CHECK(sim::g_sh[0] == cvBeforeSync, "sync on: T1 (LFO) clock is ignored");

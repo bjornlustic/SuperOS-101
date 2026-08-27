@@ -67,6 +67,15 @@
 //   0x1E <x>              transport: SuperOS x=1 play / 0 stop; the emulator
 //                         taps its PLAY button (toggle) for any x
 //   0x20                  request config              -> 0x21
+//                           0x21: <fw><chan><sync><div><pat><storeOk>
+//                           <lfoSync><lfoDiv><version ascii...>. 0x22 takes
+//                           <chan><sync><div>[<lfoSync><lfoDiv>]: with sync
+//                           on, lfoSync ON pulses CLOCK RESET on lfoDiv
+//                           boundaries (LFO locked to the clock at its own
+//                           musical rate); OFF leaves the analog LFO
+//                           free-running for modulation while the sequencer
+//                           still steps from the divided clock. SuperOS
+//                           only; the 80C49 mode never hard-synced its LFO.
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
 //   (CC cutoffCc, default 74, moves the filter; CC cutoffCc+32 = 106 is its

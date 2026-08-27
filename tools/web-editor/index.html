@@ -337,6 +337,12 @@
           <div class="div-grid" id="divGrid"></div>
           <div class="config-note">Changes apply to the unit immediately and are saved in its EEPROM. If the sequencer feels 4&#215; too slow you are on <b>1/4</b>; the default is <b>1/16</b>. The same setting is on the panel menu as the 10 lowest keys (see the menu map below); they are the lowest ten keys counting black keys, not the white keys.</div>
         </div>
+        <div class="config-field">
+          <label>LFO &#8596; clock (with sync on)</label>
+          <button class="btn" id="btnLfoSync" title="LOCKED: the analog LFO is hard-synced to the MIDI clock at the rate below. FREE: the LFO free-runs for modulation (rate knob) while the sequencer still steps from the clock.">Locked</button>
+          <div class="div-grid" id="lfoDivGrid"></div>
+          <div class="config-note">LOCKED hard-syncs the analog LFO to the clock at this musical rate, from <b>1/4</b> up. FREE lets the LFO run at its rate knob for modulation while the sequencer stays clocked. Panel menu: <b>key 14</b> toggles it.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -364,8 +370,9 @@
         <div class="mm-kbd" id="mmKbd"></div>
         <div class="mm-legend">
           <span><b>Keys 1&#8211;10</b> (red, lowest ten keys, black keys included) pick the clock division directly.
-          <b>Key 11</b> = MC-202 accent model &#183; <b>Key 12</b> = TB-303 accent model &#183; <b>Key 13</b> = toggle MIDI filter-cutoff CC.
-          The accent model and CC toggle are panel-menu only; channel, sync and divide can also be set from this page.</span>
+          <b>Key 11</b> = MC-202 accent model &#183; <b>Key 12</b> = TB-303 accent model &#183; <b>Key 13</b> = toggle MIDI filter-cutoff CC &#183;
+          <b>Key 14</b> = LFO locked-to-clock / free-running toggle.
+          The accent model and CC toggle are panel-menu only; channel, sync, divide and the LFO lock can also be set from this page.</span>
         </div>
       </div>
     </div>
@@ -403,7 +410,7 @@ const patterns = Array.from({length: NUM_PATTERNS}, () => []);
 const dirty = new Array(NUM_PATTERNS).fill(false);
 let curPat = 0, selStep = -1, playing = false, playPos = -1, devPat = 0;
 let deviceMode = 'unknown';   // 'superos' | 'emu' | 'unknown'
-let cfg = {chan: 0, sync: 0, div: 6, flash: 1, version: ''};
+let cfg = {chan: 0, sync: 0, div: 6, flash: 1, lfoSync: 1, lfoDiv: 0, version: ''};
 let liveEnabled = true;
 
 function noteName(cv) { const n = cv + MIDI_CV_OFFSET; return NAMES[n % 12] + (Math.floor(n / 12) - 1); }
@@ -524,9 +531,10 @@ function onMidi(e) {
 function handleSysex(b) {
   const cmd = b[0];
   switch (cmd) {
-    case 0x21: {   // config
-      cfg = {chan: b[2], sync: b[3], div: b[4], flash: b[6], version: String.fromCharCode(...b.slice(7))};
+    case 0x21: {   // config (<fw><chan><sync><div><pat><storeOk><lfoSync><lfoDiv><version...>)
+      cfg = {chan: b[2], sync: b[3], div: b[4], flash: b[6], lfoSync: b[7], lfoDiv: b[8], version: String.fromCharCode(...b.slice(9))};
       devPat = b[5];
+      log('device config reply: sync ' + (cfg.sync ? 'on' : 'off') + ', lfo ' + (cfg.lfoSync ? 'locked ' + DIVS[cfg.lfoDiv] : 'free'));
       renderConfig();
       setMode('superos');
       if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
@@ -673,31 +681,39 @@ $('btnFwSwitch').onclick = () => {
 // Config: channel / sync / divide — applied to the unit on change (SysEx 0x22)
 // ---------------------------------------------------------------------------
 function sendConfig() {
-  if (!sendSysex([0x22, cfg.chan, cfg.sync ? 1 : 0, cfg.div])) return;
-  log('config -> unit: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', divide ' + DIVS[cfg.div], 'log-syx');
+  if (!sendSysex([0x22, cfg.chan, cfg.sync ? 1 : 0, cfg.div, cfg.lfoSync ? 1 : 0, cfg.lfoDiv])) return;
+  log('config -> unit: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', divide ' + DIVS[cfg.div] +
+      ', LFO ' + (cfg.lfoSync ? 'locked at ' + DIVS[cfg.lfoDiv] : 'free-running'), 'log-syx');
 }
 function renderConfig() {
   $('selChan').value = cfg.chan;
   $('btnSync').textContent = cfg.sync ? 'On' : 'Off';
   $('btnSync').classList.toggle('is-on', !!cfg.sync);
-  document.querySelectorAll('.div-btn').forEach((d, i) => d.classList.toggle('is-on', i === cfg.div));
+  $('btnLfoSync').textContent = cfg.lfoSync ? 'Locked' : 'Free';
+  $('btnLfoSync').classList.toggle('is-on', !!cfg.lfoSync);
+  document.querySelectorAll('#divGrid .div-btn').forEach((d, i) => d.classList.toggle('is-on', i === cfg.div));
+  document.querySelectorAll('#lfoDivGrid .div-btn').forEach((d, i) => d.classList.toggle('is-on', i === cfg.lfoDiv));
   $('cfgStatus').textContent = 'ch ' + (cfg.chan + 1) + ' · sync ' + (cfg.sync ? 'ON · ' + DIVS[cfg.div] : 'off') +
+    ' · LFO ' + (cfg.lfoSync ? DIVS[cfg.lfoDiv] : 'free') +
     (cfg.flash ? '' : ' · FLASH STORE MISSING');
 }
 for (let c = 0; c < 16; ++c) { const o = document.createElement('option'); o.value = c; o.textContent = c + 1; $('selChan').appendChild(o); }
 $('selChan').onchange = () => { cfg.chan = +$('selChan').value; sendConfig(); renderConfig(); };
 $('btnSync').onclick = () => { cfg.sync = cfg.sync ? 0 : 1; sendConfig(); renderConfig(); };
-(function buildDivGrid() {
-  const g = $('divGrid');
+$('btnLfoSync').onclick = () => { cfg.lfoSync = cfg.lfoSync ? 0 : 1; sendConfig(); renderConfig(); };
+function buildDivGrid(el, key, showKeys) {
   DIVS.forEach((name, i) => {
     const b = document.createElement('button');
-    b.className = 'div-btn' + (i === cfg.div ? ' is-on' : '');
-    b.innerHTML = '<span class="dv">' + name.replace('d', '&#183;').replace('t', '&#179;') + '</span><span class="dk">key ' + (i + 1) + '</span>';
+    b.className = 'div-btn' + (i === cfg[key] ? ' is-on' : '');
+    b.innerHTML = '<span class="dv">' + name.replace('d', '&#183;').replace('t', '&#179;') + '</span>' +
+                  (showKeys ? '<span class="dk">key ' + (i + 1) + '</span>' : '');
     b.title = name.endsWith('d') ? name.slice(0, -1) + ' dotted' : name.endsWith('t') ? name.slice(0, -1) + ' triplet' : name;
-    b.onclick = () => { cfg.div = i; sendConfig(); renderConfig(); };
-    g.appendChild(b);
+    b.onclick = () => { cfg[key] = i; sendConfig(); renderConfig(); };
+    el.appendChild(b);
   });
-})();
+}
+buildDivGrid($('divGrid'), 'div', true);
+buildDivGrid($('lfoDivGrid'), 'lfoDiv', false);
 
 // Collapsible panels
 [['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {

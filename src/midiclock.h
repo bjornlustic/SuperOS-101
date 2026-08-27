@@ -25,6 +25,14 @@ static const uint8_t DIV_DEFAULT = 6;   // 1/16
 struct State {
   bool    sync    = false;
   uint8_t divIdx  = DIV_DEFAULT;
+  // LFO hard-sync: with sync ON, pulse CLOCK RESET on lfoDiv boundaries so
+  // the analog LFO locks to the clock at a musical rate (its own division,
+  // independent of the sequencer's). Toggle OFF to leave the LFO free-running
+  // for modulation while the sequencer still steps from the divided clock.
+  bool    lfoSync = true;
+  uint8_t lfoDiv  = 0;      // 1/4 by default (DIV_TICKS index)
+  uint8_t lfoTick = 0;
+  bool    lfoEdge = false;
   // running defaults TRUE: a host that streams 0xF8 without ever sending
   // Start (common over USB, where a Start can be lost to re-enumeration)
   // still clocks the machine. An explicit 0xFC is honoured until the next
@@ -41,23 +49,36 @@ inline State& S() { static State s; return s; }
 // --- settings (EEPROM, see combined.h map) ---------------------------------
 inline void Save() {
   eeprom_update_byte(EE_CFG_MAGIC, EE_CFG_MAGIC_VAL);
-  eeprom_update_byte(EE_CFG_FLAGS, S().sync ? 1 : 0);
+  // flags bit0 = sync, bit1 = LFO sync OFF (inverted so pre-existing EEPROM
+  // images, which have bit1 clear, read as the old always-synced behaviour)
+  eeprom_update_byte(EE_CFG_FLAGS, (uint8_t)((S().sync ? 1 : 0) | (S().lfoSync ? 0 : 2)));
   eeprom_update_byte(EE_CFG_DIV, S().divIdx);
+  eeprom_update_byte(EE_CFG_LFODIV, S().lfoDiv);
 }
 
 inline void Begin() {
   if (eeprom_read_byte(EE_CFG_MAGIC) == EE_CFG_MAGIC_VAL) {
-    S().sync = (eeprom_read_byte(EE_CFG_FLAGS) & 1) != 0;
+    uint8_t f = eeprom_read_byte(EE_CFG_FLAGS);
+    S().sync = (f & 1) != 0;
+    S().lfoSync = (f & 2) == 0;
     uint8_t d = eeprom_read_byte(EE_CFG_DIV);
     S().divIdx = (d < DIV_COUNT) ? d : DIV_DEFAULT;
+    uint8_t l = eeprom_read_byte(EE_CFG_LFODIV);
+    S().lfoDiv = (l < DIV_COUNT) ? l : 0;
   }
 }
 
 inline bool    SyncOn() { return S().sync; }
 inline uint8_t DivIdx() { return S().divIdx; }
-inline void SetSync(bool on) { S().sync = on; S().running = true; S().tick = 0; Save(); }
+inline bool    LfoSyncOn() { return S().lfoSync; }
+inline uint8_t LfoDivIdx() { return S().lfoDiv; }
+inline void SetSync(bool on) { S().sync = on; S().running = true; S().tick = 0; S().lfoTick = 0; Save(); }
 inline void SetDiv(uint8_t i) {
   if (i < DIV_COUNT) { S().divIdx = i; S().tick = 0; Save(); }
+}
+inline void SetLfoSync(bool on) { S().lfoSync = on; S().lfoTick = 0; Save(); }
+inline void SetLfoDiv(uint8_t i) {
+  if (i < DIV_COUNT) { S().lfoDiv = i; S().lfoTick = 0; Save(); }
 }
 
 // --- realtime bytes (from midi::Handlers.realtime) --------------------------
@@ -75,21 +96,19 @@ inline void OnRealtime(uint8_t b) {
         if (S().tick == 0) S().edge = true;
         if (S().tick == DIV_TICKS[S().divIdx] / 2) S().half = true;
         if (++S().tick >= DIV_TICKS[S().divIdx]) S().tick = 0;
+        if (S().lfoTick == 0) S().lfoEdge = true;
+        if (++S().lfoTick >= DIV_TICKS[S().lfoDiv]) S().lfoTick = 0;
       }
       break;
-    case 0xFA: S().running = true; S().tick = 0; S().started = true; break;
+    case 0xFA: S().running = true; S().tick = 0; S().lfoTick = 0; S().started = true; break;
     case 0xFB: S().running = true; break;
     case 0xFC: S().running = false; S().stopped = true; break;
     default: break;
   }
 }
 
-// Re-anchor the division phase to NOW (panel/editor play start): the next
-// edge fires a full division from this moment. Tempo stays locked to the
-// incoming clock; an explicit MIDI Start still re-aligns the downbeat.
-inline void Rephase() { S().tick = 1; S().edge = false; S().half = false; }
-
 inline bool ConsumeEdge()    { bool e = S().edge;    S().edge = false;    return e; }
+inline bool ConsumeLfoEdge() { bool e = S().lfoEdge; S().lfoEdge = false; return e; }
 inline bool ConsumeHalfEdge(){ bool h = S().half;    S().half = false;    return h; }
 inline bool ConsumeStart()   { bool s = S().started; S().started = false; return s; }
 inline bool ConsumeStop()    { bool s = S().stopped; S().stopped = false; return s; }

@@ -41,7 +41,8 @@ static const uint16_t EE_A_CFG_MAGIC = 0x001;
 static const uint16_t EE_A_CFG_FLAGS = 0x002;
 static const uint16_t EE_A_CFG_DIV   = 0x003;
 static const uint16_t EE_A_CFG_CHAN  = 0x004;
-static const uint16_t EE_CFG_END     = 0x005;   // one past EE_A_CFG_CHAN
+static const uint16_t EE_A_CFG_LFODIV = 0x005;  // LFO hard-sync division (midiclock.h)
+static const uint16_t EE_CFG_END     = 0x006;   // one past EE_A_CFG_LFODIV
 static const uint16_t EE_CV_FIRST    = 0x010;   // cvdac.h's EE_CV_MAGIC
 static const uint16_t EE_FREE_FIRST  = 0x020;
 static const uint16_t EE_A_EMU_MAGIC = 0x100;
@@ -58,13 +59,14 @@ static const uint16_t EE_TOTAL_BYTES = 0x1000;  // E2END + 1, AT90USB1286
 #define EE_CFG_FLAGS ((uint8_t*)EE_A_CFG_FLAGS)
 #define EE_CFG_DIV   ((uint8_t*)EE_A_CFG_DIV)
 #define EE_CFG_CHAN  ((uint8_t*)EE_A_CFG_CHAN)
+#define EE_CFG_LFODIV ((uint8_t*)EE_A_CFG_LFODIV)
 
 static const uint8_t EE_EMU_MAGIC_VAL = 0x49;   // '8049'
 static const uint8_t EMU_RAM_FIRST    = 0x1C;   // first persisted 80C49 RAM byte
 static const uint8_t EMU_RAM_COUNT    = 0x80 - 0x1C;   // 100 bytes
 static const uint8_t EE_CFG_MAGIC_VAL = 0x4D;   // 'M'
 
-static_assert(EE_A_CFG_CHAN + 1 == EE_CFG_END, "the CFG block moved");
+static_assert(EE_A_CFG_LFODIV + 1 == EE_CFG_END, "the CFG block moved");
 static_assert(EE_CFG_END <= EE_CV_FIRST, "the CFG block runs into the CV block");
 static_assert(EE_FREE_FIRST <= EE_A_EMU_MAGIC,
               "the free arena runs into the emulator RAM image");

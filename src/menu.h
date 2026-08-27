@@ -102,6 +102,10 @@ inline void Poll() {
   if (keyRise & (1UL << 10)) cvdac::SetMode(cvdac::MODE_MC202);
   if (keyRise & (1UL << 11)) cvdac::SetMode(cvdac::MODE_TB303);
   if (keyRise & (1UL << 12)) cvdac::SetCutoffEnabled(!(cvdac::Get().flags & cvdac::F_MIDI_CUTOFF));
+  // Key 14: toggle LFO hard-sync (with MIDI sync on: OFF = the analog LFO
+  // free-runs for modulation while the sequencer still steps from the clock;
+  // ON = CLOCK RESET locks it to the clock at its own division, editor 0x22).
+  if (keyRise & (1UL << 13)) midiclk::SetLfoSync(!midiclk::LfoSyncOn());
 
   if (rise & (1u << controls::BTN_LOAD)) {
     if (emu101::available()) RebootTo(FW_EMU);   // no ROM embedded -> ignore
