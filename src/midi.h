@@ -74,8 +74,16 @@
 //                           boundaries (LFO locked to the clock at its own
 //                           musical rate); OFF leaves the analog LFO
 //                           free-running for modulation while the sequencer
-//                           still steps from the divided clock. SuperOS
+//                           still steps from the divided clock. lfoDiv takes
+//                           0..9 (the shared division table), 10 = 1/2,
+//                           11 = 1/1, or 127 = AUTO: the division follows the
+//                           LFO RATE slider (measured free-run period vs the
+//                           incoming tick spacing, midiclock.h). SuperOS
 //                           only; the 80C49 mode never hard-synced its LFO.
+//                           Sync ON steps from the divided clock only while
+//                           0xF8s actually arrive; a silent or stopped host
+//                           falls back to the LFO/EXT-CLK (midiclock.h
+//                           Driving/FallbackToLfo), so PLAY always plays.
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
 //   (CC cutoffCc, default 74, moves the filter; CC cutoffCc+32 = 106 is its

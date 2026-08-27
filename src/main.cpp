@@ -28,6 +28,8 @@ static uint32_t              g_rstUntilMs = 0;    // CLOCK-RESET pulse stretcher
 static bool                  g_clkResync = false; // re-prime the clock edge detector after a reset pulse
 static uint32_t              g_portaUntilMs = 0;  // PORTAMENTO OFF pulse (non-legato notes)
 static uint32_t              g_lastEditMs = 0;    // for the deferred flash flush
+static uint32_t              g_lastRawFallMs = 0; // raw T1 fall (AUTO LFO div measurement)
+static bool                  g_rstSinceFall = false; // a reset pulse polluted this interval
 
 // --- MIDI note input ----------------------------------------------------------
 // In-range notes (53..84 = keys F3..C6 at the middle octave) become keyboard
@@ -275,6 +277,11 @@ void superos_loop() {
   midi::Poll();
   bool divEdge = midiclk::ConsumeEdge();
   if (midiclk::ConsumeStart()) g_engine.restart();
+  // Sync ON only rules while the host's clock is actually on the wire
+  // (midiclock.h Driving); otherwise the LFO/EXT-CLK steps the machine so a
+  // PLAY press is never silent.
+  const uint32_t nowMs = millis();
+  const bool driving = midiclk::Driving(nowMs);
 
   // 3. RANGE / OCTAVE / ADSR
   controls::Panel panel = controls::ReadPanel();
@@ -303,14 +310,30 @@ void superos_loop() {
   // the shortest real clock half-period. Only the LFO path needs this; with
   // sync ON the edges below are MIDI-derived.
   static const uint8_t CLK_SETTLE_MS = 3;
-  if (!midiclk::SyncOn()) {
+  // Raw T1 fall bookkeeping for the AUTO LFO division (midiclock.h): a
+  // fall-to-fall interval is a slider measurement only if no CLOCK-RESET
+  // pulse landed inside it (a hard-synced LFO's forced transitions measure
+  // the reset rate, not the slider).
+  {
+    bool inRst = (int32_t)(g_rstUntilMs + CLK_SETTLE_MS - nowMs) > 0;
+    if (inRst) g_rstSinceFall = true;
+    if (clockEdge && !inRst) {
+      if (g_lastRawFallMs && !g_rstSinceFall) {
+        uint32_t iv = nowMs - g_lastRawFallMs;
+        midiclk::LfoPeriodSample(iv > 30000 ? 30000 : (uint16_t)iv, nowMs);
+      }
+      g_lastRawFallMs = nowMs;
+      g_rstSinceFall = false;
+    }
+  }
+  if (!driving) {
     if ((int32_t)(g_rstUntilMs + CLK_SETTLE_MS - millis()) > 0) {
       clockEdge = false; halfEdge = false; g_clkResync = true;
     } else if (g_clkResync) {
       clockEdge = false; halfEdge = false; g_clkResync = false;
     }
   }
-  if (midiclk::SyncOn()) {
+  if (driving) {
     clockEdge = divEdge;
     halfEdge = midiclk::ConsumeHalfEdge();
     if (divEdge) g_rndHeld = random;
@@ -372,9 +395,12 @@ void superos_loop() {
   {
     bool lfoEdge = midiclk::ConsumeLfoEdge();
     bool engineReset = out.clockReset &&
-      !(midiclk::SyncOn() && !midiclk::LfoSyncOn() && g_engine.mode() == engine::MODE_SEQ_PLAY);
-    if (engineReset || (midiclk::SyncOn() && midiclk::LfoSyncOn() && lfoEdge))
+      !(driving && !midiclk::LfoSyncOn() && g_engine.mode() == engine::MODE_SEQ_PLAY);
+    if (engineReset ||
+        (driving && midiclk::LfoSyncOn() && lfoEdge && !midiclk::AutoListenSkip(nowMs))) {
       g_rstUntilMs = millis() + 2;
+      g_rstSinceFall = true;
+    }
   }
   // PORTAMENTO OFF (P23, active-high; the ROM idles it low and raises it
   // briefly on a fresh, non-legato note): the S/H jumps instead of gliding.

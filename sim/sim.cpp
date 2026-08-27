@@ -948,9 +948,19 @@ static int SelfTest() {
   puts("MIDI clock sync:");
   midiclk::SetSync(true); midiclk::SetDiv(6);   // 1/16 = 6 ticks at 24 ppqn
   midiclk::SetLfoSync(true); midiclk::SetLfoDiv(6);   // LFO hard-sync on the same boundary
+  // Sync ON with a silent host: the LFO/EXT-CLK still steps the machine
+  // (midiclock.h FallbackToLfo), so PLAY is never a silent button.
+  {
+    uint32_t until = millis() + 320;               // ticks from earlier tests age out
+    while ((int32_t)(until - millis()) > 0) RunLoops(1);
+  }
   uint8_t cvBeforeSync = sim::g_sh[0];
   ClockTick();
-  CHECK(sim::g_sh[0] == cvBeforeSync, "sync on: T1 (LFO) clock is ignored");
+  CHECK(sim::g_sh[0] != cvBeforeSync, "sync on, no host clock: T1 (LFO) still steps (fallback)");
+  MidiClocks(2);                                 // ticks arrive: the host's clock takes over
+  uint8_t cvUnderClock = sim::g_sh[0];
+  ClockTick();
+  CHECK(sim::g_sh[0] == cvUnderClock, "sync on, host clock alive: T1 (LFO) clock is ignored");
   MidiByte(0xFA);                                // Start: rewind to the downbeat
   MidiClocks(1);                                 // first clock = downbeat edge
   CHECK(sim::g_sh[0] == 17 && GateOn(), "Start + 1st clock -> seq step 0 (CV 17)");
@@ -966,6 +976,85 @@ static int SelfTest() {
   midiclk::SetSync(false);
   ClockTick();
   CHECK(!GateOn(), "sync off: T1 clock works again (rest step -> gate off)");
+
+  // PLAY vs the host clock's actual state (midiclock.h Driving / UserPlay):
+  // the four ways a player meets "sync on" and none of them is silent.
+  puts("play vs clock state:");
+  {
+    auto sxPlay = [&](uint8_t on) {
+      for (uint8_t v : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x1E, on, (uint8_t)0xF7}) g_midiQ.push_back(v);
+      RunLoops(2);
+    };
+    auto waitMs = [&](uint16_t ms) {
+      uint32_t until = millis() + ms;
+      while ((int32_t)(until - millis()) > 0) RunLoops(1);
+    };
+    midiclk::SetSync(true); midiclk::SetDiv(6);
+    sxPlay(0); RunLoops(2);
+    waitMs(320);                            // ticks from the tests above age out
+    // (1) sync on, host silent: PLAY sounds step 0 immediately (no clock needed)
+    sxPlay(1);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "sync on, silent host: PLAY sounds step 0 NOW");
+    waitMs(8); ClockTick();
+    CHECK(sim::g_sh[0] == 19, "sync on, silent host: the LFO keeps stepping the pattern");
+    sxPlay(0);
+    // (2) host ticks without ever sending Start (phase unknown): PLAY
+    // re-anchors the divider, so step 0 lands on the very next tick.
+    MidiClocks(4);                          // stream alive, mid-division, no 0xFA
+    sxPlay(1);
+    CHECK(!GateOn(), "unanchored clock: PLAY arms silently");
+    MidiByte(0xF8);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "unanchored clock: step 0 lands on the next tick");
+    sxPlay(0);
+    // (3) an 0xFA-anchored stream keeps its phase: PLAY waits for the
+    // host's own next division boundary instead of re-anchoring.
+    MidiByte(0xFA); MidiClocks(3);          // downbeat + 3 of 6 ticks
+    sxPlay(1);
+    MidiByte(0xF8);
+    CHECK(!GateOn(), "anchored clock: PLAY holds for the host's boundary");
+    MidiClocks(3);                          // ticks 5,6,7: the edge fires on tick 7 (tick counter back at 0)
+    CHECK(GateOn() && sim::g_sh[0] == 17, "anchored clock: step 0 lands on the boundary");
+    sxPlay(0);
+    // (4) host sent Stop, then the player presses PLAY: local intent wins,
+    // the machine plays from the LFO instead of staying silent.
+    MidiByte(0xFC);
+    waitMs(320);                            // the dead stream ages out
+    sxPlay(1);
+    CHECK(GateOn() && sim::g_sh[0] == 17, "after host Stop: PLAY still plays (LFO fallback)");
+    waitMs(8); ClockTick();
+    CHECK(sim::g_sh[0] == 19, "after host Stop: the LFO steps the pattern");
+    sxPlay(0);
+    midiclk::SetSync(false); RunLoops(2);
+  }
+
+  // AUTO LFO division (lfoDiv 127): the division follows the measured
+  // free-running LFO period against the incoming tick spacing.
+  puts("LFO auto division:");
+  {
+    for (uint8_t v : {0xF0, 0x7D, 0x22, 0, 1, 6, 1, 127, 0xF7}) g_midiQ.push_back(v);
+    RunLoops(2);
+    CHECK(midiclk::LfoDivIdx() == midiclk::LFO_DIV_AUTO, "0x22 accepts lfoDiv 127 (AUTO)");
+    // ticks every ~10 ms, LFO square at ~120 ms period = 12 ticks = 1/8 (idx 3)
+    MidiByte(0xFA);
+    uint32_t phase = millis();
+    for (int t = 0; t < 240; ++t) {
+      MidiByte(0xF8);
+      uint32_t until = millis() + 10;
+      while ((int32_t)(until - millis()) > 0) {
+        sim::g_clock = ((millis() - phase) / 60) & 1;   // 60 ms half-period
+        RunLoops(1);
+      }
+    }
+    CHECK(midiclk::LfoDivEff() == 3, "AUTO picks 1/8 for a ~120 ms LFO at ~10 ms ticks");
+    CHECK(midiclk::LfoPeriodMs() > 90 && midiclk::LfoPeriodMs() < 150,
+          "AUTO's measured LFO period is in range");
+    // extended LFO divisions: 10 = 1/2, 11 = 1/1 accepted and reported
+    for (uint8_t v : {0xF0, 0x7D, 0x22, 0, 1, 6, 1, 11, 0xF7}) g_midiQ.push_back(v);
+    RunLoops(2);
+    CHECK(midiclk::LfoDivIdx() == 11 && midiclk::LfoTicks(11) == 96, "lfoDiv 11 = 1/1 (96 ticks)");
+    MidiByte(0xFC);
+    midiclk::SetSync(false); midiclk::SetLfoDiv(0); sim::g_clock = false; RunLoops(2);
+  }
 
   // Ratchets: a 2x step retriggers once, evenly inside its clock period
   // (SysEx 0x1B; needs one measured period first, so play two full steps

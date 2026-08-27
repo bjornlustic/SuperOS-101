@@ -429,9 +429,17 @@ static const uint8_t T1_PENDING_MAX = 2;   // small: a clock faster than the ROM
 static volatile uint32_t g_t1CandUs = 0;   // micros() of the last unqualified falling edge
 static volatile bool     g_t1Cand   = false;
 static const uint16_t    T1_QUALIFY_US = 1500;   // about the original's shortest pass
+#endif
+// Whether the divided MIDI clock is driving T1 right now (sync on AND the
+// host's 0xF8 stream alive, midiclock.h Driving). Sampled once per pass into
+// a plain bool: the ISR cannot make midiclk's multi-byte liveness check
+// atomically, and every T1 site must agree within a pass anyway. Sync ON with
+// a dead host falls back to the real T1 pin, so PLAY still plays.
+static volatile bool g_clkDriving = false;
+#ifdef __AVR__
 ISR(INT0_vect) {
   ++g_edgeAcc;
-  if (!midiclk::SyncOn()) { g_t1CandUs = micros(); g_t1Cand = true; }
+  if (!g_clkDriving) { g_t1CandUs = micros(); g_t1Cand = true; }
 }
 static inline void T1Qualify() {
   if (!g_t1Cand) return;
@@ -454,14 +462,14 @@ static inline void T1Qualify() {}
 #endif
 
 static inline bool T1Source() {
-  if (midiclk::SyncOn()) return midiclk::T1Level();
+  if (g_clkDriving) return midiclk::T1Level();
   return (PIND & (1u << T1_CLOCK_BIT)) != 0;
 }
 static inline void T1Watch() {
   bool lvl = T1Source();
   if (g_t1Level && !lvl) ++g_pollEdgeAcc;   // diagnostic: edges as a slow poll sees them
 #ifdef __AVR__
-  bool countHere = midiclk::SyncOn();     // pin edges arrive via INT0
+  bool countHere = g_clkDriving;          // pin edges arrive via INT0
 #else
   bool countHere = true;
 #endif
@@ -475,7 +483,7 @@ static inline void T1Watch() {
 }
 bool    mcs48_t1() {
   T1Watch();
-  if (!midiclk::SyncOn()) T1Qualify();
+  if (!g_clkDriving) T1Qualify();
   if (g_t1Pending) {
     if (g_t1Shown) {                                       // deliver the edge
       g_t1Shown = false;
@@ -501,20 +509,21 @@ bool    mcs48_t1() {
 // every later step (recorded audio had it ~12 ms long: period offset by the
 // pulse plus the queue's delivery jitter).
 static void T1PlayStartAssert(void) {
-  // Sync off only: whatever the freeze does to the LFO line is not a step;
-  // drop queued edges. With sync ON the T1 queue carries the divided MIDI
-  // clock (the host's grid) and must not be touched at the arm.
-  if (midiclk::SyncOn()) return;
+  // Pin-clocked only: whatever the freeze does to the LFO line is not a step;
+  // drop queued edges. With the divided MIDI clock driving, the T1 queue
+  // carries the host's grid and must not be touched at the arm.
+  if (g_clkDriving) return;
   cli(); g_t1Pending = 0; sei();
 #ifdef __AVR__
   cli(); g_t1Cand = false; sei();
 #endif
 }
 static void T1PlayStartRelease(void) {
-  // Sync off only: hand the ROM exactly one edge NOW, so note 1 sounds at
-  // the release and the restarted LFO's period begins with it. With sync ON
-  // the arm stays silent until the host's next division edge.
-  if (midiclk::SyncOn()) return;
+  // Pin-clocked only: hand the ROM exactly one edge NOW, so note 1 sounds at
+  // the release and the restarted LFO's period begins with it. With the
+  // divided clock driving, the arm stays silent until the host's next
+  // division edge.
+  if (g_clkDriving) return;
   cli(); g_t1Pending = 1; sei();
 #ifdef __AVR__
   cli(); g_t1Cand = false; sei();
@@ -705,7 +714,7 @@ void loop() {
     // S/H refresh at a SuperOS-like cadence (see ShRefresh); time-based, since
     // the droop is per real millisecond however slow the interpreter runs.
     if ((uint32_t)(nowUs - s_shLastUs) >= SH_REFRESH_US) { if (ShRefresh()) { s_shLastUs = nowUs; g_shUsAcc += micros() - nowUs; } }
-    if (midiclk::SyncOn()) T1Watch();   // divided-clock edges (pin edges arrive via INT0)
+    if (g_clkDriving) T1Watch();        // divided-clock edges (pin edges arrive via INT0)
     else T1Qualify();                    // promote a settled INT0 edge to a pending clock
     GateTick(nowUs);                     // gate hold / hole deadlines
   }
@@ -731,8 +740,9 @@ void loop() {
 #endif
 
   midi::Poll();   // notes into the matrix, divided clock (emulated T1), SysEx
-  T1Watch();      // sync-clock edge right after Poll advanced it
   uint32_t ms = millis();
+  g_clkDriving = midiclk::Driving(ms);   // one liveness sample rules the whole pass
+  T1Watch();      // sync-clock edge right after Poll advanced it
   RateTick(ms, ran);
   RamPersistTick(ms);
   if (g_virtButtons && (int32_t)(ms - g_virtUntilMs) >= 0) g_virtButtons = 0;

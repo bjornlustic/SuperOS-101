@@ -382,7 +382,8 @@ class NoteEngine {
     }
     if (b.released(BTN_PLAY) && !playHeldUsed_) {
       if (mode_ == MODE_SEQ_PLAY) mode_ = MODE_KEYBOARD;
-      else { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; playNow_ = true; }
+      else { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; playNow_ = true;
+             midiclk::UserPlay(millis()); }   // fresh intent: override a host stop, anchor phase
     }
     if (b.pressed(BTN_LOAD)) {
       if (mode_ == MODE_SEQ_LOAD) { seq_.flushAll(); seq_.markEdited(); mode_ = MODE_KEYBOARD; }
@@ -399,7 +400,8 @@ class NoteEngine {
   void selectPattern(uint8_t p) { if (mode_ != MODE_SEQ_LOAD) seq_.select(p); }
   void setPlaying(bool on) {
     if (mode_ == MODE_SEQ_LOAD) return;
-    if (on && mode_ != MODE_SEQ_PLAY) { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; playNow_ = true; }
+    if (on && mode_ != MODE_SEQ_PLAY) { mode_ = MODE_SEQ_PLAY; seq_.rewind(); playStart_ = true; playNow_ = true;
+                                        midiclk::UserPlay(millis()); }
     else if (!on && mode_ == MODE_SEQ_PLAY) mode_ = MODE_KEYBOARD;
   }
   // Function-LED select for the current mode (4556 one-hot, SH101.asm:90-128):
@@ -452,14 +454,17 @@ class NoteEngine {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
           subTotal_ = 1; subLeft_ = 0; lastEdgeMs_ = 0;   // no stale ratchet state into a new run
           // Panel/editor PLAY (playNow_), internal clock only: step 1 sounds
-          // NOW, the LFO hard-reset gives step 2 one period later. With MIDI
-          // sync the press only ARMS: the machine stays silent until the
-          // host's grid delivers the next division edge (or the 0xFA
-          // downbeat), so arming does not blurt a note and the groove stays
-          // on the host's beat. 0xFA never sets playNow_.
+          // NOW, the LFO hard-reset gives step 2 one period later. With the
+          // host's clock actually driving (midiclock.h Driving) the press
+          // only ARMS: step 1 lands on the next division edge of an
+          // 0xFA-anchored stream, or on the very next tick of a never-started
+          // stream (UserPlay re-anchored the divider at the press), so arming
+          // does not blurt a note and the groove stays on the host's beat.
+          // Sync ON with a silent host steps from the LFO like sync OFF:
+          // PLAY is never a silent button. 0xFA never sets playNow_.
           if (playNow_) {
             playNow_ = false;
-            if (!midiclk::SyncOn()) {
+            if (!midiclk::Driving(millis())) {
               if (seq_.advance()) o.portaOff = true;
               lastCv_ = seq_.cv();
               clockEdge = false; halfEdge = false;

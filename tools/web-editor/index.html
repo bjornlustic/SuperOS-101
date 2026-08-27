@@ -287,7 +287,9 @@
     <div class="spacer"></div>
     <div class="bar-actions">
       <button class="btn" id="btnPlay" disabled>&#9654; Play</button>
-      <button class="btn" id="btnReadAll" disabled>&#8595; Read all</button>
+      <button class="btn" id="btnResync" disabled title="Re-read everything from the synth: config, clock settings and all 8 patterns. Local unsent edits are discarded; the synth is the source of truth.">&#8634; Resync</button>
+      <button class="btn" id="btnPull" disabled title="Pull all 8 patterns from the synth into the editor (discards local unsent edits)">&#8595; Pull all</button>
+      <button class="btn" id="btnPushAll" disabled title="Push all 8 patterns and the clock config from the editor to the synth">&#8593; Push all</button>
       <button class="btn btn-primary" id="btnWrite" disabled>&#8593; Write pattern</button>
       <button class="btn" id="btnSave">Save file</button>
       <button class="btn" id="btnLoad">Load file</button>
@@ -330,7 +332,7 @@
         </div>
         <div class="config-field">
           <label>Clock sync</label>
-          <button class="btn" id="btnSync" title="ON: the sequencer/arp steps on incoming MIDI clock at the division below. OFF: it steps on the LFO / EXT CLK.">Off</button>
+          <button class="btn" id="btnSync" title="ON: the sequencer/arp steps on incoming MIDI clock at the division below; when no clock is on the wire it falls back to the LFO / EXT CLK, so Play always plays. OFF: it always steps on the LFO / EXT CLK.">Off</button>
         </div>
         <div class="config-field">
           <label>Clock divide (of incoming MIDI clock, 24 ppqn)</label>
@@ -341,7 +343,7 @@
           <label>LFO &#8596; clock (with sync on)</label>
           <button class="btn" id="btnLfoSync" title="LOCKED: the analog LFO is hard-synced to the MIDI clock at the rate below. FREE: the LFO free-runs for modulation (rate knob) while the sequencer still steps from the clock.">Locked</button>
           <div class="div-grid" id="lfoDivGrid"></div>
-          <div class="config-note">LOCKED hard-syncs the analog LFO to the clock at this musical rate, from <b>1/4</b> up. FREE lets the LFO run at its rate knob for modulation while the sequencer stays clocked. Panel menu: <b>key 14</b> toggles it.</div>
+          <div class="config-note">LOCKED hard-syncs the analog LFO to the clock at this musical rate, from <b>1/1</b> (a bar) up. FREE lets the LFO run at its rate knob for modulation while the sequencer stays clocked. <b>AUTO</b> follows the LFO RATE slider: the firmware measures the slider's rate and locks to the nearest division, so sweeping the slider steps through musical rates. Panel menu: <b>key 14</b> toggles locked/free.</div>
         </div>
       </div>
     </div>
@@ -405,6 +407,11 @@ const NUM_PATTERNS = 8, MAX_STEPS = 128, MIDI_CV_OFFSET = 36;
 const CV_MIN = 0, CV_MAX = 63;
 const clampCv = cv => Math.min(CV_MAX, Math.max(CV_MIN, cv));
 const DIVS = ['1/4','1/4d','1/4t','1/8','1/8d','1/8t','1/16','1/16d','1/16t','1/32'];
+// The LFO's own division reaches below the sequencer's table, plus AUTO (127):
+// the division follows the LFO RATE slider on the panel.
+const LFO_AUTO = 127;
+const LFO_DIV_IDX = [0,1,2,3,4,5,6,7,8,9,10,11,LFO_AUTO];
+const lfoDivName = i => i === LFO_AUTO ? 'AUTO' : i === 10 ? '1/2' : i === 11 ? '1/1' : (DIVS[i] || '?');
 const NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const patterns = Array.from({length: NUM_PATTERNS}, () => []);
 const dirty = new Array(NUM_PATTERNS).fill(false);
@@ -492,7 +499,7 @@ function selectPorts() {
   const ok = midiOut && midiIn;
   $('midiStatus').textContent = ok ? ('OUT ' + midiOut.name + '  /  IN ' + midiIn.name) : 'select ports';
   $('midiStatus').className = ok ? 'is-ok' : '';
-  ['btnReadAll','btnWrite','btnPlay','btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !ok);
+  ['btnResync','btnPull','btnPushAll','btnWrite','btnPlay','btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !ok);
   if (ok) probe();
 }
 $('selOut').onchange = selectPorts; $('selIn').onchange = selectPorts;
@@ -519,7 +526,7 @@ function setMode(m) {
   const ed = m === 'superos';
   // Pattern read/write are SuperOS-only; Play (0x1E taps the ROM's PLAY
   // button) and the config controls work in both firmwares.
-  ['btnReadAll','btnWrite'].forEach(id => $(id).disabled = !ed);
+  ['btnResync','btnPull','btnPushAll','btnWrite'].forEach(id => $(id).disabled = !ed);
   $('btnPlay').disabled = m === 'unknown';
 }
 
@@ -537,7 +544,7 @@ function handleSysex(b) {
     case 0x21: {   // config (<fw><chan><sync><div><pat><storeOk><lfoSync><lfoDiv><version...>)
       cfg = {chan: b[2], sync: b[3], div: b[4], flash: b[6], lfoSync: b[7], lfoDiv: b[8], version: String.fromCharCode(...b.slice(9))};
       devPat = b[5];
-      log('device config reply: sync ' + (cfg.sync ? 'on' : 'off') + ', lfo ' + (cfg.lfoSync ? 'locked ' + DIVS[cfg.lfoDiv] : 'free'));
+      log('device config reply: sync ' + (cfg.sync ? 'on' : 'off') + ', lfo ' + (cfg.lfoSync ? 'locked ' + lfoDivName(cfg.lfoDiv) : 'free'));
       renderConfig();
       setMode(b[1] === 1 ? 'emu' : 'superos');   // fw byte: both firmwares answer 0x20 now
       if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
@@ -553,7 +560,7 @@ function handleSysex(b) {
       if ((x & 0x7F) !== b[2] || ((x >> 7) & 1) !== b[3]) { log('pattern ' + (p + 1) + ': checksum mismatch', 'log-err'); break; }
       const len = raw[0]; if (len > MAX_STEPS || raw.length < len + 1) { log('pattern ' + (p + 1) + ': bad length', 'log-err'); break; }
       const wasDirty = dirty[p];
-      if (wasDirty && !readingAll) { log('pattern ' + (p + 1) + ' changed on the unit; keeping your unsent edits (Read all to discard them)'); break; }
+      if (wasDirty && !readingAll) { log('pattern ' + (p + 1) + ' changed on the unit; keeping your unsent edits (Resync or Pull all to discard them)'); break; }
       const ratTail = raw.slice(1 + len);   // packed ratchet bytes (absent from pre-ratchet firmware)
       patterns[p] = raw.slice(1, 1 + len).map((s, i) => ({cv: s & 0x3F, type: Math.min(2, s >> 6),
         rat: ratTail.length > (i >> 2) ? (ratTail[i >> 2] >> ((i & 3) * 2)) & 3 : 0}));
@@ -651,7 +658,31 @@ function afterEdit() {
   renderPills();
 }
 
-$('btnReadAll').onclick = readAll;
+// Pull: the synth is the source of truth; local unsent edits are discarded.
+function pullAll() { dirty.fill(false); lastSent = null; readAll(); }
+// Resync: config + clock + CV config + every pattern, fresh from the synth.
+function resync() {
+  log('resync: reading config + all patterns from the synth...', 'log-ok');
+  sendSysex([0x20]); sendSysex([0x23]);
+  pullAll();
+}
+// Push: everything the editor holds goes to the synth (all 8 patterns + config).
+let pushing = false;
+async function pushAll() {
+  if (pushing) return; pushing = true;
+  try {
+    log('push: writing all 8 patterns + config to the synth...', 'log-ok');
+    for (let p = 0; p < NUM_PATTERNS; ++p) {
+      writePattern(p);
+      await new Promise(r => setTimeout(r, 140));   // one 0x12 + its flash-side ack per beat
+    }
+    sendConfig();
+    log('push complete', 'log-ok');
+  } finally { pushing = false; }
+}
+$('btnResync').onclick = resync;
+$('btnPull').onclick = pullAll;
+$('btnPushAll').onclick = pushAll;
 $('btnWrite').onclick = () => { writePattern(curPat); if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; renderPills(); } };
 $('btnLive').onclick = () => {
   liveEnabled = !liveEnabled;
@@ -667,7 +698,7 @@ $('btnPlay').onclick = async () => {
     if (dirty[curPat]) { writePattern(curPat); await new Promise(r => setTimeout(r, 150)); }
     if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; await new Promise(r => setTimeout(r, 80)); }
     if (!patterns[curPat].length) log('pattern ' + (curPat + 1) + ' is empty: nothing to play', 'log-err');
-    if (cfg.sync) log('MIDI clock sync is ON: the sequencer steps on incoming MIDI clock at ' + DIVS[cfg.div]);
+    if (cfg.sync) log('MIDI clock sync is ON: with clock arriving it steps at ' + DIVS[cfg.div] + '; with no clock it plays from the LFO');
   }
   sendSysex([0x1E, playing ? 1 : 0]);
   $('btnPlay').innerHTML = playing ? '&#9632; Stop' : '&#9654; Play'; $('btnPlay').classList.toggle('is-on', playing);
@@ -686,7 +717,7 @@ $('btnFwSwitch').onclick = () => {
 function sendConfig() {
   if (!sendSysex([0x22, cfg.chan, cfg.sync ? 1 : 0, cfg.div, cfg.lfoSync ? 1 : 0, cfg.lfoDiv])) return;
   log('config -> unit: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', divide ' + DIVS[cfg.div] +
-      ', LFO ' + (cfg.lfoSync ? 'locked at ' + DIVS[cfg.lfoDiv] : 'free-running'), 'log-syx');
+      ', LFO ' + (cfg.lfoSync ? 'locked at ' + lfoDivName(cfg.lfoDiv) : 'free-running'), 'log-syx');
 }
 function renderConfig() {
   $('selChan').value = cfg.chan;
@@ -694,29 +725,32 @@ function renderConfig() {
   $('btnSync').classList.toggle('is-on', !!cfg.sync);
   $('btnLfoSync').textContent = cfg.lfoSync ? 'Locked' : 'Free';
   $('btnLfoSync').classList.toggle('is-on', !!cfg.lfoSync);
-  document.querySelectorAll('#divGrid .div-btn').forEach((d, i) => d.classList.toggle('is-on', i === cfg.div));
-  document.querySelectorAll('#lfoDivGrid .div-btn').forEach((d, i) => d.classList.toggle('is-on', i === cfg.lfoDiv));
+  document.querySelectorAll('#divGrid .div-btn').forEach(d => d.classList.toggle('is-on', +d.dataset.idx === cfg.div));
+  document.querySelectorAll('#lfoDivGrid .div-btn').forEach(d => d.classList.toggle('is-on', +d.dataset.idx === cfg.lfoDiv));
   $('cfgStatus').textContent = 'ch ' + (cfg.chan + 1) + ' · sync ' + (cfg.sync ? 'ON · ' + DIVS[cfg.div] : 'off') +
-    ' · LFO ' + (cfg.lfoSync ? DIVS[cfg.lfoDiv] : 'free') +
+    ' · LFO ' + (cfg.lfoSync ? lfoDivName(cfg.lfoDiv) : 'free') +
     (cfg.flash ? '' : ' · FLASH STORE MISSING');
 }
 for (let c = 0; c < 16; ++c) { const o = document.createElement('option'); o.value = c; o.textContent = c + 1; $('selChan').appendChild(o); }
 $('selChan').onchange = () => { cfg.chan = +$('selChan').value; sendConfig(); renderConfig(); };
 $('btnSync').onclick = () => { cfg.sync = cfg.sync ? 0 : 1; sendConfig(); renderConfig(); };
 $('btnLfoSync').onclick = () => { cfg.lfoSync = cfg.lfoSync ? 0 : 1; sendConfig(); renderConfig(); };
-function buildDivGrid(el, key, showKeys) {
-  DIVS.forEach((name, i) => {
+function buildDivGrid(el, key, showKeys, idxList) {
+  (idxList || DIVS.map((_, i) => i)).forEach(i => {
+    const name = key === 'lfoDiv' ? lfoDivName(i) : DIVS[i];
     const b = document.createElement('button');
     b.className = 'div-btn' + (i === cfg[key] ? ' is-on' : '');
-    b.innerHTML = '<span class="dv">' + name.replace('d', '&#183;').replace('t', '&#179;') + '</span>' +
+    b.dataset.idx = i;
+    b.innerHTML = '<span class="dv">' + name.replace(/d$/, '&#183;').replace(/t$/, '&#179;') + '</span>' +
                   (showKeys ? '<span class="dk">key ' + (i + 1) + '</span>' : '');
-    b.title = name.endsWith('d') ? name.slice(0, -1) + ' dotted' : name.endsWith('t') ? name.slice(0, -1) + ' triplet' : name;
+    b.title = i === LFO_AUTO ? 'AUTO: the division follows the LFO RATE slider on the panel'
+            : name.endsWith('d') ? name.slice(0, -1) + ' dotted' : name.endsWith('t') ? name.slice(0, -1) + ' triplet' : name;
     b.onclick = () => { cfg[key] = i; sendConfig(); renderConfig(); };
     el.appendChild(b);
   });
 }
 buildDivGrid($('divGrid'), 'div', true);
-buildDivGrid($('lfoDivGrid'), 'lfoDiv', false);
+buildDivGrid($('lfoDivGrid'), 'lfoDiv', false, LFO_DIV_IDX);
 
 // Collapsible panels
 [['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
