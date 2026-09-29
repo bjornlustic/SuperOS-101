@@ -39,8 +39,31 @@ KEY-TRANSPOSE shift value and exact portamento timing. The CPU board lives in
   every fresh note and leaves it alone on legato notes (keyboard legato, legato steps),
   so only those glide. ON / OFF ignore the line.
 - **PLAY**: sequencer play/stop (PLAY LED). **PLAY held + one of the 8 lowest keys**
-  selects pattern 1..8 (also MIDI Program Change 0..7 or the editor).
+  selects pattern 1..8 (also MIDI Program Change 0..7 or the editor). While playing,
+  the switch waits for the end of the loop pass.
 - **HOLD + KEY-TRANSPOSE 2 s**: config menu (below).
+
+Performance features (SuperOS only; SysEx 0x65 / 0x67 -> 0x66 for hosts):
+
+- **Direction**: **PLAY held + UP** = forward, **+ DOWN** = backward, **+ UP&DOWN** =
+  ping-pong, **UP&DOWN again** = random. Persists.
+- **Random arp**: **UP&DOWN** twice (U&D LED blinks); a third press turns the arp off.
+- **Loop length, live**: while playing, **HOLD button + key n** loops the first n
+  steps (lowest key = 1 step); the same key again = full pattern. Non-destructive.
+- **KEY TRANSPOSE**: in PLAY or arp, hold it and press a key; **C4** (the lowest C) plays
+  as written. Released = back to 0. **Double-tap** latches it (KEY-TRANSP LED lit);
+  double-tap again to clear.
+- **Pedal as transpose**: config menu key 19 routes the HOLD pedal jack to act as the
+  KEY TRANSPOSE button (transpose, latch, and rests while recording).
+- **Tune**: **KEY TRANSPOSE held + LOAD** (from keyboard mode) holds an A with the gate
+  open: 440 Hz at 8' with TRANSPOSE in the middle, and MIDI OUT note 69 for a tuner.
+  Any function button leaves it (LOAD LED blinks while tuning).
+- **Real-time record**: while playing, **PLAY held + LOAD** (PLAY/LOAD LEDs alternate).
+  Keys overwrite the step they land on (the next step once the step is half over), a
+  key held past the half-step ties into the next step, KEY TRANSPOSE writes a rest.
+  **PLAY held + LOAD** again ends it; the edits persist when playback stops.
+- **CV / GATE OUT** carry whatever the voice plays, sequencer and arp included (the
+  CPU's CV sample/hold feeds both the VCO and the rear CV jack).
 
 ## MIDI (DIN + USB-C, both firmwares)
 
@@ -177,7 +200,10 @@ Then: **LOAD** = reboot into the emulator, **PLAY** = reboot into SuperOS,
 **UP&DOWN** = toggle MIDI clock sync (KEY-TRANSP LED lit = on), **UP**/**DOWN** =
 cycle the clock division, the 10 lowest keys = pick the division directly
 (1/4, 1/4d, 1/4t, 1/8, 1/8d, 1/8t, 1/16, 1/16d, 1/16t, 1/32),
-**KEY-TRANSPOSE** = exit. Sync and division persist in EEPROM.
+keys 11/12 = accent model, key 13 = MIDI cutoff on/off, key 14 = LFO hard-sync,
+**keys 15-18** = sequencer direction (forward, backward, ping-pong, random),
+**key 19** = pedal route (HOLD / KEY TRANSPOSE),
+**KEY-TRANSPOSE** = exit. All of it persists in EEPROM.
 
 A firmware switch (menu, or SysEx 0x2F / 0x4D from the editor) waits until every
 key and button has read released for 250 ms (4 s cap), quiets the panel and gate,
