@@ -1336,15 +1336,18 @@ static int SelfTest() {
       CHECK(inSet && n == 32 && seen[0] && seen[1] && seen[2] && seen[3],
             "direction RANDOM plays only the pattern's steps, and all of them");
     }
-    // Panel gesture: PLAY held + DOWN = BWD, + UP = FWD, + U&D = PING-PONG,
-    // U&D again = RANDOM; the PLAY release does not toggle play.
-    btn(B_PLAY, true); tap(B_DOWN); btn(B_PLAY, false);
-    CHECK(engine::DirSetting() == engine::DIR_BWD && (sim_portf & 7) == 0, "PLAY+DOWN sets BWD without starting play");
-    btn(B_PLAY, true); tap(B_UD); tap(B_UD); btn(B_PLAY, false);
-    CHECK(engine::DirSetting() == engine::DIR_RANDOM, "PLAY+U&D twice = RANDOM");
-    btn(B_PLAY, true); tap(B_UP); btn(B_PLAY, false);
-    CHECK(engine::DirSetting() == engine::DIR_FWD, "PLAY+UP = FWD");
-    WaitVirtMs(40);
+    // Direction on the panel while playing (SH-1oh1): UP / DOWN / U&D,
+    // DOWN + U&D together = random. Play continues throughout.
+    play();
+    tap(B_DOWN);
+    CHECK(engine::DirSetting() == engine::DIR_BWD && (sim_portf & 7) == 2, "playing: DOWN = backward, still playing");
+    tap(B_UD);
+    CHECK(engine::DirSetting() == engine::DIR_PINGPONG, "playing: U&D = ping-pong");
+    btn(B_DOWN, true); tap(B_UD); btn(B_DOWN, false);
+    CHECK(engine::DirSetting() == engine::DIR_RANDOM, "playing: DOWN + U&D together = random");
+    tap(B_UP);
+    CHECK(engine::DirSetting() == engine::DIR_FWD && (sim_portf & 7) == 2, "playing: UP = forward, still playing");
+    tap(B_PLAY); WaitVirtMs(40);
 
     // Real-time loop length: HOLD + key 1 while playing = first 2 steps.
     play();
@@ -1362,37 +1365,71 @@ static int SelfTest() {
     printf("  (queued switch: %s)\n", qs.c_str());
     CHECK(qs == "13 30 31 30 31 ", "pattern select while playing lands at the loop end");
     CHECK(GateOn() && (sim_portf & 7) == 2, "and play continues (PLAY LED)");
+    // Song: PLAY held + keys 8 then 5 = chain 7 -> 4, looping.
+    btn(B_PLAY, true); key(7, true); key(7, false); key(4, true); key(4, false); btn(B_PLAY, false);
+    std::string song = run(12);
+    printf("  (song 8,5: %s)\n", song.c_str());
+    CHECK(song == "10 11 12 13 30 31 10 11 12 13 30 31 ", "PLAY + keys 8, 5 = song: each pattern in turn, looping");
+    // Instant switch: key 5 alone while playing takes over at the same position.
+    btn(B_PLAY, true); key(7, true); key(7, false); btn(B_PLAY, false);   // back to plain pattern 8 at the loop end
+    run(3);                                                  // 10 11 12: position 2
+    key(4, true); key(4, false);                             // pattern 5 takes position 2 % 2 = 0 -> next is its step 1
+    std::string sw = run(3);
+    printf("  (instant switch: %s)\n", sw.c_str());
+    CHECK(sw == "31 30 31 ", "key 5 while playing switches NOW, position kept (mod length)");
+    tap(B_PLAY); WaitVirtMs(40);
+    // From stop, PLAY + key starts that pattern on release.
+    btn(B_PLAY, true); key(7, true); key(7, false); btn(B_PLAY, false); SettleClockReset();
+    CHECK(GateOn() && sim::g_sh[0] == 10 && (sim_portf & 7) == 2, "stopped: PLAY + key 8 starts pattern 8 on release");
 
-    // KEY TRANSPOSE: hold + key = transpose from key 7 (C4); release = 0.
-    tap(B_PLAY); WaitVirtMs(40); sx({0x1D, 7}); play();      // 10 sounding
+    // KEY TRANSPOSE, stock: hold + key transposes from the lowest C (key 7),
+    // and it STAYS after release (LED lit) until KEY TRANSPOSE + lowest C.
     btn(B_KT, true); key(9, true);
-    CHECK(sim::g_sh[0] == 12, "KEY TRANSPOSE + key (C4 + 2) transposes the sounding step by +2");
-    key(9, false);
-    CHECK(run(1) == "13 ", "transpose applies to the following steps while held");
-    btn(B_KT, false);
-    CHECK(run(1) == "12 ", "releasing KEY TRANSPOSE (not latched) drops the transpose");
-    CHECK(!(sim_portf & 0x40), "KEY-TRANSPOSE LED off with no transpose");
-    // Double tap latches.
+    CHECK(sim::g_sh[0] == 12, "KEY TRANSPOSE + D (C + 2) transposes the sounding step by +2");
+    key(9, false); btn(B_KT, false);
+    CHECK(run(1) == "13 " && (sim_portf & 0x40), "stock: the transpose stays after release, LED lit");
+    btn(B_KT, true); key(7, true); key(7, false); btn(B_KT, false);
+    CHECK(run(1) == "12 " && !(sim_portf & 0x40), "KEY TRANSPOSE + lowest C returns to normal, LED off");
+    // Transpose mode (double tap): plain keys transpose while playing.
     tap(B_KT); tap(B_KT);
-    btn(B_KT, true); key(12, true); key(12, false); btn(B_KT, false);
-    CHECK(run(1) == "18 ", "latched: KT double-tap, KT + key (C4 + 5) = +5 that stays after release");
-    CHECK(sim_portf & 0x40, "KEY-TRANSPOSE LED lit while latched");
+    key(12, true); key(12, false);
+    CHECK(run(1) == "18 ", "transpose mode: a plain key (F, C + 5) transposes, no button held");
+    bool blinkA = false, blinkB = false;
+    for (int i = 0; i < 20; ++i) { WaitVirtMs(30); if (sim_portf & 0x40) blinkA = true; else blinkB = true; }
+    CHECK(blinkA && blinkB, "transpose mode: KEY-TRANSPOSE LED blinks");
+    key(7, true); key(7, false);
+    CHECK(run(1) == "10 ", "transpose mode: the lowest C = normal");
     WaitVirtMs(500);
     tap(B_KT); tap(B_KT);
-    CHECK(run(1) == "10 " && !(sim_portf & 0x40), "double-tap again unlatches, transpose 0, LED off");
+    WaitVirtMs(300);
+    CHECK(!(sim_portf & 0x40), "double tap again leaves transpose mode (LED off)");
+    // Shift (SH-1oh1): KEY TRANSPOSE + UP = next step now, + DOWN = previous.
+    run(1);                                                  // 11 sounding
+    btn(B_KT, true); tap(B_UP);
+    CHECK(sim::g_sh[0] == 12, "shift: KEY TRANSPOSE + UP plays the next step now");
+    tap(B_DOWN); btn(B_KT, false);
+    CHECK(sim::g_sh[0] == 11, "shift: KEY TRANSPOSE + DOWN plays the previous step");
+    CHECK(run(1) == "12 ", "and the pattern carries on from there");
     WaitVirtMs(500);
 
     // Pedal route: pedal = KEY TRANSPOSE; HOLD no longer latches from it.
     sx({0x65, 1, 1});
     sim::g_pedalHold = true; RunLoops(3); key(4, true);
-    CHECK(sim::g_sh[0] == 7 && (sim_portf & 0x20), "pedal routed to KEY TRANSPOSE: pedal + key transposes, HOLD LED stays off");
-    key(4, false); sim::g_pedalHold = false; RunLoops(3);
-    CHECK(run(1) == "11 ", "pedal released: transpose back to 0");
+    CHECK(sim::g_sh[0] == 12 - 3 && (sim_portf & 0x20), "pedal routed to KEY TRANSPOSE: pedal + A transposes -3, HOLD LED off");
+    key(4, false); key(7, true); key(7, false); sim::g_pedalHold = false; RunLoops(3);
+    CHECK(run(1) == "13 ", "pedal + lowest C: back to normal");
     sx({0x65, 1, 0});
     tap(B_PLAY); WaitVirtMs(40);
+    // Stock: the transpose applies to keyboard playing too.
+    btn(B_KT, true); key(9, true); key(9, false); btn(B_KT, false);
+    key(0, true);
+    CHECK(GateOn() && sim::g_sh[0] == 19, "keyboard mode: F3 plays 2 semitones up under the transpose");
+    key(0, false);
+    btn(B_KT, true); key(7, true); key(7, false); btn(B_KT, false);
+    WaitVirtMs(500);
 
-    // Random arp: U&D, U&D again = RANDOM (U&D LED blinks), U&D = off.
-    tap(B_UD); tap(B_UD);
+    // Random arp (SH-1oh1): DOWN + U&D together; the same again = off.
+    btn(B_DOWN, true); tap(B_UD); btn(B_DOWN, false);
     sim::g_keys = (1UL << 0) | (1UL << 4) | (1UL << 7); RunLoops(3);
     SettleClockReset();                                      // arp start pulses CLOCK RESET
     std::string ar; bool blinkOn = false, blinkOff = false;
@@ -1410,8 +1447,9 @@ static int SelfTest() {
     printf("  (random arp: %s)\n", ar.c_str());
     CHECK(okSet && noRep && dist[17] && dist[21] && dist[24], "random arp: held keys only, all of them, no immediate repeats");
     CHECK(blinkOn && blinkOff, "random arp: U&D LED blinks");
-    sim::g_keys = 0; RunLoops(3); tap(B_UD);
-    CHECK((sim_portf & 7) == 0, "U&D a third time: arp off");
+    sim::g_keys = 0; RunLoops(3);
+    btn(B_DOWN, true); tap(B_UD); btn(B_DOWN, false);
+    CHECK((sim_portf & 7) == 0, "DOWN + U&D again: arp off");
 
     // Tune mode: KEY TRANSPOSE + LOAD from keyboard mode holds A (440 Hz at 8').
     g_midiOut.clear();
@@ -1423,6 +1461,32 @@ static int SelfTest() {
     tap(B_UP);
     CHECK(!GateOn() && (sim_portf & 7) == 0, "tune: any function button leaves it (and does nothing else)");
     WaitVirtMs(40);
+
+    // Stock "Correcting and Adding": LOAD while playing keeps the pattern
+    // and re-loads from the step after the one sounding.
+    sx({0x1D, 7});
+    play(); run(1);                                          // 11 sounding
+    tap(B_LOAD);
+    CHECK((sim_portf & 7) == 1, "LOAD while playing enters LOAD (LOAD LED)");
+    key(0, true); key(0, false);                             // overwrites step 3 (12) with F3 = 17
+    tap(B_LOAD);
+    play();
+    std::string ca = first() + run(4);
+    printf("  (corrected: %s)\n", ca.c_str());
+    CHECK(ca == "10 11 17 13 10 ", "LOAD mid-play: only the steps entered are replaced, the rest still plays");
+    tap(B_PLAY); WaitVirtMs(40);
+    // LOAD from stop clears (stock); DOWN deletes the last entered step (SH-1oh1).
+    sx({0x1D, 5});
+    tap(B_LOAD);
+    key(0, true); key(0, false); key(2, true); key(2, false); key(4, true); key(4, false);
+    tap(B_DOWN);
+    key(5, true); key(5, false);
+    tap(B_LOAD);
+    play();
+    std::string dl = first() + run(3);
+    CHECK(dl == "17 19 22 17 ", "LOAD: DOWN takes back the last step before it is replaced");
+    tap(B_PLAY); WaitVirtMs(40);
+    push(7, {10, 11, 12, 13});
 
     // Real-time record into an empty pattern (becomes 16 rest steps).
     push(3, {});

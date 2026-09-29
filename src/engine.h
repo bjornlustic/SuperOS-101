@@ -37,13 +37,13 @@ static const uint8_t MIDI_CV_OFFSET = 36;
 
 enum Mode : uint8_t {
   MODE_KEYBOARD, MODE_ARP_UP, MODE_ARP_DOWN, MODE_ARP_UPDOWN, MODE_SEQ_PLAY, MODE_SEQ_LOAD,
-  MODE_ARP_RANDOM,   // U&D pressed again while in U&D (U&D LED blinks)
+  MODE_ARP_RANDOM,   // DOWN + U&D together (SH-1oh1); U&D LED blinks
 };
 inline bool IsArp(Mode m) {
   return m == MODE_ARP_UP || m == MODE_ARP_DOWN || m == MODE_ARP_UPDOWN || m == MODE_ARP_RANDOM;
 }
 // Sequencer play direction (global setting, EEPROM, config menu keys 15-18,
-// PLAY held + UP / DOWN / U&D, SysEx 0x65 id 0).
+// UP / DOWN / U&D / DOWN+U&D while playing, SysEx 0x65 id 0).
 enum SeqDir : uint8_t { DIR_FWD = 0, DIR_BWD = 1, DIR_PINGPONG = 2, DIR_RANDOM = 3, DIR_COUNT = 4 };
 // Tiny shared PRNG for the random arp / random direction (xorshift16).
 inline uint8_t Rnd8() { static uint16_t st = 0xACE1; st ^= st << 7; st ^= st >> 9; st ^= st << 8; return (uint8_t)st; }
@@ -134,6 +134,9 @@ class Arp {
 
 // --- sequencer: 8 patterns in RAM, flash-arena backed --------------------------
 class Sequencer {
+ public:
+  static const uint8_t CHAIN_MAX = 16;
+ private:
   uint8_t step_[NUM_PATTERNS][MAX_STEPS];
   // Per-step ratchet, 2 bits each (0 = single hit, 1 = 2x, 2 = 3x): the step's
   // note retriggers evenly inside its clock period. Packed 4 steps/byte so the
@@ -155,6 +158,11 @@ class Sequencer {
   bool    halfSeen_ = false;          // the current step's half-step has passed
   uint8_t loopLen_ = 0;               // real-time loop length override, 0 = full pattern
   uint8_t queued_ = 0xFF;             // pattern switch waiting for the loop end
+  // Song: PLAY held + several keys chains patterns (SH-1oh1 3.6); each loop
+  // end moves to the next entry, wrapping. chainN_ <= 1 = no song.
+  uint8_t chain_[16];
+  uint8_t chainN_ = 0, chainPos_ = 0;
+  uint8_t wcur_ = 0;                  // LOAD write cursor (stock: re-load from the playing position)
   uint8_t cycle_ = 0;                 // steps played in the current loop pass
   uint8_t rndNext_ = 0;               // RANDOM: the step the next advance plays (for look-ahead)
   uint8_t effLen() const {
@@ -198,7 +206,44 @@ class Sequencer {
   uint8_t queued() const { return queued_; }
   // Pattern change while playing: waits for the end of the current loop pass
   // so the switch lands on the bar, like a drum machine's pattern select.
-  void queue(uint8_t p) { if (p < NUM_PATTERNS) queued_ = (p == cur_) ? 0xFF : p; }
+  void queue(uint8_t p) { if (p < NUM_PATTERNS) { queued_ = (p == cur_) ? 0xFF : p; chainN_ = 0; } }
+  // Song: play list[0..n) in order, looping, starting at the next loop end
+  // (playing) or right away (stopped: the caller selects list[0] first).
+  void setChain(const uint8_t* list, uint8_t n, bool fromNow) {
+    if (!n) return;
+    if (n > CHAIN_MAX) n = CHAIN_MAX;
+    memcpy(chain_, list, n);
+    // queued_ is always chain_[chainPos_]: the entry the next loop end plays.
+    if (fromNow) select(chain_[0]);                     // (select clears the song)
+    chainN_ = n > 1 ? n : 0;
+    chainPos_ = fromNow ? (uint8_t)(1 % n) : 0;
+    queued_ = (fromNow && n == 1) ? 0xFF : chain_[chainPos_];
+  }
+  uint8_t chainLength() const { return chainN_; }
+  // Instant switch while playing (SH-1oh1 3.5.3): the new pattern takes over
+  // at the SAME position (modulo its length), so patterns whose lengths are
+  // multiples of each other stay in sync. Cancels a song / queued switch.
+  void switchNow(uint8_t p) {
+    if (p >= NUM_PATTERNS) return;
+    queued_ = 0xFF; chainN_ = 0;
+    if (p == cur_) return;
+    cur_ = p; loopLen_ = 0; selChanged_ = true;
+    uint8_t l = effLen();
+    if (l) { pos_ = (uint8_t)(pos_ % l); if (cycle_ > cycleLen()) cycle_ = (uint8_t)(cycle_ % cycleLen()); }
+  }
+  // Shift (SH-1oh1 3.3.2, KEY TRANSPOSE + UP / DOWN while playing): play the
+  // next step now, or the previous one, moving the pattern against the clock.
+  bool nudge(int8_t d) {
+    uint8_t l = effLen();
+    if (!l || !started_) return false;
+    if (d < 0) {                       // back two in the travel direction, then advance one
+      int8_t back = (DirSetting() == DIR_BWD) ? 2 : -2;
+      pos_ = (uint8_t)(((int16_t)pos_ + back + 2 * l) % l);
+      if (DirSetting() == DIR_PINGPONG) ppStep_ = 1;
+    }
+    if (cycle_) --cycle_;               // a nudge does not count toward the loop end
+    return advance();
+  }
   bool halfSeen() const { return halfSeen_; }
   uint8_t nextIndex() const { return peekNext(); }
   // Real-time record: overwrite one step in place (pattern data, persisted).
@@ -217,6 +262,7 @@ class Sequencer {
     dirty_ = 0; cur_ = 0; pos_ = 0; curCv_ = CV_BASE; curGate_ = false;
     stepChanged_ = false; selChanged_ = false; edited_ = 0;
     ppStep_ = 1; started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0;
+    chainN_ = 0; chainPos_ = 0; wcur_ = 0;
   }
   Sequencer() { memset(len_, 0, sizeof(len_)); }
   uint8_t current() const { return cur_; }
@@ -228,11 +274,23 @@ class Sequencer {
 
   void select(uint8_t p) {
     if (p < NUM_PATTERNS && p != cur_) { cur_ = p; loopLen_ = 0; rewind(); selChanged_ = true; }
-    queued_ = 0xFF;
+    queued_ = 0xFF; chainN_ = 0;
   }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
   void markEdited() { edited_ |= (uint8_t)(1u << cur_); }
-  void clear() { len_[cur_] = 0; pos_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); dirty_ |= (uint8_t)(1u << cur_); }
+  void clear() { len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); dirty_ |= (uint8_t)(1u << cur_); }
+  // Stock "Correcting and Adding" (OM p.35): LOAD while playing keeps the
+  // pattern and re-loads from the step after the one sounding; steps past
+  // the corrected ones stay and play.
+  void beginOverwrite() { uint8_t l = len_[cur_]; wcur_ = (l && started_) ? (uint8_t)((pos_ + 1) % l) : 0; if (wcur_ == 0 && l) wcur_ = l; }
+  uint8_t writeCursor() const { return wcur_; }
+  // LOAD mode DOWN (SH-1oh1 3.2): take back the last entered step.
+  void deleteLast() {
+    if (!wcur_) return;
+    if (wcur_ == len_[cur_]) --len_[cur_];
+    --wcur_;
+    dirty_ |= (uint8_t)(1u << cur_);
+  }
   uint8_t ratchet(uint8_t p, uint8_t i) const {
     return (uint8_t)((rat_[p < NUM_PATTERNS ? p : 0][i >> 2] >> ((i & 3) * 2)) & 3);
   }
@@ -261,16 +319,17 @@ class Sequencer {
     started_ = false; halfSeen_ = false; cycle_ = 0; ppStep_ = 1;
   }
   void record(uint8_t cv, StepType t) {
-    if (len_[cur_] < MAX_STEPS) {
-      ratchetRaw(cur_, len_[cur_], 0);
-      step_[cur_][len_[cur_]++] = StepByte(cv, t);
+    if (wcur_ < MAX_STEPS) {
+      ratchetRaw(cur_, wcur_, 0);
+      step_[cur_][wcur_++] = StepByte(cv, t);
+      if (wcur_ > len_[cur_]) len_[cur_] = wcur_;
       dirty_ |= (uint8_t)(1u << cur_);
     }
   }
   // Panel LOAD mode: cycle the last recorded step's ratchet (UP button).
   void cycleLastRatchet(int8_t dir) {
-    if (!len_[cur_]) return;
-    uint8_t i = (uint8_t)(len_[cur_] - 1);
+    if (!wcur_) return;
+    uint8_t i = (uint8_t)(wcur_ - 1);
     uint8_t r = ratchet(cur_, i);
     r = (uint8_t)((r + (dir > 0 ? 1 : RAT_MAX)) % (RAT_MAX + 1));
     ratchetRaw(cur_, i, r);
@@ -369,8 +428,10 @@ class Sequencer {
     // Loop pass complete with a pattern switch waiting: switch now, and the
     // new pattern starts at its first step.
     if (started_ && queued_ != 0xFF && cycle_ >= cycleLen()) {
-      cur_ = queued_; queued_ = 0xFF; loopLen_ = 0; selChanged_ = true;
+      if (queued_ != cur_) { cur_ = queued_; loopLen_ = 0; selChanged_ = true; }
       started_ = false; cycle_ = 0; ppStep_ = 1;
+      if (chainN_ > 1) { chainPos_ = (uint8_t)((chainPos_ + 1) % chainN_); queued_ = chain_[chainPos_]; }
+      else queued_ = 0xFF;
     }
     uint8_t len = effLen();
     if (len == 0) { curGate_ = false; return false; }
@@ -451,14 +512,17 @@ class NoteEngine {
   uint32_t holdMask_ = 0;      // keys latched by HOLD
   int8_t   heldKey_  = -1;
   uint8_t  lastCv_   = CV_BASE;
-  // KEY TRANSPOSE (PLAY and arp modes): hold KEY TRANSPOSE and press a key;
-  // the offset from key 7 (C4) transposes the sequence / arp, and returns to
-  // zero when the button is released (stock). A DOUBLE TAP latches it: the
-  // offset stays after release and the KEY-TRANSPOSE LED stays lit; double
-  // tap again to unlatch (offset back to 0).
+  // KEY TRANSPOSE, stock (OM p.36): hold KEY TRANSPOSE and press a key; the
+  // offset from the lowest C (key 7) transposes everything that plays and
+  // STAYS (LED lit); KEY TRANSPOSE + the lowest C returns to normal.
+  // Added: a DOUBLE TAP enters transpose mode (LED blinks): in sequencer play
+  // and in a HOLD-latched arp, plain key presses transpose without holding
+  // the button. Double tap again to leave it (the transpose itself stays).
   int8_t   transpose_ = 0;
-  bool     ktLatched_ = false;
+  bool     ktLatched_ = false;     // transpose mode (double tap)
   uint32_t ktLastPressMs_ = 0;
+  uint8_t  songBuf_[Sequencer::CHAIN_MAX];
+  uint8_t  songN_ = 0;             // keys collected while PLAY is held
   // Tune mode: KEY TRANSPOSE held + LOAD. Holds the gate open on A (key 16:
   // A4 = 440 Hz at 8', TRANSPOSE middle) so the TUNE knob can be set against
   // a tuner or another instrument. Any function button leaves it.
@@ -507,6 +571,10 @@ class NoteEngine {
     midiclk::UserPlay(millis());   // fresh intent: override a host stop, anchor phase
   }
   void stopPlay() { if (rtRec_) { rtRec_ = false; seq_.markEdited(); } rtKey_ = -1; mode_ = MODE_KEYBOARD; }
+  // Transpose target: a fresh key sets the offset from the lowest C.
+  // A key used for transposing also closes the double-tap window: press KT,
+  // transpose, press KT again at once is two transposes, not transpose mode.
+  void setTransposeKey(int8_t k) { transpose_ = (int8_t)(k - TRANSPOSE_REF_KEY); ktLastPressMs_ = 0; }
   void selectMode(controls::Buttons& b, uint32_t rawKeys) {
     using namespace controls;
     const uint32_t nowMs = millis();
@@ -515,48 +583,55 @@ class NoteEngine {
       if (b.now & ~b.prev & ~(1u << BTN_KEYTRANS)) tune_ = false;
       return;
     }
-    if (b.down(BTN_KEYTRANS) && b.pressed(BTN_LOAD) && mode_ == MODE_KEYBOARD) { tune_ = true; return; }
-    // KEY TRANSPOSE double tap = latch toggle (not in LOAD, where it is the
-    // rest button, nor while real-time recording).
+    const bool kt = b.down(BTN_KEYTRANS);
+    if (kt && b.pressed(BTN_LOAD) && mode_ == MODE_KEYBOARD) { tune_ = true; return; }
+    // KEY TRANSPOSE double tap = transpose mode on/off (not in LOAD, where it
+    // is the rest button, nor while real-time recording).
     if (b.pressed(BTN_KEYTRANS) && mode_ != MODE_SEQ_LOAD && !rtRec_) {
-      if (ktLastPressMs_ && nowMs - ktLastPressMs_ < 400) {
-        ktLatched_ = !ktLatched_;
-        if (!ktLatched_) transpose_ = 0;
-        ktLastPressMs_ = 0;
-      } else ktLastPressMs_ = nowMs;
+      if (ktLastPressMs_ && nowMs - ktLastPressMs_ < 400) { ktLatched_ = !ktLatched_; ktLastPressMs_ = 0; }
+      else ktLastPressMs_ = nowMs;
     }
-    if (b.released(BTN_KEYTRANS) && !ktLatched_) transpose_ = 0;
     const bool playHeld = b.down(BTN_PLAY) && mode_ != MODE_SEQ_LOAD;
+    const bool downUd = (b.pressed(BTN_DOWN) && b.down(BTN_UD)) || (b.pressed(BTN_UD) && b.down(BTN_DOWN));
     if (mode_ == MODE_SEQ_LOAD) {
-      // While recording, UP/DOWN cycle the last recorded step's ratchet
-      // (1x -> 2x -> 3x) instead of switching into an arp mid-recording.
+      // While recording: UP cycles the last step's ratchet (1x -> 2x -> 3x),
+      // DOWN takes the last step back (SH-1oh1).
       if (b.pressed(BTN_UP))   seq_.cycleLastRatchet(+1);
-      if (b.pressed(BTN_DOWN)) seq_.cycleLastRatchet(-1);
-    } else if (playHeld) {
-      // PLAY held + UP / DOWN / U&D: sequencer direction FWD / BWD /
-      // PING-PONG, U&D again = RANDOM.
-      if (b.pressed(BTN_UP))   { seq_.setDirection(DIR_FWD); playHeldUsed_ = true; }
-      if (b.pressed(BTN_DOWN)) { seq_.setDirection(DIR_BWD); playHeldUsed_ = true; }
-      if (b.pressed(BTN_UD))   { seq_.setDirection(seq_.direction() == DIR_PINGPONG ? DIR_RANDOM : DIR_PINGPONG);
-                                 playHeldUsed_ = true; }
+      if (b.pressed(BTN_DOWN)) seq_.deleteLast();
+    } else if (mode_ == MODE_SEQ_PLAY && kt) {
+      // Shift (SH-1oh1): KEY TRANSPOSE + UP / DOWN plays the next / previous
+      // step now, moving the pattern against the clock.
+      if (b.pressed(BTN_UP))   nudge_ = +1;
+      if (b.pressed(BTN_DOWN)) nudge_ = -1;
+    } else if (mode_ == MODE_SEQ_PLAY) {
+      // Direction while playing (SH-1oh1): UP forward, DOWN backward, U&D
+      // ping-pong, DOWN + U&D together random.
+      if (downUd)                   seq_.setDirection(DIR_RANDOM);
+      else if (b.pressed(BTN_UP))   seq_.setDirection(DIR_FWD);
+      else if (b.pressed(BTN_DOWN)) seq_.setDirection(DIR_BWD);
+      else if (b.pressed(BTN_UD))   seq_.setDirection(DIR_PINGPONG);
     } else {
-    if (b.pressed(BTN_UP))   mode_ = (mode_ == MODE_ARP_UP)     ? MODE_KEYBOARD : MODE_ARP_UP;
-    if (b.pressed(BTN_DOWN)) mode_ = (mode_ == MODE_ARP_DOWN)   ? MODE_KEYBOARD : MODE_ARP_DOWN;
-    if (b.pressed(BTN_UD))   mode_ = (mode_ == MODE_ARP_UPDOWN) ? MODE_ARP_RANDOM
-                                   : (mode_ == MODE_ARP_RANDOM) ? MODE_KEYBOARD : MODE_ARP_UPDOWN;
-    }
-    // PLAY: held + one of the 8 lowest keys selects the pattern (queued to
-    // the loop end while playing); a plain press/release toggles sequencer
-    // play (toggle happens on release so the select gesture does not also
-    // start/stop the sequencer).
-    if (b.pressed(BTN_PLAY)) playHeldUsed_ = false;
-    if (playHeld) {
-      uint32_t fresh = rawKeys & ~prevMask_ & 0xFF;
-      if (fresh) {
-        uint8_t p = (uint8_t)lowestKey(fresh);
-        if (mode_ == MODE_SEQ_PLAY) seq_.queue(p); else seq_.select(p);
-        playHeldUsed_ = true;
+      // Arp (stock: the same button again = off); DOWN + U&D together =
+      // random (SH-1oh1), again = off.
+      // The pair's first press already switched the mode, so the toggle
+      // decides from the mode BEFORE that press.
+      if (downUd) mode_ = (preArp_ == MODE_ARP_RANDOM) ? MODE_KEYBOARD : MODE_ARP_RANDOM;
+      else {
+        if (b.now & ~b.prev & ((1u << BTN_UP) | (1u << BTN_DOWN) | (1u << BTN_UD))) preArp_ = mode_;
+        if (b.pressed(BTN_UP))   mode_ = (mode_ == MODE_ARP_UP)     ? MODE_KEYBOARD : MODE_ARP_UP;
+        if (b.pressed(BTN_DOWN)) mode_ = (mode_ == MODE_ARP_DOWN)   ? MODE_KEYBOARD : MODE_ARP_DOWN;
+        if (b.pressed(BTN_UD))   mode_ = (mode_ == MODE_ARP_UPDOWN) ? MODE_KEYBOARD : MODE_ARP_UPDOWN;
       }
+    }
+    // PLAY held + keys 1-8 (SH-1oh1): one key selects a pattern, several in
+    // order make a song. On release: stopped -> play it from the start;
+    // playing -> it follows at the end of the current loop pass. A plain
+    // PLAY press/release toggles play.
+    if (b.pressed(BTN_PLAY)) { playHeldUsed_ = false; songN_ = 0; }
+    if (playHeld) {
+      uint32_t fresh = rawKeys & ~prevRaw_ & 0xFF;   // own edge memory: the held-PLAY keys never reach prevMask_
+      for (uint8_t k = 0; k < 8; ++k)
+        if ((fresh & (1UL << k)) && songN_ < Sequencer::CHAIN_MAX) { songBuf_[songN_++] = k; playHeldUsed_ = true; }
       // PLAY held + LOAD while playing: real-time record on/off.
       if (b.pressed(BTN_LOAD) && mode_ == MODE_SEQ_PLAY) {
         rtRec_ = !rtRec_; rtKey_ = -1; playHeldUsed_ = true;
@@ -565,15 +640,28 @@ class NoteEngine {
         return;
       }
     }
-    if (b.released(BTN_PLAY) && !playHeldUsed_) {
-      if (mode_ == MODE_SEQ_PLAY) stopPlay();
-      else startPlay();
+    if (b.released(BTN_PLAY)) {
+      if (songN_) {
+        if (mode_ == MODE_SEQ_PLAY) seq_.setChain(songBuf_, songN_, false);
+        else { seq_.setChain(songBuf_, songN_, true); startPlay(); }
+        songN_ = 0;
+      } else if (!playHeldUsed_) {
+        if (mode_ == MODE_SEQ_PLAY) stopPlay();
+        else startPlay();
+      }
     }
-    if (b.pressed(BTN_LOAD) && !b.down(BTN_PLAY)) {
+    // LOAD: from stop, record a new pattern (stock: clears). While playing,
+    // stock "Correcting and Adding": keep the pattern, re-load from the step
+    // after the one sounding. LOAD again stores.
+    if (b.pressed(BTN_LOAD) && !b.down(BTN_PLAY) && !kt) {
       if (mode_ == MODE_SEQ_LOAD) { seq_.flushAll(); seq_.markEdited(); mode_ = MODE_KEYBOARD; }
+      else if (mode_ == MODE_SEQ_PLAY) { rtRec_ = false; seq_.beginOverwrite(); mode_ = MODE_SEQ_LOAD; }
       else { rtRec_ = false; seq_.clear(); mode_ = MODE_SEQ_LOAD; }
     }
   }
+  int8_t nudge_ = 0;
+  Mode preArp_ = MODE_KEYBOARD;
+  uint32_t prevRaw_ = 0;
  public:
   Mode mode() const { return mode_; }
   Sequencer& seq() { return seq_; }
@@ -585,7 +673,7 @@ class NoteEngine {
     mode_ = MODE_KEYBOARD; arp_.reset(); seq_.resetRuntime();
     prevMask_ = 0; holdMask_ = 0; heldKey_ = -1; lastCv_ = CV_BASE;
     transpose_ = 0; ktLatched_ = false; ktLastPressMs_ = 0; ktKeys_ = 0;
-    tune_ = false; rtRec_ = false; rtKey_ = -1;
+    tune_ = false; rtRec_ = false; rtKey_ = -1; nudge_ = 0; songN_ = 0;
     playHeldUsed_ = false; playStart_ = false; playNow_ = false; prevExtCv_ = -1;
     lastEdgeMs_ = 0; periodMs_ = 0; stepStartMs_ = 0; subTotal_ = 1; subLeft_ = 0;
   }
@@ -624,8 +712,9 @@ class NoteEngine {
     if (!on && rtRec_) seq_.markEdited();
     rtRec_ = on; rtKey_ = -1;
   }
-  // KEY-TRANSPOSE LED: lit while a transpose is active or latched.
-  bool   ktLed() const { return ktLatched_ || transpose_ != 0; }
+  // KEY-TRANSPOSE LED: lit while a transpose is active (stock); blinks in
+  // transpose mode.
+  bool   ktLed() const { return ktLatched_ ? ((millis() >> 7) & 1) : transpose_ != 0; }
   // Function-LED select for the current mode (4556 one-hot, SH101.asm:90-128):
   // 0 none, 1 LOAD, 2 PLAY, 3 DOWN, 4 UP&DOWN, 5 UP.
   uint8_t ledSelect() const {
@@ -649,6 +738,7 @@ class NoteEngine {
   Output update(uint32_t mask, int16_t extCv, bool hold, const controls::Panel& p,
                 controls::Buttons& b, bool clockEdge, bool halfEdge) {
     selectMode(b, mask);
+    prevRaw_ = mask;
     if (tune_) {
       // A at the panel's octave: key 16 = A4 = 440 Hz at 8', TRANSPOSE middle.
       Output t{noteCv(16, p), true, false, !prevTune_};
@@ -657,17 +747,27 @@ class NoteEngine {
     }
     if (prevTune_) { prevTune_ = false; prevMask_ = mask; }   // no key edge out of tune mode
     if (b.down(controls::BTN_PLAY) && mode_ != MODE_SEQ_LOAD) mask &= ~0xFFUL;  // select keys are not notes
-    // KEY TRANSPOSE held in PLAY / arp modes: a fresh key sets the transpose
-    // (offset from key 7, C4) instead of playing. Keys pressed during the
-    // hold stay out of the arp until released.
-    const bool transposing = (mode_ == MODE_SEQ_PLAY && !rtRec_) || IsArp(mode_);
-    if (transposing && b.down(controls::BTN_KEYTRANS)) {
-      uint32_t fresh = mask & ~prevMask_ & ~ktKeys_;
-      if (fresh) { transpose_ = (int8_t)(lowestKey(fresh) - TRANSPOSE_REF_KEY); ktLastPressMs_ = 0; }   // a transpose press is not half a double tap
-      ktKeys_ |= fresh;
+    // KEY TRANSPOSE held (any mode but LOAD / real-time record): a fresh key
+    // sets the transpose instead of playing. In transpose mode (double tap),
+    // plain keys do the same in sequencer play and in a HOLD-latched arp.
+    // Keys used this way stay out of the voice until released.
+    {
+      const bool ktDown = b.down(controls::BTN_KEYTRANS) && mode_ != MODE_SEQ_LOAD && !rtRec_;
+      const bool modeKeys = ktLatched_ && ((mode_ == MODE_SEQ_PLAY && !rtRec_) || (IsArp(mode_) && hold && holdMask_));
+      if (ktDown || modeKeys) {
+        uint32_t fresh = mask & ~prevMask_ & ~ktKeys_ & ~holdMask_;
+        if (fresh) setTransposeKey(lowestKey(fresh));
+        ktKeys_ |= fresh;
+      }
+      ktKeys_ &= mask;
+      mask &= ~ktKeys_;
     }
-    ktKeys_ &= mask;
-    mask &= ~ktKeys_;
+    // Instant pattern switch (SH-1oh1 3.5.3): keys 1-8 while playing, with
+    // nothing held, switch now and keep the position.
+    if (mode_ == MODE_SEQ_PLAY && !rtRec_ && !b.down(controls::BTN_HOLD) && !b.down(controls::BTN_PLAY)) {
+      uint32_t fresh = mask & ~prevMask_ & 0xFF;
+      if (fresh) seq_.switchNow((uint8_t)lowestKey(fresh));
+    }
     // HOLD button + key while playing: real-time loop length (key n = the
     // first n+1 steps; the same key again = full pattern). Not the pedal:
     // the pedal keeps its HOLD / transpose role.
@@ -727,6 +827,11 @@ class NoteEngine {
               clockEdge = false; halfEdge = false;
             }
           }
+        }
+        if (nudge_) {                                   // shift: a step now, off the clock
+          if (seq_.nudge(nudge_)) o.portaOff = true;
+          lastCv_ = seq_.cv(); subTotal_ = 1; subLeft_ = 0;
+          nudge_ = 0;
         }
         if (clockEdge) {
           uint32_t now = millis();
@@ -811,7 +916,7 @@ class NoteEngine {
       }
     }
 
-    if (transpose_ && (mode_ == MODE_SEQ_PLAY || IsArp(mode_))) {
+    if (transpose_ && mode_ != MODE_SEQ_LOAD) {   // stock: everything that plays
       int16_t v = (int16_t)o.cv + transpose_;
       o.cv = (uint8_t)(v < 0 ? 0 : (v > CV_MAX ? CV_MAX : v));
     }

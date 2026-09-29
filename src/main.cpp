@@ -219,7 +219,8 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
       break;
     // 0x65 SET FEATURE [id, value] -> 0x66. ids: 0 seq direction (0 FWD,
     // 1 BWD, 2 PING-PONG, 3 RANDOM), 1 pedal route (0 HOLD, 1 KEY TRANSPOSE),
-    // 2 transpose (value = semitones + 64, latched), 3 transpose latch 0/1,
+    // 2 transpose (value = semitones + 64; it stays, as on the stock panel),
+    // 3 transpose mode 0/1 (plain keys transpose while playing),
     // 4 loop length (0 = full pattern), 5 real-time record 0/1 (while
     // playing), 6 tune mode 0/1 (from keyboard mode). 0x67 = read only.
     // Out-of-range values leave the setting alone; the 0x66 reply shows the
@@ -230,7 +231,7 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
         switch (body[1]) {
           case 0: g_engine.seq().setDirection(v); break;
           case 1: if (v <= controls::PEDAL_TRANSPOSE) { controls::PedalRoute() = v; engine::FeatDirty() = true; } break;
-          case 2: if (v >= 64 - 36 && v <= 64 + 36) g_engine.setTranspose((int8_t)(v - 64), true); break;
+          case 2: if (v >= 64 - 36 && v <= 64 + 36) g_engine.setTranspose((int8_t)(v - 64), g_engine.transposeLatched()); break;
           case 3: g_engine.setTranspose(v ? g_engine.transpose() : 0, v != 0); break;
           case 4: if (v <= engine::MAX_STEPS) g_engine.seq().setLoopLength(v); break;
           case 5: g_engine.setRtRec(v != 0); break;

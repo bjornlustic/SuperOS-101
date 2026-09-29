@@ -43,25 +43,39 @@ KEY-TRANSPOSE shift value and exact portamento timing. The CPU board lives in
   the switch waits for the end of the loop pass.
 - **HOLD + KEY-TRANSPOSE 2 s**: config menu (below).
 
-Performance features (SuperOS only; SysEx 0x65 / 0x67 -> 0x66 for hosts):
+Performance features (SuperOS only; SysEx 0x65 / 0x67 -> 0x66 for hosts). Stock
+behavior from the Roland owner's manual is kept; the additions follow the Tubbutec
+SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at home.
 
-- **Direction**: **PLAY held + UP** = forward, **+ DOWN** = backward, **+ UP&DOWN** =
-  ping-pong, **UP&DOWN again** = random. Persists.
-- **Random arp**: **UP&DOWN** twice (U&D LED blinks); a third press turns the arp off.
-- **Loop length, live**: while playing, **HOLD button + key n** loops the first n
-  steps (lowest key = 1 step); the same key again = full pattern. Non-destructive.
-- **KEY TRANSPOSE**: in PLAY or arp, hold it and press a key; **C4** (the lowest C) plays
-  as written. Released = back to 0. **Double-tap** latches it (KEY-TRANSP LED lit);
-  double-tap again to clear.
+- **KEY TRANSPOSE (stock)**: hold it and press a key: everything that plays is transposed
+  by the distance from the lowest C, and it stays (LED lit). KEY TRANSPOSE + lowest C =
+  normal. Unlike stock, the transpose also reaches CV OUT and MIDI OUT.
+- **Transpose mode (new)**: **double-tap KEY TRANSPOSE** (LED blinks). While the sequencer
+  plays (or a HOLD-latched arp runs) plain key presses transpose, no button held.
+  Double-tap again to leave it.
+- **Direction while playing (SH-1oh1)**: **UP** forward, **DOWN** backward, **U&D**
+  ping-pong, **DOWN + U&D together** random. Persists.
+- **Shift (SH-1oh1)**: while playing, **KEY TRANSPOSE + UP / DOWN** plays the next /
+  previous step now (move the pattern against the clock).
+- **Random arp (SH-1oh1)**: **DOWN + U&D together** (U&D LED blinks); again = off.
+- **Patterns (SH-1oh1)**: **PLAY held + key 1-8**: from stop, starts that pattern on
+  release; while playing, it follows at the end of the current pass. **PLAY held + several
+  keys** in order = a song (up to 16, looping). A **key 1-8 alone while playing** switches
+  now, keeping the position.
+- **Loop length, live**: while playing, **HOLD button + key n** loops the first n steps
+  (lowest key = 1 step); the same key again = full pattern. Non-destructive.
+- **LOAD while playing (stock "Correcting and Adding")**: keeps the pattern and re-loads
+  from the step after the one sounding. From stop, LOAD starts a new pattern (clears).
+  In LOAD, **DOWN** takes back the last step (SH-1oh1), **UP** cycles its ratchet 1x/2x/3x.
+- **Real-time record**: while playing, **PLAY held + LOAD** (PLAY/LOAD LEDs alternate).
+  Keys overwrite the step they land on (the next step once the step is half over), a key
+  held past the half-step ties into the next step, KEY TRANSPOSE writes a rest.
+  **PLAY held + LOAD** again ends it; the edits persist when playback stops.
 - **Pedal as transpose**: config menu key 19 routes the HOLD pedal jack to act as the
-  KEY TRANSPOSE button (transpose, latch, and rests while recording).
+  KEY TRANSPOSE button.
 - **Tune**: **KEY TRANSPOSE held + LOAD** (from keyboard mode) holds an A with the gate
   open: 440 Hz at 8' with TRANSPOSE in the middle, and MIDI OUT note 69 for a tuner.
   Any function button leaves it (LOAD LED blinks while tuning).
-- **Real-time record**: while playing, **PLAY held + LOAD** (PLAY/LOAD LEDs alternate).
-  Keys overwrite the step they land on (the next step once the step is half over), a
-  key held past the half-step ties into the next step, KEY TRANSPOSE writes a rest.
-  **PLAY held + LOAD** again ends it; the edits persist when playback stops.
 - **CV / GATE OUT** carry whatever the voice plays, sequencer and arp included (the
   CPU's CV sample/hold feeds both the VCO and the rear CV jack).
 
