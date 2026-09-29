@@ -254,6 +254,16 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
       SendFeatures();
       break;
     case 0x67: SendFeatures(); break;
+    // 0x69 NUDGE [pat, dir (0 left, 1 right), count 1..127]: rotate the
+    // pattern's notes. On the playing pattern it lands at the next half-step
+    // (never mid-note, timing untouched); the new pattern follows as 0x11.
+    case 0x69:
+      if (len >= 4 && body[1] < engine::NUM_PATTERNS && body[3]) {
+        g_engine.nudgePattern(body[1], body[2] ? (int16_t)body[3] : (int16_t)-body[3]);
+        g_lastEditMs = millis();
+        SendAck(0);
+      } else SendAck(len >= 4 ? 2 : 1);
+      break;
     // 0x2A SCALE [pat] = read, [pat, mask_lo7, mask_hi5, on] = set; both
     // answered with 0x2A [pat, mask_lo7, mask_hi5, on] (the SuperOS-303's
     // layout; the device also sends it after a panel scale change).

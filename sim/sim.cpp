@@ -1394,6 +1394,29 @@ static int SelfTest() {
         CHECK(ok, "ratchet 3x under MIDI clock: each hit on its clock tick (+/-1.5 ms)");
         for (uint8_t v : {0xF0, 0x7D, 0x1D, 6, 0xF7}) g_midiQ.push_back(v); RunLoops(3);
       }
+      // Nudge while playing: sent in the FIRST half of step 1 (21 sounding).
+      // The sounding note is untouched, it lands at the half-step, and from
+      // step 2 on the rotated pattern plays on the same grid. One gate rise
+      // per step: nothing cut, nothing doubled.
+      {
+        startAt(); r.clear(); cv.clear();
+        ticksTo(0, 8, r, &cv);                   // steps 0, 1 started (tick 6 processed; half-step at 9)
+        uint8_t sounding = sim::g_sh[0];
+        for (uint8_t v : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x69, (uint8_t)6, (uint8_t)0, (uint8_t)1, (uint8_t)0xF7}) g_midiQ.push_back(v);   // left 1
+        RunLoops(3);
+        uint8_t stillSounding = sim::g_sh[0]; bool gateStill = GateOn();
+        ticksTo(8, 6 * 6 + 1, r, &cv);           // steps 2..6 (ticks 12..36)
+        MidiByte(0xFC); RunLoops(2);
+        std::string seqn; for (uint8_t c : cv) seqn += std::to_string(c) + " ";
+        int32_t worst2 = 0;
+        for (size_t i = 0; i < r.size(); ++i) { int32_t d = (int32_t)r[i] - (int32_t)(i * 6 * T); if (d < 0) d = -d; if (d > worst2) worst2 = d; }
+        printf("  (nudge left mid-step: %s, worst %.2f ms off the grid)\n", seqn.c_str(), worst2 / 1000.0);
+        CHECK(sounding == 21 && stillSounding == 21 && gateStill, "nudge mid-note: the sounding note is untouched");
+        CHECK(seqn == "17 21 29 17 21 24 ", "nudge left: from the next step the pattern plays rotated (21 24 29 17)");
+        CHECK(r.size() == 6 && worst2 < 1500, "nudge: one note per step (ticks 0..30), all on the host grid");
+        for (uint8_t v : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x69, (uint8_t)6, (uint8_t)1, (uint8_t)1, (uint8_t)0xF7}) g_midiQ.push_back(v);   // right 1: restore
+        RunLoops(3);
+      }
     }
     sxP(0);
     for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);
@@ -1604,6 +1627,20 @@ static int SelfTest() {
       tap(B_UP); btn(B_KT, true); tap(B_DOWN); tap(B_DOWN); btn(B_KT, false); tap(B_UP);
       CHECK(engine::ArpRange() == 1, "KEY TRANSPOSE + DOWN: back to 1 octave (floor 1)");
       WaitVirtMs(40);
+    }
+
+    // Nudge from the panel (HOLD + UP / DOWN while playing) and stopped (0x69).
+    {
+      sx({0x69, 7, 0, 1});                                   // stopped: left 1, at once
+      std::vector<uint8_t> dummy;
+      play(); std::string n1 = first() + run(3); tap(B_PLAY); WaitVirtMs(40);
+      CHECK(n1 == "11 12 13 10 ", "0x69 nudge left while stopped: pattern 8 is 11 12 13 10");
+      play();                                                // 11 sounding
+      btn(B_HOLD, true); tap(B_UP); btn(B_HOLD, false);      // right 1: lands at the next half-step
+      std::string n2 = run(4); tap(B_PLAY); WaitVirtMs(40);
+      printf("  (panel HOLD + UP while playing: 11 then %s)\n", n2.c_str());
+      CHECK(n2 == "11 12 13 10 " || n2 == "10 11 12 13 ", "panel HOLD + UP nudges right while playing");
+      sx({0x69, 7, 1, 0}); sx({0x1D, 7});                    // count 0: refused
     }
 
     // 16 patterns: PLAY + key 16 selects pattern 16; it records, saves to

@@ -66,6 +66,10 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
   note as the root, Major; the same key again steps through the scales. **PLAY held + KEY
   TRANSPOSE tap** = scale on / off. Non-destructive: the output snaps to the nearest scale note
   (lower on a tie) before any transpose. SysEx 0x2A [pat] reads, [pat, mask lo7, hi5, on] sets.
+- **Nudge**: while playing, **HOLD button + UP / DOWN** moves the notes one step right / left
+  (editor: nudge buttons; SysEx 0x69 [pat, 0 left / 1 right, count]). The playhead and clock are
+  untouched; on the playing pattern the move lands at the next half-step, after the sounding
+  note has started and before the next is chosen, so nothing is cut, doubled or retriggered.
 - **Resync**: SysEx 0x65 id 9 (the editor's Resync) puts the sequence back on the one.
   Direction, loop length, pattern switches and clock-division changes never move it off the
   grid; ping-pong repeats its end steps so a round trip stays on the bar.

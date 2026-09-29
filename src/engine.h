@@ -199,6 +199,7 @@ class Sequencer {
   bool    stepChanged_ = false;
   bool    selChanged_ = false;
   uint16_t edited_ = 0;               // bit p = edited on the panel since last consume
+  int16_t rotPending_ = 0;            // nudge waiting for the next half-step (playing pattern)
   uint16_t scaleChanged_ = 0;         // bit p = scale changed (mirror to the editor, 0x2A)
   // Playback shape (runtime; DirSetting() persists via the engine's settings):
   bool    started_ = false;           // false: the next advance plays the FIRST step
@@ -330,7 +331,7 @@ class Sequencer {
   void resetRuntime() {
     dirty_ = 0; cur_ = 0; pos_ = 0; curCv_ = CV_BASE; curGate_ = false;
     stepChanged_ = false; selChanged_ = false; edited_ = 0;
-    started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0; steps_ = 0;
+    started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0; steps_ = 0; rotPending_ = 0;
     chainN_ = 0; chainPos_ = 0; wcur_ = 0;
   }
   Sequencer() { memset(len_, 0, sizeof(len_)); for (uint8_t i = 0; i < NUM_PATTERNS; ++i) scale_[i] = 0x0FFF; }
@@ -501,6 +502,7 @@ class Sequencer {
       if (chainN_ > 1) { chainPos_ = (uint8_t)((chainPos_ + 1) % chainN_); queued_ = chain_[chainPos_]; }
       else queued_ = 0xFF;
     }
+    applyRotate();                          // a ratcheted step has no half-step: land it here
     uint8_t len = effLen();
     if (len == 0) { curGate_ = false; return false; }
     const uint8_t cl = cycleLen();
@@ -519,7 +521,35 @@ class Sequencer {
   // Half-step (clock's other edge): close the gate so the next note
   // retriggers, unless the NEXT step is legato (then the gate carries over,
   // 303-style look-ahead).
+  // --- nudge: rotate the pattern's notes one or more steps left / right ---
+  // The playhead and the clock are untouched (timing stays locked); only the
+  // notes move. On the playing pattern the rotation waits for the next
+  // half-step: the sounding note has already started and the next step is
+  // not chosen yet, so nothing is cut, doubled or re-triggered. Stopped (or
+  // another pattern), it applies at once. n > 0 = right (later), n < 0 = left.
+  void rotateNow(uint8_t p, int16_t n) {
+    uint8_t len = len_[p];
+    if (!len) return;
+    int16_t k = (int16_t)(n % len); if (k < 0) k += len;
+    if (!k) return;
+    uint8_t tmp[MAX_STEPS], rt[MAX_STEPS];
+    for (uint8_t i = 0; i < len; ++i) { tmp[i] = step_[p][i]; rt[i] = ratchet(p, i); }
+    for (uint8_t i = 0; i < len; ++i) {
+      uint8_t src = (uint8_t)((i + len - k) % len);
+      step_[p][i] = tmp[src]; ratchetRaw(p, i, rt[src]);
+    }
+    dirty_ |= (uint16_t)(1u << p); edited_ |= (uint16_t)(1u << p);
+    if (p == cur_) stepChanged_ = true;
+  }
+  void rotate(uint8_t p, int16_t n, bool playing) {
+    if (p >= NUM_PATTERNS || !n) return;
+    if (playing && p == cur_) { rotPending_ = (int16_t)(rotPending_ + n); return; }
+    rotateNow(p, n);
+  }
+  bool rotatePending() const { return rotPending_ != 0; }
+  void applyRotate() { if (rotPending_) { int16_t n = rotPending_; rotPending_ = 0; rotateNow(cur_, n); } }
   void halfStep() {
+    applyRotate();                          // nudge lands here: between notes, never mid-note
     halfSeen_ = true;
     uint8_t len = effLen();
     if (!len || !curGate_) return;
@@ -777,6 +807,11 @@ class NoteEngine {
       if (b.pressed(BTN_DOWN)) seq_.deleteLast();
     } else if (playHeld) {
       // PLAY held: UP / DOWN / U&D belong to the randomizers (below).
+    } else if (mode_ == MODE_SEQ_PLAY && b.down(BTN_HOLD)) {
+      // Nudge: HOLD + UP / DOWN while playing moves the notes one step right
+      // / left (lands at the next half-step, never mid-note).
+      if (b.pressed(BTN_UP))   seq_.rotate(seq_.current(), +1, true);
+      if (b.pressed(BTN_DOWN)) seq_.rotate(seq_.current(), -1, true);
     } else if (mode_ == MODE_SEQ_PLAY && kt) {
       // Shift (SH-1oh1): KEY TRANSPOSE + UP / DOWN plays the next / previous
       // step now, moving the pattern against the clock.
@@ -918,6 +953,13 @@ class NoteEngine {
   bool   tuning() const { return tune_; }
   void   setTune(bool on) { tune_ = on && mode_ == MODE_KEYBOARD; }
   bool   rtRecording() const { return rtRec_; }
+  // SysEx 0x69 / editor nudge: rotate pattern p (queued to the next
+  // half-step when it is the one playing).
+  void   nudgePattern(uint8_t p, int16_t n) {
+    if (mode_ == MODE_SEQ_LOAD) return;
+    seq_.rotate(p, n, mode_ == MODE_SEQ_PLAY);
+    if (mode_ != MODE_SEQ_PLAY && p == seq_.current()) seq_.applyRotate();
+  }
   // Resync (editor button, SysEx 0x65 id 9): put the sequence back on the
   // one. Under MIDI clock that is the host's grid since its Start; otherwise
   // the steps counted since PLAY. Also undoes a shift.
