@@ -10,7 +10,7 @@
     </div>
     <h1 class="man-cover-title">Owner's Manual</h1>
     <div class="man-cover-meta">
-      <p class="man-cover-sub">Combined Edition v0.1-alpha &middot; Custom firmware for the Roland SH-101<br>Drop-in CPU replacement</p>
+      <p class="man-cover-sub">Combined Edition v0.2 &middot; Custom firmware for the Roland SH-101<br>Drop-in CPU replacement</p>
     </div>
   </header>
 
@@ -29,13 +29,14 @@
       <li><a class="docs-toc-link" href="#keyboard"><span class="man-toc-num">1</span>The Keyboard<span class="man-toc-leader"></span></a></li>
       <li><a class="docs-toc-link" href="#switches"><span class="man-toc-num">2</span>Panel Switches<span class="man-toc-leader"></span></a></li>
       <li><a class="docs-toc-link" href="#arpeggiator"><span class="man-toc-num">3</span>The Arpeggiator<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#transpose"><span class="man-toc-num">4</span>Key Transpose, Tune and the Pedal<span class="man-toc-leader"></span></a></li>
     </ol>
 
     <span class="man-toc-part">The Sequencer</span>
     <ol class="man-toc-list">
       <li><a class="docs-toc-link" href="#seq-record"><span class="man-toc-num">1</span>Recording a Sequence<span class="man-toc-leader"></span></a></li>
       <li><a class="docs-toc-link" href="#seq-play"><span class="man-toc-num">2</span>Playing a Sequence<span class="man-toc-leader"></span></a></li>
-      <li><a class="docs-toc-link" href="#seq-storage"><span class="man-toc-num">3</span>Patterns: Selecting, Loading and Saving<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#seq-storage"><span class="man-toc-num">3</span>Patterns and Songs<span class="man-toc-leader"></span></a></li>
     </ol>
 
     <span class="man-toc-part">MIDI</span>
@@ -118,9 +119,7 @@
     </p>
     <div class="man-note">
       <strong>Note</strong>
-      All sequencer and arpeggiator clocking comes from the LFO or the EXT CLK jack, exactly as on
-      the original instrument. Where this manual says "each clock pulse," that is the source it
-      means.
+      The sequencer and arpeggiator are clocked by the LFO or the EXT CLK jack, exactly as on the original, or by MIDI clock when sync is on. Where this manual says "each clock," it means whichever of these is active.
     </div>
   </section>
 
@@ -179,20 +178,47 @@
       <h2 class="docs-sec-title">The Arpeggiator</h2>
     </div>
     <p class="docs-body">
-      Press <kbd class="docs-key">UP</kbd>, <kbd class="docs-key">DOWN</kbd>, or
-      <kbd class="docs-key">UP&amp;DOWN</kbd> to turn the arpeggiator on in that direction; press
-      the same button again to return to normal keyboard play. Hold any group of keys and the
-      arpeggiator steps through them, one note per clock pulse, at the rate set by the LFO (or the
-      EXT CLK input).
+      Press <kbd class="docs-key">UP</kbd>, <kbd class="docs-key">DOWN</kbd>, or <kbd class="docs-key">UP&amp;DOWN</kbd> to turn the arpeggiator on in that direction; press the same button again to return to normal keyboard play. Hold any group of keys and the arpeggiator steps through them, one note per clock (the LFO, the EXT CLK input, or MIDI clock when sync is on).
     </p>
     <ul class="docs-list">
       <li><strong>UP</strong>: lowest to highest, then wraps to the lowest.</li>
       <li><strong>DOWN</strong>: highest to lowest, then wraps to the highest.</li>
       <li><strong>UP&amp;DOWN</strong>: bounces between the lowest and highest held keys.</li>
+      <li><strong>RANDOM</strong>: press <kbd class="docs-key">DOWN</kbd> and <kbd class="docs-key">UP&amp;DOWN</kbd> together (the UP&amp;DOWN LED blinks). A random held key each step, never the same note twice in a row. Press both together again to turn it off.</li>
     </ul>
+    <h3 class="man-sub">Octave Range</h3>
     <p class="docs-body">
-      Keys can be added or released while running; the pattern follows the currently held set. The
-      gate closes when all keys are released.
+      In any arp mode, hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press <kbd class="docs-key">UP</kbd> for one more octave or <kbd class="docs-key">DOWN</kbd> for one fewer (1 to 3 octaves). UP climbs through the held keys octave by octave, DOWN starts in the top octave, UP&amp;DOWN bounces across the whole span, and RANDOM picks an octave too. The range is remembered across power-off.
+    </p>
+    <h3 class="man-sub">Arpeggio and Hold</h3>
+    <p class="docs-body">
+      Press <kbd class="docs-key">HOLD</kbd> while an arpeggio plays and it keeps running after you let go of the keys; a new chord replaces it. A HOLD pedal works the same way (unless it is routed to KEY TRANSPOSE, see below).
+    </p>
+  </section>
+
+  <section id="transpose" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">4</span>
+      <h2 class="docs-sec-title">Key Transpose, Tune and the Pedal</h2>
+    </div>
+    <h3 class="man-sub">Key Transpose (as the original)</h3>
+    <p class="docs-body">
+      Hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press a key: everything that plays (keyboard, arpeggio and sequence) is transposed by the distance from the <strong>lowest C</strong> (the 8th key, C4). A key below it transposes down, above it up. The transposition <strong>stays</strong> after you let go, with the KEY TRANSPOSE LED lit. To return to normal, hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press the lowest C.
+    </p>
+    <p class="docs-body">
+      Unlike the original, the transposition also reaches the CV OUT jack and MIDI OUT, so external gear follows it.
+    </p>
+    <h3 class="man-sub">Transpose Mode (double tap)</h3>
+    <p class="docs-body">
+      <strong>Double-tap</strong> <kbd class="docs-key">KEY TRANSPOSE</kbd> to enter transpose mode (the LED blinks). While the sequencer plays, or while a HOLD-latched arpeggio runs, a plain key press transposes, with no button held: play the key you want the line in. Double-tap again to leave transpose mode; the transposition itself stays until you set it back to the lowest C.
+    </p>
+    <h3 class="man-sub">Tune</h3>
+    <p class="docs-body">
+      From normal keyboard play, hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press <kbd class="docs-key">LOAD</kbd>. The SH-101 holds an <strong>A</strong> with the gate open (the LOAD LED blinks): 440&nbsp;Hz with RANGE at 8&prime; and TRANSPOSE in the middle, and MIDI OUT sends note 69 at the same time for a tuner. Set the TUNE knob, then press any function button to leave.
+    </p>
+    <h3 class="man-sub">The HOLD Pedal as Key Transpose</h3>
+    <p class="docs-body">
+      In the Config Menu, key 19 routes the HOLD pedal jack to act as the KEY TRANSPOSE button: hold the pedal and press a key to transpose, double-tap it for transpose mode, and while recording it enters rests. Key 19 again returns the pedal to HOLD. The choice is remembered.
     </p>
   </section>
 
@@ -205,20 +231,27 @@
       <h2 class="docs-sec-title">Recording a Sequence</h2>
     </div>
     <p class="docs-body">
-      Press <kbd class="docs-key">LOAD</kbd> to start recording into the current pattern slot
-      (the LOAD LED lights). The slot is cleared and every key you press is appended as the next
-      step, up to 128 steps. The keyboard sounds while you record, so you hear each note as you
-      enter it. Notes arriving over MIDI record too.
+      Press <kbd class="docs-key">LOAD</kbd> while stopped to record a new pattern into the current slot (the LOAD LED lights; the slot is cleared). Every key you press is added as the next step, up to 128 steps. The keyboard sounds while you record, and notes arriving over MIDI record too.
     </p>
     <table class="docs-table man-t-combo">
       <thead><tr><th>Control</th><th>Writes</th></tr></thead>
       <tbody>
         <tr><td>Keyboard key</td><td>A note step at that pitch (TRANSPOSE applies as played).</td></tr>
         <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>A rest step.</td></tr>
-        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + key</td><td>A legato step: this note starts without the gate dropping, so the envelope does not retrigger and, with PORTAMENTO on AUTO, it glides.</td></tr>
-        <tr><td><kbd class="docs-key">LOAD</kbd> again</td><td>Ends recording; the pattern is saved to permanent memory automatically.</td></tr>
+        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + key</td><td>A legato step: the note starts without the gate dropping, so the envelope does not retrigger and, with PORTAMENTO on AUTO, it glides.</td></tr>
+        <tr><td><kbd class="docs-key">UP</kbd></td><td>Cycles the last step&rsquo;s ratchet: 1, 2 or 3 hits inside the step.</td></tr>
+        <tr><td><kbd class="docs-key">DOWN</kbd></td><td>Takes back the last step.</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> again</td><td>Ends recording; the pattern is saved automatically.</td></tr>
       </tbody>
     </table>
+    <h3 class="man-sub">Correcting and Adding (as the original)</h3>
+    <p class="docs-body">
+      Press <kbd class="docs-key">LOAD</kbd> <em>while the sequence plays</em> and recording continues from the step after the one sounding: the steps you enter replace the old ones from there, and anything after them stays and still plays. Press <kbd class="docs-key">LOAD</kbd> again to finish.
+    </p>
+    <h3 class="man-sub">Real-Time Recording</h3>
+    <p class="docs-body">
+      While the sequence plays, hold <kbd class="docs-key">PLAY</kbd> and press <kbd class="docs-key">LOAD</kbd> (the PLAY and LOAD LEDs alternate). Now play along: each key lands on the step it was pressed in, or on the next step once the current one is half over. A key still held at the half-step ties into the next step (legato). <kbd class="docs-key">KEY TRANSPOSE</kbd> writes a rest. An empty pattern becomes 16 rests to play into. Hold <kbd class="docs-key">PLAY</kbd> and press <kbd class="docs-key">LOAD</kbd> again to stop recording; the edits are saved when playback stops.
+    </p>
   </section>
 
   <section id="seq-play" class="docs-section">
@@ -227,40 +260,47 @@
       <h2 class="docs-sec-title">Playing a Sequence</h2>
     </div>
     <p class="docs-body">
-      Press <kbd class="docs-key">PLAY</kbd> to start the sequencer; press it again to stop and
-      return to keyboard play. Steps advance one per clock pulse (the LFO/EXT CLK, or MIDI clock
-      when sync is on): note steps retrigger the gate at their pitch, rest steps close the gate,
-      and legato steps change pitch with the gate held. At the end of the pattern playback wraps
-      to the first step.
+      Press <kbd class="docs-key">PLAY</kbd> to start the sequencer; press it again to stop. Steps advance one per clock: note steps retrigger the gate at their pitch, rest steps close the gate, legato steps change pitch with the gate held. At the end of the pattern playback wraps around.
     </p>
+    <h3 class="man-sub">Direction</h3>
+    <p class="docs-body">
+      While the sequence plays: <kbd class="docs-key">UP</kbd> = forward, <kbd class="docs-key">DOWN</kbd> = backward, <kbd class="docs-key">UP&amp;DOWN</kbd> = ping-pong, <kbd class="docs-key">DOWN</kbd> and <kbd class="docs-key">UP&amp;DOWN</kbd> together = random. The direction is remembered across power-off (Config Menu keys 15 to 18 set it too).
+    </p>
+    <h3 class="man-sub">Loop Length, Live</h3>
+    <p class="docs-body">
+      While playing, hold the <kbd class="docs-key">HOLD</kbd> button and press a key: the sequence loops only its first steps, one step per key counting from the lowest key (the 4th key = 4 steps, the 16th = 16 steps). The pattern itself is untouched. Press the same key again for the full length.
+    </p>
+    <h3 class="man-sub">Shift</h3>
+    <p class="docs-body">
+      While playing, hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press <kbd class="docs-key">UP</kbd> to play the next step now, or <kbd class="docs-key">DOWN</kbd> to play the previous one. This moves the sequence against the clock, to line it up with other gear or for variation.
+    </p>
+    <div class="man-note">
+      <strong>Note</strong>
+      The TRANSPOSE switch and the keyboard transpose (see Key Transpose) both apply to the sequence as it plays.
+    </div>
   </section>
 
   <section id="seq-storage" class="docs-section">
     <div class="docs-sec-head">
       <span class="docs-sec-num">3</span>
-      <h2 class="docs-sec-title">Patterns: Selecting, Loading and Saving</h2>
+      <h2 class="docs-sec-title">Patterns and Songs</h2>
     </div>
     <p class="docs-body">
-      There are eight pattern slots, and saving is automatic. To choose a slot, hold
-      <kbd class="docs-key">PLAY</kbd> and press one of the eight lowest keys: F3 selects pattern
-      1, F&#9839;3 pattern 2, and so on up to C4 for pattern 8. The new pattern becomes the current
-      one, for playing and for recording, and the sequencer keeps running if it was running.
+      There are eight pattern slots, and saving is automatic. The eight lowest keys (F3 to C4) are patterns 1 to 8.
     </p>
     <table class="docs-table man-t-combo">
       <thead><tr><th>To</th><th>Do</th></tr></thead>
       <tbody>
-        <tr><td>Load (select) pattern 1&#8230;8</td><td>Hold <kbd class="docs-key">PLAY</kbd>, press key F3&#8230;C4 (the eight lowest keys). Also MIDI Program Change 0&#8230;7, or the web editor.</td></tr>
-        <tr><td>Record into the current slot</td><td><kbd class="docs-key">LOAD</kbd>, play the steps, <kbd class="docs-key">LOAD</kbd> again (see Recording a Sequence).</td></tr>
-        <tr><td>Save</td><td>Nothing to press: about half a second after you finish an edit, the pattern is written to the CPU's permanent flash memory.</td></tr>
-        <tr><td>Move a pattern to another slot</td><td>Select the target slot, then record it there, or copy it in the web editor (read, choose the slot, write).</td></tr>
-        <tr><td>Keep patterns off the unit</td><td>The web editor (over USB-C or DIN MIDI) reads and writes all eight slots and saves them as a JSON file.</td></tr>
+        <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press a key 1&#8230;8</td><td><strong>Stopped:</strong> selects that pattern and starts it when you release PLAY. <strong>Playing:</strong> the new pattern follows at the end of the current pass, so the change lands on the bar.</td></tr>
+        <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press several keys in order</td><td>A <strong>song</strong>: the patterns play one after another in that order (up to 16 entries, repeats allowed), looping.</td></tr>
+        <tr><td>Key 1&#8230;8 alone while playing</td><td>Switches to that pattern <strong>now</strong>, keeping the position (in sync when the pattern lengths are multiples of each other).</td></tr>
+        <tr><td>MIDI Program Change 0&#8230;7</td><td>Selects pattern 1&#8230;8 (at the end of the pass while playing).</td></tr>
+        <tr><td>Save</td><td>Nothing to press: about half a second after an edit (or when playback stops), the pattern is written to permanent memory.</td></tr>
+        <tr><td>Back up / edit on a computer</td><td>The web editor (USB-C or DIN MIDI) reads and writes all eight slots, ratchets included, and saves them as a file.</td></tr>
       </tbody>
     </table>
     <p class="docs-body">
-      Patterns survive power-off with no battery, an upgrade over the original's battery-backed
-      RAM: no battery to replace and nothing to lose when it runs down. Slot selection is ignored
-      while recording, so finish with <kbd class="docs-key">LOAD</kbd> first, then move to another
-      slot. Firmware updates over MIDI never touch the pattern memory.
+      Patterns survive power-off with no battery. Slot selection is ignored while recording, so finish with <kbd class="docs-key">LOAD</kbd> first. Firmware updates never touch the pattern memory.
     </p>
   </section>
 
@@ -273,35 +313,25 @@
       <h2 class="docs-sec-title">MIDI Clock Sync</h2>
     </div>
     <p class="docs-body">
-      With MIDI clock sync on, incoming MIDI clock replaces the LFO / EXT CLK as the
-      instrument's musical clock, divided to a rhythm you choose. Three things lock to the beat:
+      With MIDI clock sync on (Config Menu), incoming MIDI clock becomes the instrument&rsquo;s clock, divided to the rhythm you choose, and the SH-101 becomes a strict transport slave:
     </p>
     <ul class="docs-list">
-      <li><strong>The arpeggiator and sequencer</strong> advance one step per division, exactly in
-        time with your DAW. MIDI Start (and Stop) are honored: Start rewinds the sequence and the
-        arpeggio to the downbeat, Stop freezes them.</li>
-      <li><strong>The LFO triangle and square</strong> are hard-synced: the LFO restarts on every
-        division boundary. The RATE knob still sets the slope between restarts, so set it near the
-        division rate for a clean locked wobble, or far off it for truncated hard-sync shapes.</li>
-      <li><strong>The random (S&amp;H) waveform</strong> steps to a new value once per division
-        instead of free-running.</li>
+      <li><strong>Start</strong> starts the sequencer, and the first step sounds on the first clock after Start (the downbeat). <strong>Stop</strong> stops it.</li>
+      <li>Only the incoming clock moves the machine: with no clock arriving it stays silent, and pressing <kbd class="docs-key">PLAY</kbd> just arms it to start when the clock arrives.</li>
+      <li>Timing is smoothed the same way as on the superOS-303 and 808 (uClock): each clock byte is placed on a steady timebase, so USB and MIDI delivery jitter does not reach the sound, and no clock is ever dropped or doubled.</li>
+      <li>The LFO can be hard-synced to the clock (Config Menu key 14) and the random S&amp;H steps once per division.</li>
     </ul>
     <h3 class="man-sub">Divisions</h3>
     <p class="docs-body">
-      Ten divisions, all exact at MIDI's 24 pulses per quarter (no drift):
-      1/4, 1/4 dotted, 1/4 triplet, 1/8, 1/8 dotted, 1/8 triplet, 1/16, 1/16 dotted,
-      1/16 triplet, 1/32. They are selected in the Config Menu (see Combined Edition):
-      <kbd class="docs-key">UP&amp;DOWN</kbd> toggles sync, <kbd class="docs-key">UP</kbd> /
-      <kbd class="docs-key">DOWN</kbd> cycle the division, and the ten lowest keyboard keys select
-      it directly, lowest key = 1/4 rising chromatically to 1/32. Both settings are remembered
-      across power-off.
+      Ten divisions, exact at 24 pulses per quarter (no drift): 1/4, 1/4 dotted, 1/4 triplet, 1/8, 1/8 dotted, 1/8 triplet, 1/16, 1/16 dotted, 1/16 triplet, 1/32. Choose them in the Config Menu.
+    </p>
+    <h3 class="man-sub">Sync Delay</h3>
+    <p class="docs-body">
+      Config Menu keys 20 to 31 set a sync delay of 0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 25 or 30&nbsp;ms: the whole slaved machine plays that much later than the clock, to line it up with slower gear or a slower listening path. It can only delay (a note cannot play before its clock arrives).
     </p>
     <div class="man-note">
       <strong>Note</strong>
-      MIDI arrives through the panel MIDI breakout. While sync is on and the transport is stopped
-      (or no clock is arriving), the arpeggiator and sequencer wait; turn sync off to clock from
-      the LFO again. The noise LFO waveform is analog and cannot be synced. MIDI notes play the
-      synth and its own notes are echoed on MIDI OUT: see &#8220;Playing over MIDI&#8221; above.
+      A master that compensates latency itself (for example a drum machine that sends clock early and measures its inputs) will cancel a sync delay that makes the SH-101 its latest input; leave the delay at 0 there.
     </div>
   </section>
 
@@ -324,8 +354,7 @@
     </ul>
     <p class="docs-body">
       The selection is remembered across power-off; the unit always boots into whichever firmware
-      you last chose. Switching is done from the Config Menu and takes effect through an immediate
-      reboot, about as fast as flipping the power switch.
+      you last chose. Switching is done from the Config Menu and takes effect immediately; USB stays connected.
     </p>
   </section>
 
@@ -344,11 +373,17 @@
     <table class="docs-table man-t-combo">
       <thead><tr><th>Control</th><th>Action</th></tr></thead>
       <tbody>
-        <tr><td><kbd class="docs-key">LOAD</kbd></td><td>Reboot into 80C49 mode (the original ROM).</td></tr>
-        <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Reboot into superOS-101.</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd></td><td>Switch to 80C49 mode (the original ROM).</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Switch to superOS-101.</td></tr>
         <tr><td><kbd class="docs-key">UP&amp;DOWN</kbd></td><td>MIDI clock sync on / off. KEY TRANSPOSE LED lit = on.</td></tr>
         <tr><td><kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Next / previous clock division.</td></tr>
-        <tr><td>10 lowest keys</td><td>Clock division direct: 1/4, 1/4d, 1/4t, 1/8, 1/8d, 1/8t, 1/16, 1/16d, 1/16t, 1/32.</td></tr>
+        <tr><td>Keys 1&#8230;10</td><td>Clock division: 1/4, 1/4d, 1/4t, 1/8, 1/8d, 1/8t, 1/16, 1/16d, 1/16t, 1/32.</td></tr>
+        <tr><td>Keys 11 / 12</td><td>Accent model MC-202 / TB-303 (CV board).</td></tr>
+        <tr><td>Key 13</td><td>MIDI filter cutoff on / off (CV board).</td></tr>
+        <tr><td>Key 14</td><td>LFO hard-sync to MIDI clock on / off.</td></tr>
+        <tr><td>Keys 15&#8230;18</td><td>Sequencer direction: forward, backward, ping-pong, random.</td></tr>
+        <tr><td>Key 19</td><td>HOLD pedal route: HOLD / KEY TRANSPOSE.</td></tr>
+        <tr><td>Keys 20&#8230;31</td><td>Sync delay 0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 25, 30&nbsp;ms.</td></tr>
         <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>Exit the menu and resume.</td></tr>
       </tbody>
     </table>
@@ -414,44 +449,22 @@
   <!-- ══ REFERENCE ══════════════════════════════════════════════ -->
   <div class="man-part">Reference</div>
 
-  <section id="installing" class="docs-section">
-    <div class="docs-sec-head">
-      <span class="docs-sec-num">1</span>
-      <h2 class="docs-sec-title">Installing &amp; Updating</h2>
-    </div>
-    <p class="docs-body">
-      During bring-up the firmware is flashed over USB with the Teensy loader (the CPU carries the
-      HalfKay bootloader), or over the board's ISP header. A MIDI SysEx updater like the
-      superOS-303's, so the firmware can be updated with no tools through the MIDI breakout, is
-      planned for the production release.
-    </p>
-    <div class="docs-warning">
-      <strong>Warning</strong>
-      Do not disconnect power while a firmware update is in progress unless the update has failed.
-    </div>
-  </section>
-
   <section id="status" class="docs-section">
     <div class="docs-sec-head">
       <span class="docs-sec-num">2</span>
       <h2 class="docs-sec-title">Development Status</h2>
     </div>
     <p class="docs-body">
-      v0.1-alpha is bring-up firmware: the CV/gate core, panel decode, keyboard, arpeggiator,
-      sequencer, Config Menu, and 80C49 mode are implemented and verified against a pin-level
-      simulation of the synth. Not yet implemented:
+      Implemented and verified against a pin-level simulation of the synth running the real firmware, with the clock verified on hardware against an MPC Live&nbsp;II:
     </p>
     <ul class="docs-list">
-      <li><kbd class="docs-key">KEY TRANSPOSE</kbd> in superOS-101 (works in 80C49 mode).</li>
-      <li><kbd class="docs-key">HOLD</kbd> latch of keys and arpeggios in superOS-101 (the button
-        currently writes ties while recording; hold works fully in 80C49 mode).</li>
-      <li>Exact portamento and clock-reset timing fidelity.</li>
+      <li>Keyboard, HOLD, key transpose (with transpose mode), tune, arpeggiator with random mode and octave range.</li>
+      <li>Sequencer: 8 patterns, ratchets, directions, live loop length, shift, songs, real-time recording, correcting and adding.</li>
+      <li>MIDI notes in/out, MIDI clock slave with uClock smoothing and sync delay, SysEx editor and updater.</li>
+      <li>80C49 mode (the original ROM), with MIDI and clock sync.</li>
     </ul>
-    <p class="docs-p">
-      MIDI notes in/out <em>are</em> implemented, in both firmwares; an earlier edition of this
-      manual said otherwise and was wrong. Notes 53&#8230;84 play the keyboard, notes outside that
-      range play as a mono override, and the synth&#8217;s own note and gate are echoed on MIDI OUT.
-      Confirmed on hardware.
+    <p class="docs-body">
+      Not included: the SH-1oh1-style extra filter envelope and filter LFO, which need the VCF/VCA hardware mod. None of the superOS performance features exist in 80C49 mode, which is stock by design.
     </p>
   </section>
 
@@ -460,36 +473,45 @@
       <span class="docs-sec-num">3</span>
       <h2 class="docs-sec-title">Quick Reference</h2>
     </div>
-
     <p class="docs-label">Playing</p>
     <table class="docs-table man-t-combo">
       <tbody>
         <tr><td><kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> / <kbd class="docs-key">UP&amp;DOWN</kbd></td><td>Arpeggiator on in that direction / off</td></tr>
-        <tr><td>TRIG switch <strong>GATE+TRIG</strong></td><td>Last-note priority (else lowest-note)</td></tr>
-        <tr><td>TRIG switch <strong>LFO</strong></td><td>LFO restarts on each new key</td></tr>
+        <tr><td><kbd class="docs-key">DOWN</kbd> + <kbd class="docs-key">UP&amp;DOWN</kbd> together</td><td>Random arpeggio on / off</td></tr>
+        <tr><td>Arp: <kbd class="docs-key">KEY TRANSPOSE</kbd> + <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Arp octave range 1&#8230;3</td></tr>
+        <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd> + key</td><td>Transpose from the lowest C (stays; + lowest C = off)</td></tr>
+        <tr><td>Double-tap <kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>Transpose mode: plain keys transpose while playing</td></tr>
+        <tr><td><kbd class="docs-key">KEY TRANSPOSE</kbd> + <kbd class="docs-key">LOAD</kbd></td><td>Tune: hold A 440</td></tr>
+        <tr><td>TRIG switch GATE+TRIG</td><td>Last-note priority (else lowest-note)</td></tr>
       </tbody>
     </table>
-
     <p class="docs-label">Sequencer</p>
     <table class="docs-table man-t-combo">
       <tbody>
-        <tr><td><kbd class="docs-key">LOAD</kbd></td><td>Start recording (clears old sequence)</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> (stopped)</td><td>Record a new pattern</td></tr>
         <tr><td>Key / <kbd class="docs-key">KEY TRANSPOSE</kbd> / <kbd class="docs-key">HOLD</kbd> + key</td><td>Write note / rest / legato</td></tr>
+        <tr><td>Recording: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Ratchet of last step / delete last step</td></tr>
         <tr><td><kbd class="docs-key">LOAD</kbd> (recording)</td><td>Finish (auto-saved)</td></tr>
-        <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Sequencer start / stop</td></tr>
-        <tr><td><kbd class="docs-key">PLAY</kbd> + key F3&#8230;C4</td><td>Select pattern 1&#8230;8</td></tr>
+        <tr><td><kbd class="docs-key">LOAD</kbd> (playing)</td><td>Correct and add from the next step</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd></td><td>Start / stop</td></tr>
+        <tr><td>Playing: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> / <kbd class="docs-key">UP&amp;DOWN</kbd> / <kbd class="docs-key">DOWN</kbd>+<kbd class="docs-key">UP&amp;DOWN</kbd></td><td>Forward / backward / ping-pong / random</td></tr>
+        <tr><td>Playing: <kbd class="docs-key">HOLD</kbd> + key n</td><td>Loop the first n steps (same key = full)</td></tr>
+        <tr><td>Playing: <kbd class="docs-key">KEY TRANSPOSE</kbd> + <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Shift: next / previous step now</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd> + key 1&#8230;8</td><td>Select pattern (stopped: start; playing: at the end of the pass)</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd> + several keys</td><td>Song</td></tr>
+        <tr><td>Playing: key 1&#8230;8</td><td>Switch pattern now</td></tr>
+        <tr><td>Playing: <kbd class="docs-key">PLAY</kbd> + <kbd class="docs-key">LOAD</kbd></td><td>Real-time record on / off</td></tr>
       </tbody>
     </table>
-
-    <p class="docs-label">Config Menu &amp; Combined Edition</p>
+    <p class="docs-label">Config Menu</p>
     <table class="docs-table man-t-combo">
       <tbody>
-        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> 2&nbsp;s (or at power-on)</td><td>Config Menu</td></tr>
-        <tr><td>Menu: <kbd class="docs-key">LOAD</kbd> / <kbd class="docs-key">PLAY</kbd></td><td>Boot 80C49 mode / superOS-101</td></tr>
-        <tr><td>Menu: <kbd class="docs-key">UP&amp;DOWN</kbd></td><td>MIDI clock sync on / off (KEY TRANSPOSE LED = on)</td></tr>
-        <tr><td>Menu: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> or 10 lowest keys</td><td>MIDI clock division (1/4 &hellip; 1/32)</td></tr>
-        <tr><td>Menu: <kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>Exit menu</td></tr>
-        <tr><td><kbd class="docs-key">LOAD</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> at power-on (80C49 mode)</td><td>Original Test Mode</td></tr>
+        <tr><td>Hold <kbd class="docs-key">HOLD</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> 2&nbsp;s</td><td>Config Menu</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">LOAD</kbd> / <kbd class="docs-key">PLAY</kbd></td><td>80C49 mode / superOS-101</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">UP&amp;DOWN</kbd></td><td>MIDI clock sync on / off</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd>, keys 1&#8230;10</td><td>Clock division</td></tr>
+        <tr><td>Menu: keys 15&#8230;18 / 19 / 20&#8230;31</td><td>Direction / pedal route / sync delay</td></tr>
+        <tr><td>Menu: <kbd class="docs-key">KEY TRANSPOSE</kbd></td><td>Exit</td></tr>
       </tbody>
     </table>
   </section>
@@ -502,8 +524,7 @@
     <ul class="man-spec">
       <li>
         <span class="man-spec-name">CPU</span>
-        AT90USB1286 (16&nbsp;MHz) on a drop-in board for the SH-101's 40-pin 80C49 socket. USB
-        for firmware flashing; MIDI via the panel breakout (hardware present, firmware planned).
+        AT90USB1286 (run at 4&nbsp;MHz to keep the pitch rail quiet) on a drop-in board for the SH-101's 40-pin 80C49 socket. USB-C MIDI and DIN MIDI; firmware updates over MIDI SysEx.
       </li>
       <li>
         <span class="man-spec-name">CV engine</span>
@@ -518,16 +539,15 @@
       </li>
       <li>
         <span class="man-spec-name">Arpeggiator</span>
-        Up, down, up&amp;down over held keys; clocked by LFO or EXT CLK.
+        Up, down, up&amp;down and random over held keys, 1 to 3 octaves; clocked by LFO, EXT CLK or MIDI clock.
       </li>
       <li>
         <span class="man-spec-name">Sequencer</span>
-        8 patterns of up to 128 steps of note / rest / legato, clocked by LFO, EXT CLK, or divided
-        MIDI clock, saved automatically to permanent on-chip memory (no battery).
+        8 patterns of up to 128 steps of note / rest / legato with 1x/2x/3x ratchets; forward, backward, ping-pong, random; songs of up to 16 patterns; step and real-time recording; saved automatically to permanent on-chip memory (no battery).
       </li>
       <li>
         <span class="man-spec-name">MIDI clock sync</span>
-        24-ppqn realtime clock with Start / Stop / Continue; ten drift-free divisions
+        24-ppqn realtime clock, strict transport slave, uClock jitter smoothing, 0 to 60&nbsp;ms sync delay; ten drift-free divisions
         (1/4 &hellip; 1/32 with dotted and triplet); clocks the arp/sequencer, hard-syncs the
         analog LFO via CLOCK RESET, and steps the random S&amp;H; works in both firmwares
         (injected on the emulated T1 in 80C49 mode). Settings retained across power-off.
@@ -547,7 +567,7 @@
 
   <!-- ── Footer ─────────────────────────────────────────────────── -->
   <footer class="man-footer">
-    <p>superOS-101 Firmware Owner's Manual &middot; Combined Edition v0.1-alpha.</p>
+    <p>superOS-101 Firmware Owner's Manual &middot; Combined Edition v0.2.</p>
     <p>Roland and SH-101 are trademarks of Roland Corporation, used solely to identify compatibility. This project and site are not affiliated with, endorsed, or sponsored by Roland Corporation.</p>
   </footer>
 
