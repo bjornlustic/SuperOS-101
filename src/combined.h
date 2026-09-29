@@ -16,7 +16,7 @@
 //                VCF/VCA amounts, decay, velocity threshold, res depth, build-up,
 //                board variant (1 = bipolar, default; 0 = unreworked first-batch v1.1)
 //   0x020        feature magic (EE_FEAT_MAGIC_VAL), 0x021 sequencer direction,
-//   0x022        pedal route (main.cpp LoadFeatures)
+//   0x022        pedal route, 0x023 arp octave range (engine.h LoadFeatures)
 //   0x030..      free (SuperOS patterns live in the flash arena, flash_persist.h)
 //   0x100        emulator RAM-image magic (EE_EMU_MAGIC_VAL when valid)
 //   0x101..0x164 emulator "battery RAM": the 80C49's RAM 0x1C..0x7F (the 100
@@ -51,7 +51,8 @@ static const uint16_t EE_CV_FIRST    = 0x010;   // cvdac.h's EE_CV_MAGIC
 static const uint16_t EE_A_FEAT_MAGIC = 0x020;  // SuperOS performance settings (main.cpp)
 static const uint16_t EE_A_FEAT_DIR   = 0x021;  // sequencer direction (engine.h SeqDir)
 static const uint16_t EE_A_FEAT_PEDAL = 0x022;  // pedal route (controls.h PedalMode)
-static const uint16_t EE_FEAT_END     = 0x023;
+static const uint16_t EE_A_FEAT_ARPRANGE = 0x023;  // arp octave range 1..3
+static const uint16_t EE_FEAT_END     = 0x024;
 static const uint16_t EE_FREE_FIRST  = 0x030;
 static const uint16_t EE_A_EMU_MAGIC = 0x100;
 static const uint16_t EE_A_EMU_RAM   = 0x101;

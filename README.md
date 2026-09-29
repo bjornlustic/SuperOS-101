@@ -58,6 +58,9 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
 - **Shift (SH-1oh1)**: while playing, **KEY TRANSPOSE + UP / DOWN** plays the next /
   previous step now (move the pattern against the clock).
 - **Random arp (SH-1oh1)**: **DOWN + U&D together** (U&D LED blinks); again = off.
+- **Arp octave range**: in arp mode, **KEY TRANSPOSE + UP / DOWN** = one octave more / less
+  (1 to 3). UP climbs octave by octave, DOWN starts at the top, U&D bounces across the whole
+  span, random picks an octave too. Persists. (Our addition; the SH-1oh1 has no range.)
 - **Patterns (SH-1oh1)**: **PLAY held + key 1-8**: from stop, starts that pattern on
   release; while playing, it follows at the end of the current pass. **PLAY held + several
   keys** in order = a song (up to 16, looping). A **key 1-8 alone while playing** switches

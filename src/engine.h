@@ -51,6 +51,7 @@ inline uint8_t Rnd8() { static uint16_t st = 0xACE1; st ^= st << 7; st ^= st >> 
 // sequencer direction and the pedal route. Written only when not clocked
 // (an EEPROM byte write stalls ~3.4 ms; main.cpp defers it).
 inline uint8_t& DirSetting() { static uint8_t d = DIR_FWD; return d; }
+inline uint8_t& ArpRange() { static uint8_t r = 1; return r; }   // arp octave range 1..3
 inline bool& FeatDirty() { static bool d = false; return d; }
 inline void LoadFeatures() {
   if (eeprom_read_byte((uint8_t*)EE_A_FEAT_MAGIC) != EE_FEAT_MAGIC_VAL) return;
@@ -58,11 +59,14 @@ inline void LoadFeatures() {
   DirSetting() = d < DIR_COUNT ? d : DIR_FWD;
   uint8_t pm = eeprom_read_byte((uint8_t*)EE_A_FEAT_PEDAL);
   controls::PedalRoute() = pm <= controls::PEDAL_TRANSPOSE ? pm : controls::PEDAL_HOLD;
+  uint8_t ar = eeprom_read_byte((uint8_t*)EE_A_FEAT_ARPRANGE);   // 0xFF before it existed
+  ArpRange() = (ar >= 1 && ar <= 3) ? ar : 1;
 }
 inline void SaveFeatures() {
   eeprom_update_byte((uint8_t*)EE_A_FEAT_MAGIC, EE_FEAT_MAGIC_VAL);
   eeprom_update_byte((uint8_t*)EE_A_FEAT_DIR, DirSetting());
   eeprom_update_byte((uint8_t*)EE_A_FEAT_PEDAL, controls::PedalRoute());
+  eeprom_update_byte((uint8_t*)EE_A_FEAT_ARPRANGE, ArpRange());
   FeatDirty() = false;
 }
 // KEY TRANSPOSE reference: key 7 (C4, MIDI 60) plays the sequence as written.
@@ -98,33 +102,59 @@ inline int8_t keyBelow  (uint32_t m, int8_t k) { for (int8_t i = k - 1; i >= 0; 
 class Arp {
   int8_t cur = -1;
   int8_t dir = 1;
+  uint8_t oct = 0;     // octave offset of the current note, 0..range-1
  public:
   bool gate = false;   // on at each step, off at the half-step
   int8_t current() const { return cur; }
-  void reset() { cur = -1; dir = 1; gate = false; }
-  int8_t step(uint32_t mask, Mode mode) {
+  uint8_t octave() const { return oct; }
+  void reset() { cur = -1; dir = 1; oct = 0; gate = false; }
+  // range: 1..3 octaves. The held keys play in order through each octave
+  // (UP: low -> high, octave by octave; DOWN from the top octave; U&D
+  // bounces across the whole span; RANDOM picks a key and an octave).
+  int8_t step(uint32_t mask, Mode mode, uint8_t range = 1) {
     if (!mask) { cur = -1; return -1; }
+    if (range < 1) range = 1;
+    if (oct >= range) oct = 0;
     if (cur < 0 || !(mask & (1UL << cur))) {        // (re)start
       dir = (mode == MODE_ARP_DOWN) ? -1 : 1;
       cur = (mode == MODE_ARP_DOWN) ? highestKey(mask) : lowestKey(mask);
+      oct = (mode == MODE_ARP_DOWN) ? (uint8_t)(range - 1) : 0;
       return cur;
     }
     int8_t nxt;
     if (mode == MODE_ARP_RANDOM) {
-      // A random held key, never the same one twice in a row when there is
-      // a choice (a repeat reads as a dropped step).
+      // A random held key in a random octave, never the same note twice in
+      // a row when there is a choice (a repeat reads as a dropped step).
       uint8_t n = 0; for (uint8_t k = 0; k < 32; ++k) if (mask & (1UL << k)) ++n;
       uint8_t pick = (uint8_t)(Rnd8() % n);
+      uint8_t o = (uint8_t)(Rnd8() % range);
       nxt = -1;
       for (int8_t k = 0; k < 32; ++k) if (mask & (1UL << k)) { if (pick-- == 0) { nxt = k; break; } }
-      if (nxt == cur && n > 1) { nxt = keyAbove(mask, cur); if (nxt < 0) nxt = lowestKey(mask); }
+      if (nxt == cur && o == oct && n * range > 1) {
+        if (n > 1) { nxt = keyAbove(mask, cur); if (nxt < 0) nxt = lowestKey(mask); }
+        else o = (uint8_t)((o + 1) % range);
+      }
+      oct = o;
     } else if (mode == MODE_ARP_UP) {
-      nxt = keyAbove(mask, cur); if (nxt < 0) nxt = lowestKey(mask);
+      nxt = keyAbove(mask, cur);
+      if (nxt < 0) { nxt = lowestKey(mask); oct = (uint8_t)((oct + 1) % range); }
     } else if (mode == MODE_ARP_DOWN) {
-      nxt = keyBelow(mask, cur); if (nxt < 0) nxt = highestKey(mask);
-    } else {                                         // UP&DOWN
-      if (dir > 0) { nxt = keyAbove(mask, cur); if (nxt < 0) { dir = -1; nxt = keyBelow(mask, cur); } }
-      else         { nxt = keyBelow(mask, cur); if (nxt < 0) { dir =  1; nxt = keyAbove(mask, cur); } }
+      nxt = keyBelow(mask, cur);
+      if (nxt < 0) { nxt = highestKey(mask); oct = (uint8_t)((oct + range - 1) % range); }
+    } else {                                         // UP&DOWN across the span
+      if (dir > 0) {
+        nxt = keyAbove(mask, cur);
+        if (nxt < 0) {
+          if (oct + 1 < range) { ++oct; nxt = lowestKey(mask); }
+          else { dir = -1; nxt = keyBelow(mask, cur); if (nxt < 0 && oct > 0) { --oct; nxt = cur; } }
+        }
+      } else {
+        nxt = keyBelow(mask, cur);
+        if (nxt < 0) {
+          if (oct > 0) { --oct; nxt = highestKey(mask); }
+          else { dir = 1; nxt = keyAbove(mask, cur); if (nxt < 0 && range > 1) { ++oct; nxt = cur; } }
+        }
+      }
       if (nxt < 0) nxt = cur;
     }
     cur = nxt;
@@ -603,6 +633,11 @@ class NoteEngine {
       // step now, moving the pattern against the clock.
       if (b.pressed(BTN_UP))   nudge_ = +1;
       if (b.pressed(BTN_DOWN)) nudge_ = -1;
+    } else if (IsArp(mode_) && kt) {
+      // Arp octave range: KEY TRANSPOSE + UP / DOWN = one octave more / less
+      // (1..3). Persists.
+      if (b.pressed(BTN_UP)   && ArpRange() < 3) { ++ArpRange(); FeatDirty() = true; }
+      if (b.pressed(BTN_DOWN) && ArpRange() > 1) { --ArpRange(); FeatDirty() = true; }
     } else if (mode_ == MODE_SEQ_PLAY) {
       // Direction while playing (SH-1oh1): UP forward, DOWN backward, U&D
       // ping-pong, DOWN + U&D together random.
@@ -799,7 +834,14 @@ class NoteEngine {
         // the LFO clock is not restarted on every step: a per-step reset made
         // the step spacing depend on the LFO phase and sounded uneven.
         if (mask && !prevMask_) o.clockReset = true;
-        if (clockEdge) { int8_t k = arp_.step(mask, mode_); if (k >= 0) { lastCv_ = noteCv(k, p); arp_.gate = true; o.portaOff = true; } }
+        if (clockEdge) {
+          int8_t k = arp_.step(mask, mode_, ArpRange());
+          if (k >= 0) {
+            int16_t v = (int16_t)noteCv(k, p) + 12 * arp_.octave();
+            lastCv_ = (uint8_t)(v > CV_MAX ? CV_MAX : v);
+            arp_.gate = true; o.portaOff = true;
+          }
+        }
         if (halfEdge) arp_.gate = false;
         if (!mask) arp_.reset();
         o.cv = lastCv_;

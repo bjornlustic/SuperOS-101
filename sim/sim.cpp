@@ -1479,6 +1479,29 @@ static int SelfTest() {
     btn(B_DOWN, true); tap(B_UD); btn(B_DOWN, false);
     CHECK((sim_portf & 7) == 0, "DOWN + U&D again: arp off");
 
+    // Arp octave range: KEY TRANSPOSE + UP / DOWN in arp mode (1..3).
+    {
+      auto arpRun = [&](int modeBtn, int n) {
+        tap(modeBtn);
+        sim::g_keys = (1UL << 0) | (1UL << 4); RunLoops(3);
+        SettleClockReset();
+        std::string r;
+        for (int i = 0; i < n; ++i) { ClockTick(); r += std::to_string(sim::g_sh[0]) + " "; }
+        sim::g_keys = 0; RunLoops(3); tap(modeBtn); WaitVirtMs(40);
+        return r;
+      };
+      tap(B_UP); btn(B_KT, true); tap(B_UP); btn(B_KT, false); tap(B_UP);   // arp on, range 2, arp off
+      CHECK(engine::ArpRange() == 2, "KEY TRANSPOSE + UP in arp mode: octave range 2");
+      std::string up = arpRun(B_UP, 8), dn = arpRun(B_DOWN, 8), ud = arpRun(B_UD, 8);
+      printf("  (arp 2 octaves: UP %s| DOWN %s| U&D %s)\n", up.c_str(), dn.c_str(), ud.c_str());
+      CHECK(up == "17 21 29 33 17 21 29 33 ", "arp UP over 2 octaves");
+      CHECK(dn == "33 29 21 17 33 29 21 17 ", "arp DOWN over 2 octaves, from the top");
+      CHECK(ud == "17 21 29 33 29 21 17 21 ", "arp U&D bounces across both octaves");
+      tap(B_UP); btn(B_KT, true); tap(B_DOWN); tap(B_DOWN); btn(B_KT, false); tap(B_UP);
+      CHECK(engine::ArpRange() == 1, "KEY TRANSPOSE + DOWN: back to 1 octave (floor 1)");
+      WaitVirtMs(40);
+    }
+
     // Tune mode: KEY TRANSPOSE + LOAD from keyboard mode holds A (440 Hz at 8').
     g_midiOut.clear();
     btn(B_KT, true); tap(B_LOAD); btn(B_KT, false); WaitVirtMs(20);
