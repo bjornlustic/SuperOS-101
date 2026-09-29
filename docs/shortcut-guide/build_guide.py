@@ -32,9 +32,11 @@ REV = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "buildrev.py")
                      capture_output=True, text=True).stdout.strip() or "unknown"
 VERSION = f"Build {datetime.date.today().isoformat()} ({REV})"
 RED, BLUE = "#e3001b", "#2f7fd0"
+CREDIT = "Panel photo: Wikipedia user 909 bd, Wikimedia Commons, CC BY-SA 3.0."
 
 # ---- one drawing with callouts (the S900 guide's diagram.py, sized for this panel) ----
 PRINT_MM = 134.0                    # printed width of a diagram
+MAX_H_MM = 78.0                     # and its largest printed height
 KEYS = panel.centres()
 
 
@@ -54,13 +56,26 @@ def bbox(btn):
     return x0, y0, x1, y1
 
 
-def draw(callouts, state, crop="play"):
-    X0, X1 = panel.X0 - 2, panel.X1 + 2
-    Y0, Y1 = panel.CROPS[crop][0] - 2, panel.CROPS[crop][1] + 2
+def draw(callouts, state, crop=None):
+    if crop is None:
+        # Zoom to what the scene uses: POWER to key 15 when every callout sits there, and only the
+        # button strip and the top of the keys when nothing below them is pointed at.
+        boxes = [bbox(c["btn"]) for c in callouts]
+        x0, y0, x1, y1 = panel.CROPS["left"]
+        if any(b[2] > x1 - 40 for b in boxes):
+            x1 = panel.X1
+        if all(b[3] < 700 for b in boxes):
+            y1 = 800
+        crop = (x0, y0, x1, y1)
+    X0, Y0, X1, Y1 = panel.CROPS[crop] if isinstance(crop, str) else crop
     vw = X1 - X0
-    mm = vw / PRINT_MM
+    nb = len({c["side"] for c in callouts})
+    # printed width: the full column, unless that makes the drawing taller than MAX_H_MM
+    # (bands of callouts included); labels keep their printed size either way
+    pw = min(PRINT_MM, (MAX_H_MM - nb * 8.2 - (2 - nb) * 1.5) * vw / (Y1 - Y0))
+    mm = vw / pw
     FS, LH, PADX, GAP = 1.85 * mm, 3.6 * mm, 1.3 * mm, 1.0 * mm
-    BAND, RING, LEAD = LH + 4.6 * mm, 0.45 * mm, 0.28 * mm
+    BAND, RING, LEAD = LH + 4.6 * mm, 0.5 * mm, 0.3 * mm
     top = BAND if any(c["side"] == "t" for c in callouts) else 1.5 * mm
     bot = BAND if any(c["side"] == "b" for c in callouts) else 1.5 * mm
     rows = {"t": [], "b": []}
@@ -83,16 +98,16 @@ def draw(callouts, state, crop="play"):
             c["_x"] = min(c["_x"], hi - c["_w"])
             hi = c["_x"] - GAP
     H = Y1 - Y0 + top + bot
-    body = panel.svg(state, crop)
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{X0} {Y0 - top:.1f} {vw} {H:.1f}" '
+    body = panel.svg(state, crop, with_leds=False)
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" style="width:{pw:.1f}mm" viewBox="{X0} {Y0 - top:.1f} {vw} {H:.1f}" '
            f'font-family="{panel.FONT}" stroke-linejoin="round" stroke-linecap="round">',
            f'<rect x="{X0}" y="{Y0 - top:.1f}" width="{vw}" height="{H:.1f}" fill="#fff"/>',
            body.replace("<svg ", f'<svg x="{X0}" y="{Y0}" width="{vw}" height="{Y1 - Y0}" ', 1)]   # nested: clips the cut
-    lines, rings, pills = [], [], []
+    lines, lhalos, rings, pills = [], [], [], []
     for c in callouts:
         col = RED if c["hold"] else (BLUE if c["box"] else "#000")
         cx, cy, cw, ch = c["_cx"], c["_cy"], c["_cw"], c["_ch"]
-        m = (1.1 if c["box"] else 0.9) * mm
+        m = (1.1 if c["box"] else 0.6) * mm
         dash = f' stroke-dasharray="{1.6 * mm:.1f} {1.0 * mm:.1f}"' if c["box"] else ""
         rx = m if c["box"] else min(cw, ch) / 2 + m if c["btn"] in ("VOLUME", "PORTAKNOB", "TUNE") else 3 + m
         rings.append(f'<rect x="{cx - cw / 2 - m:.1f}" y="{cy - ch / 2 - m:.1f}" width="{cw + 2 * m:.1f}" '
@@ -108,8 +123,10 @@ def draw(callouts, state, crop="play"):
             sx, sy, ey = px + w / 2, py, edge_bot
         knee = sy + (1.8 * mm if c["side"] == "t" else -1.8 * mm)
         tx = min(max(sx, cx - cw / 2 + 6), cx + cw / 2 - 6)   # land inside a wide group, not only at its centre
-        lines.append(f'<path d="M{sx:.1f},{sy:.1f} L{sx:.1f},{knee:.1f} L{tx:.1f},{ey:.1f}" fill="none" '
-                     f'stroke="{col}" stroke-width="{LEAD:.2f}"/>')
+        path = f'M{sx:.1f},{sy:.1f} L{sx:.1f},{knee:.1f} L{tx:.1f},{ey:.1f}'
+        lhalos.append(f'<path d="{path}" fill="none" stroke="#fff" stroke-width="{LEAD * 3.2:.2f}" '
+                      'stroke-opacity="0.9"/>')
+        lines.append(f'<path d="{path}" fill="none" stroke="{col}" stroke-width="{LEAD:.2f}"/>')
         fill = RED if c["hold"] else "#fff"
         tcol = "#fff" if c["hold"] else (BLUE if c["box"] else "#000")
         pills.append(f'<rect x="{px:.1f}" y="{py:.1f}" width="{w:.1f}" height="{LH:.1f}" rx="{LH / 2:.1f}" '
@@ -118,9 +135,9 @@ def draw(callouts, state, crop="play"):
                      f'font-size="{FS:.1f}" font-weight="{panel.WEIGHT}" letter-spacing="{0.08 * mm:.2f}" '
                      f'fill="{tcol}">{esc(c["label"])}</text>')
     halos = [re.sub(r'stroke="[^"]*"', 'stroke="#fff"', r, 1)
-             .replace(f'stroke-width="{RING:.2f}"', f'stroke-width="{RING * 1.8:.2f}"')
+             .replace(f'stroke-width="{RING:.2f}"', f'stroke-width="{RING * 2.3:.2f}"')
              .replace(" stroke-dasharray", " data-d") for r in rings]
-    out += lines + halos + rings + pills + ["</svg>"]
+    out += lhalos + halos + lines + rings + [panel.leds(state)] + pills + ["</svg>"]
     return "".join(out)
 
 
@@ -179,14 +196,14 @@ def chip(t, filled=False):
 
 
 def block(n, f):
-    dia = svg_data(draw(f["callouts"], f["_state"]))
+    dia = draw(f["callouts"], f["_state"])       # inline: the photo is referenced, not embedded per drawing
     shot = (f'<div class="shot"><div class="lcd"><img src="{svg_data(leds_svg(f["_state"]))}" alt="">'
             f'</div><p>{esc(f["caption"])}</p></div>')
     steps = "".join(f"<li>{esc(s)}</li>" for s in f["steps"])
     note = f'<div class="note"><strong>Note</strong>{esc(f["note"])}</div>' if f["note"] else ""
     return (f'<section class="fn"><div class="head"><span class="num">{n}</span>'
             f'<h2>{esc(f["title"])}</h2></div><div class="ctx">{chip(f["mode"], True)}{chip(f["when"])}</div>'
-            f'<div class="row"><div class="dia"><img src="{dia}" alt=""></div>{shot}</div>'
+            f'<div class="row"><div class="dia">{dia}</div>{shot}</div>'
             f'<ol class="steps">{steps}</ol>{note}</section>')
 
 
@@ -209,7 +226,8 @@ strong { font-weight: 500; }
   text-transform: uppercase; line-height: 1.8; }
 .intro { margin-top: 4mm; font-size: 9.5pt; line-height: 1.5; }
 .coverart { margin: 8mm 0 0; }
-.coverart img { display: block; width: 100%; height: auto; }
+.coverart svg { display: block; width: 100%; height: auto; }
+.credit { margin-top: 2mm; font-size: 6.8pt; letter-spacing: 0.04em; }
 .legend { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3mm; margin-top: 8mm; }
 .legend div { border: 1.5px solid #000; border-radius: 8px; padding: 2.5mm 3mm;
   font-size: 8pt; line-height: 1.45; }
@@ -239,7 +257,7 @@ strong { font-weight: 500; }
   text-transform: uppercase; border: 1.5px solid #000; padding: 0.4mm 2mm; line-height: 1.5;
   white-space: nowrap; }
 .chip.f { background: #000; color: #fff; }
-.dia img { display: block; width: 100%; height: auto; }
+.dia svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .row { display: grid; grid-template-columns: 136fr 50fr; gap: 4mm; align-items: center; margin-top: 1mm; }
 .shot { border: 1.8px solid #000; border-radius: 8px; padding: 2mm; }
 .lcd img { display: block; width: 100%; height: auto; }
@@ -304,13 +322,15 @@ def ref():
             'settings over USB-C or DIN.</p>'
             '<h3>About these pages</h3><p>The LEDs in every drawing are what the SuperOS-101 firmware '
             f'(rev {esc(REV)}) shows in the host simulator (sim/superos101-sim, the real firmware source) '
-            'after the keys of that function, on a fresh machine. The panel drawing follows the Roland '
-            'owner\'s manual; most drawings show the button strip, controllers and keyboard. Details: '
-            'README.md.</p></div>')
+            'after the keys of that function, on a fresh machine, drawn on a photo of a production SH-101 '
+            '(lit LEDs glow red; a blinking LED is half lit inside a dashed ring). Most drawings show the '
+            'button strip, controllers and keyboard. Details: README.md.</p>'
+            f'<p>{CREDIT} The panel images in this guide are adaptations of that photo, under the same '
+            'license (creativecommons.org/licenses/by-sa/3.0).</p></div>')
 
 
 def cover():
-    art = svg_data(panel.svg({"PLAY": "on", "HOLD": "on", "KT": "blink"}, "full"))
+    art = panel.svg({"PLAY": "on", "HOLD": "on", "KT": "blink"}, "full", numbers=False)
     return f"""<div class="cover">
 <div class="brand"><span class="brand-note">Firmware Documentation</span>
 <span class="brand-note">Panel Reference</span></div>
@@ -320,13 +340,14 @@ AT90USB1286 CPU board &middot; SuperOS + 80C49 emulator &middot; MIDI on DIN and
 <p class="intro">Every SuperOS function on one drawing each: the panel, the controls involved, the order to
 press them, and the LEDs the SH-101 shows while you do it. The LED states are real: the firmware ran each
 sequence in the host simulator. Find the function, look at the picture, follow the numbered steps.</p>
-<div class="coverart"><img src="{art}" alt=""></div>
+<div class="coverart">{art}<p class="credit">{CREDIT}</p></div>
 <div class="legend">
 <div><strong>Reading the drawings</strong><i></i>Black ring: press this.<br>
 <i class="h"></i>Red ring and red label: hold it while you do the rest.<br>
 <b></b>Blue dashed box: any key in that group.</div>
 <div><strong>LEDs</strong><i class="on"></i>lit &nbsp;<i class="bl"></i>blinking &nbsp;<i class="off"></i>off<br>
-The box beside each drawing repeats the seven LEDs large. Keys are numbered 1 to 32 from the lowest F;
+On the photo a lit LED glows red; a blinking one is half lit inside a dashed red ring. The box beside
+each drawing repeats the seven LEDs large. Keys are numbered 1 to 32 from the lowest F;
 key 8 is the lowest C.</div>
 <div><strong>Words</strong>A + B: hold A, then press B. Tap: press and release. Playing: the sequencer
 runs. Clock: the LFO / CLK RATE, or MIDI clock with sync on. The header gives the mode and when it

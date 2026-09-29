@@ -1,65 +1,73 @@
 #!/usr/bin/env python3
-"""The Roland SH-101 panel as black-and-white line art (SVG).
+"""The Roland SH-101 panel: the real photo, with the LED states drawn on it.
 
-Laid out after the owner's manual drawings (SH101-reference/SH101_OM.pdf: p.3
-panel overview, p.31 controllers, p.33 function buttons) in a 1000-unit wide
-frame. Upper panel: TUNE, MODULATOR, VCO, SOURCE MIXER, VCF, VCA, ENV. Middle
-strip: the seven function buttons with their LEDs. Lower: the controller
-section (VOLUME, PORTAMENTO, bender, PORTAMENTO and TRANSPOSE switches) and
-the 32-key keyboard, F to C (key1 = lowest F, key8 = lowest C).
+panel-photo.jpg (2334 x 1296) is prepare_photo.py's levelled crop of
+sh101-photo-wikimedia.jpg (Wikimedia Commons, "SH-101.jpg" by Wikipedia user
+909 bd, CC BY-SA 3.0). Every position below is measured on panel-photo.jpg,
+in its pixels; check_panel.py draws the boxes over the photo to prove it.
 
-svg(state, crop): state = {"LOAD": "on" | "blink", ...} as capture.py reports
-it (LED ids LOAD PLAY DOWN UD UP HOLD KT), crop "full" or "play" (strip,
-controllers and keyboard).
+svg(state, crop): the photo (as an <image> referencing panel-photo.jpg, so
+the HTML that inlines it must sit next to the file) with each LED of state
+({"LOAD": "on" | "blink", ...}, ids LOAD PLAY DOWN UD UP HOLD KT, as
+capture.py reports) lit on the photo. crop "full", "play" (button strip,
+controllers and keyboard) or "left" (the same, POWER to key 15).
 centres(): id -> (cx, cy, w, h) of every control a callout can point at.
 """
 FONT = "Helvetica Neue, Helvetica, Arial, sans-serif"
 WEIGHT = 500                                  # Helvetica Neue Medium
-X0, X1, Y0, Y1 = 0, 1000, 0, 500
-CROPS = {"full": (Y0, Y1), "play": (208, Y1)}
+PHOTO = "panel-photo.jpg"
+X0, X1, Y0, Y1 = 0, 2334, 0, 1296
+# crop: (x0, y0, x1, y1). "left" = POWER to key 15 with the controllers, for scenes that stay there.
+CROPS = {"full": (X0, Y0, X1, Y1), "play": (X0, 508, X1, Y1), "left": (X0, 508, 1262, Y1)}
 LED_ON = "#e3001b"
 LEDS = ["LOAD", "PLAY", "DOWN", "UD", "UP", "HOLD", "KT"]
 LED_NAME = {"LOAD": "LOAD", "PLAY": "PLAY", "DOWN": "DOWN", "UD": "U&D", "UP": "UP", "HOLD": "HOLD",
             "KT": "KEY TRANSP."}
 
-# keyboard: 32 keys F..C
-KB_X0, KB_X1, KB_Y0, KB_Y1 = 200, 990, 292, 490
-WHITE_W = (KB_X1 - KB_X0) / 19
-BLACK_W, BLACK_H = 24, 118
-BLACK = {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25, 27, 29}   # 0-based semitones from F that are black
-
-KEYS = {}                                   # id: (cx, cy, w, h, kind)
-_w = 0
-_white_x = {}
-for k in range(32):
-    if k in BLACK:
-        continue
-    _white_x[k] = KB_X0 + _w * WHITE_W
-    _w += 1
-for k in range(32):
-    if k in BLACK:
-        x = _white_x[k - 1] + WHITE_W - BLACK_W / 2
-        KEYS[f"key{k + 1}"] = (x + BLACK_W / 2, KB_Y0 + BLACK_H / 2, BLACK_W, BLACK_H, "black")
-    else:
-        x = _white_x[k]                     # callout box: the part below the black keys
-        y0 = KB_Y0 + BLACK_H + 2
-        KEYS[f"key{k + 1}"] = (x + WHITE_W / 2, (y0 + KB_Y1) / 2, WHITE_W, KB_Y1 - y0, "white")
-
-# function buttons, over the left of the keyboard (OM p.33)
-BTN_Y, BTN_W, BTN_H, LED_Y = 241, 38, 17, 219
-BTN_X = {"LOAD": 232, "PLAY": 278, "DOWN": 352, "UD": 398, "UP": 444, "HOLD": 518, "KT": 580}
+# id: (cx, cy, w, h, kind)
+KEYS = {}
+# function buttons (outer bezel) and their LED windows
+BTN_X = {"LOAD": 438, "PLAY": 507, "DOWN": 600, "UD": 669, "UP": 737, "HOLD": 830, "KT": 924}
+LED_X = {"LOAD": 438, "PLAY": 507, "DOWN": 600, "UD": 669, "UP": 737, "HOLD": 831, "KT": 923}
+BTN_Y, BTN_W, BTN_H = 582, 54, 30
+LED_Y, LED_W, LED_H = 544, 23, 11
 for b, x in BTN_X.items():
     KEYS[b] = (x, BTN_Y, BTN_W, BTN_H, "button")
-KEYS["POWER"] = (60, 243, 34, 17, "button")
-# controller section (OM p.31)
-KEYS["VOLUME"] = (55, 318, 40, 40, "knob")
-KEYS["PORTAKNOB"] = (140, 318, 40, 40, "knob")
-KEYS["PORTASW"] = (150, 386, 56, 14, "switch3")
-KEYS["TRANSPOSE"] = (150, 428, 56, 14, "switch3")
-KEYS["BENDER"] = (100, 470, 150, 16, "bender")
-# upper panel
-KEYS["TUNE"] = (45, 118, 40, 40, "knob")
-KEYS["RATE"] = (110, 118, 16, 110, "slider")
+KEYS["POWER"] = (165, 580, 69, 40, "button")
+
+# keyboard: 19 white keys (spans at the key fronts) and 13 black keys
+WHITE = [(376, 470), (475, 569), (573, 666), (672, 765), (770, 863), (868, 960), (967, 1059),
+         (1066, 1158), (1164, 1255), (1262, 1354), (1360, 1452), (1457, 1549), (1556, 1648),
+         (1654, 1747), (1754, 1846), (1854, 1947), (1952, 2046), (2052, 2146), (2150, 2242)]
+BLACKS = [(432, 491), (543, 603), (654, 713), (825, 884), (947, 1008), (1119, 1178), (1228, 1290),
+          (1352, 1400), (1524, 1571), (1648, 1695), (1823, 1870), (1934, 1982), (2048, 2095)]
+KB_TOP, BLACK_BOT, KB_BOT = 703, 1075, 1287
+BLACK = {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25, 27, 29}   # semitones from F that are black
+_w = iter(WHITE)
+_b = iter(BLACKS)
+for k in range(32):
+    if k in BLACK:
+        a, b = next(_b)
+        KEYS[f"key{k + 1}"] = ((a + b) / 2, (KB_TOP + BLACK_BOT) / 2, b - a, BLACK_BOT - KB_TOP, "black")
+    else:
+        a, b = next(_w)                     # callout box: the key front below the black keys
+        y0 = BLACK_BOT + 6
+        KEYS[f"key{k + 1}"] = ((a + b) / 2, (y0 + KB_BOT) / 2, b - a, KB_BOT - y0, "white")
+
+# controller section
+KEYS["VOLUME"] = (89, 817, 86, 86, "knob")
+KEYS["PORTAKNOB"] = (282, 817, 86, 86, "knob")
+KEYS["PORTASW"] = (287, 959, 92, 30, "switch")
+KEYS["TRANSPOSE"] = (287, 1061, 92, 32, "switch")
+KEYS["BENDER"] = (182, 1215, 184, 48, "bender")
+for name, x, top in [("BEND_VCO", 58, 920), ("BEND_VCF", 120, 920), ("BEND_MOD", 183, 919)]:
+    KEYS[name] = (x, (top + 1104) / 2, 40, 1104 - top, "slider")
+# upper panel, for orientation
+KEYS["TUNE"] = (167, 365, 112, 112, "knob")
+KEYS["RATE"] = (296, 385, 40, 196, "slider")
+for name, a, b in [("MODULATOR", 252, 500), ("VCO", 502, 936), ("SOURCEMIXER", 938, 1365),
+                   ("VCF", 1367, 1756), ("VCA", 1758, 1868), ("ENV", 1871, 2323)]:
+    KEYS[name] = ((a + b) / 2, 334, b - a, 368, "section")
 
 
 def esc(s):
@@ -72,7 +80,7 @@ def T(x, y, s, size=9.0, anchor="middle", fill="#000"):
 
 
 def led(x, y, w, h, st, rx=1.0):
-    """An LED window: off = outline, on = filled, blink = lower half filled."""
+    """A flat LED window for the large readout: off = outline, on = filled, blink = lower half."""
     base = f'<rect x="{x - w / 2:.1f}" y="{y - h / 2:.1f}" width="{w}" height="{h}" rx="{rx}" '
     if st == "on":
         return base + f'fill="{LED_ON}" stroke="{LED_ON}" stroke-width="1"/>'
@@ -82,174 +90,63 @@ def led(x, y, w, h, st, rx=1.0):
     return base + 'fill="#fff" stroke="#000" stroke-width="1"/>'
 
 
-def knob(cx, cy, r, ticks=11):
-    import math
-    out = [f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="#fff" stroke="#000" stroke-width="1.5"/>']
-    for i in range(ticks):
-        a = math.radians(-225 + 270 * i / (ticks - 1))
-        out.append(f'<line x1="{cx + (r + 2) * math.cos(a):.1f}" y1="{cy + (r + 2) * math.sin(a):.1f}" '
-                   f'x2="{cx + (r + 6) * math.cos(a):.1f}" y2="{cy + (r + 6) * math.sin(a):.1f}" '
-                   'stroke="#000" stroke-width="0.8"/>')
-    out.append(f'<line x1="{cx}" y1="{cy}" x2="{cx}" y2="{cy - r + 2}" stroke="#000" stroke-width="1.6"/>')
-    return "".join(out)
+DEFS = ('<defs><radialGradient id="sh101glow"><stop offset="0" stop-color="#ff5a3c" stop-opacity="0.95"/>'
+        '<stop offset="0.35" stop-color="#ff2a14" stop-opacity="0.6"/>'
+        '<stop offset="1" stop-color="#ff2a14" stop-opacity="0"/></radialGradient>'
+        '<linearGradient id="sh101core" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb3a0"/>'
+        '<stop offset="0.45" stop-color="#ff3a22"/><stop offset="1" stop-color="#d81008"/></linearGradient></defs>')
 
 
-def slider(x, y0, y1, label, capy=None, size=7):
-    """A slider slot with a scale and a cap; label above."""
-    capy = (y0 + y1) / 2 if capy is None else capy
-    o = [T(x, y0 - 7, label, size)]
-    for i in range(11):
-        yy = y0 + (y1 - y0) * i / 10
-        o.append(f'<line x1="{x - 11}" y1="{yy:.1f}" x2="{x - 6}" y2="{yy:.1f}" stroke="#000" stroke-width="0.6"/>')
-    o.append(f'<rect x="{x - 2.5}" y="{y0}" width="5" height="{y1 - y0}" rx="2" fill="#fff" stroke="#000" stroke-width="1"/>')
-    o.append(f'<rect x="{x - 8}" y="{capy - 6}" width="16" height="12" rx="1.5" fill="#fff" stroke="#000" stroke-width="1.4"/>'
-             f'<line x1="{x - 6}" y1="{capy}" x2="{x + 6}" y2="{capy}" stroke="#000" stroke-width="1"/>')
-    return "".join(o)
+def photo_led(x, y, st):
+    """A lit LED on the photo: a glowing red window. Blink: a dimmer window, the glow on
+    its lower half only, and a dashed red ring around it."""
+    w, h = LED_W, LED_H
+    core = (f'<rect x="{x - w / 2:.1f}" y="{y - h / 2:.1f}" width="{w}" height="{h}" rx="2" '
+            'fill="url(#sh101core)" stroke="#7a0000" stroke-width="0.8"')
+    if st == "on":
+        return (f'<ellipse cx="{x}" cy="{y}" rx="{w * 1.9}" ry="{h * 3.2}" fill="url(#sh101glow)"/>'
+                + core + '/>')
+    return (f'<ellipse cx="{x}" cy="{y + h * 0.35:.1f}" rx="{w * 1.3}" ry="{h * 1.8}" fill="url(#sh101glow)" '
+            'opacity="0.7"/>'
+            + core + ' opacity="0.75"/>'
+            f'<rect x="{x - w / 2:.1f}" y="{y - h / 2:.1f}" width="{w}" height="{h / 2:.1f}" rx="1.5" '
+            'fill="#3a0806" opacity="0.7"/>'
+            f'<rect x="{x - w / 2 - 8:.1f}" y="{y - h / 2 - 7:.1f}" width="{w + 16}" height="{h + 14}" rx="6" '
+            f'fill="none" stroke="#ff5a40" stroke-width="3" stroke-dasharray="5 4"/>')
 
 
-def vswitch(x, y, labels, pos, size=6.3):
-    """Vertical 3-way lever switch with labels to the right, top to bottom."""
-    o = [f'<rect x="{x - 4}" y="{y - 16}" width="8" height="32" rx="2" fill="#fff" stroke="#000" stroke-width="1"/>',
-         f'<rect x="{x - 6}" y="{y - 16 + pos * 13:.1f}" width="12" height="6" rx="1" fill="#000"/>']
-    for i, s in enumerate(labels):
-        o.append(T(x + 8, y - 11 + i * 13, s, size, "start"))
-    return "".join(o)
-
-
-def hswitch(cx, cy, labels, pos, title):
-    """Horizontal 3-way slide switch (PORTAMENTO, TRANSPOSE), labels above, title below."""
-    w, h = KEYS["PORTASW"][2], KEYS["PORTASW"][3]
-    o = [f'<rect x="{cx - w / 2}" y="{cy - h / 2}" width="{w}" height="{h}" rx="{h / 2}" fill="#fff" '
-         'stroke="#000" stroke-width="1.3"/>']
-    px = cx - w / 2 + h / 2 + pos * (w - h) / 2
-    o.append(f'<circle cx="{px:.1f}" cy="{cy}" r="{h / 2 - 1.5}" fill="#000"/>')
-    for i, s in enumerate(labels):
-        o.append(T(cx - w / 2 + h / 2 + i * (w - h) / 2, cy - h / 2 - 3, s, 6.3))
-    o.append(T(cx, cy + h / 2 + 9, title, 6.8))
-    return "".join(o)
-
-
-def section(x0, x1, title):
-    return (f'<rect x="{x0}" y="16" width="{x1 - x0}" height="13" fill="#000"/>'
-            + T((x0 + x1) / 2, 25.8, title, 8.2, fill="#fff"))
-
-
-def upper():
+def key_numbers():
+    """Small key numbers, so a key can be named (key1 = lowest F, key8 = lowest C)."""
     o = []
-    o.append(f'<text x="14" y="11" font-size="9" font-weight="{WEIGHT}">Roland</text>')
-    o.append(T(45, 70, "TUNE", 7) + knob(45, 118, 16))
-    o.append(section(80, 200, "MODULATOR"))
-    o.append(slider(110, 60, 175, "RATE"))
-    o.append(T(160, 70, "WAVEFORM", 6.5) + knob(160, 118, 15, 4))
-    o.append(section(205, 380, "VCO"))
-    o.append(slider(228, 60, 175, "MOD", 150))
-    o.append(T(272, 70, "RANGE", 6.5) + knob(272, 118, 15, 4))
-    o.append(slider(318, 60, 175, "PW", 160))
-    o.append(T(357, 70, "PWM", 6.5) + vswitch(350, 118, ["LFO", "MAN", "ENV"], 1))
-    o.append(section(385, 560, "SOURCE MIXER"))
-    for i, s in enumerate(["PULSE", "SAW", "SUB", "NOISE"]):
-        o.append(slider(405 + i * 34, 60, 175, s, [70, 110, 160, 170][i]))
-    o.append(T(537, 70, "SUB", 6.5) + vswitch(530, 118, ["1", "2", "3"], 0))
-    o.append(section(565, 760, "VCF"))
-    for i, s in enumerate(["FREQ", "RES", "ENV", "MOD", "KYBD"]):
-        o.append(slider(587 + i * 38, 60, 175, s, [100, 140, 120, 170, 90][i]))
-    o.append(section(765, 815, "VCA"))
-    o.append(T(790, 70, "ENV", 6.3) + vswitch(784, 118, ["ENV", "", "GATE"], 0))
-    o.append(section(820, 990, "ENV"))
-    o.append(T(846, 70, "TRIG", 6.3) + vswitch(836, 118, ["G+T", "GATE", "LFO"], 1))
-    for i, s in enumerate(["A", "D", "S", "R"]):
-        o.append(slider(882 + i * 30, 60, 175, s, [170, 130, 90, 150][i]))
-    for x in [202.5, 382.5, 562.5, 762.5, 817.5]:
-        o.append(f'<line x1="{x}" y1="16" x2="{x}" y2="190" stroke="#000" stroke-width="0.8"/>')
-    o.append('<line x1="6" y1="200" x2="994" y2="200" stroke="#000" stroke-width="1.4"/>')
+    for n in range(1, 33):
+        cx, cy, w, h, kind = KEYS[f"key{n}"]
+        if kind == "white":
+            o.append(T(cx, KB_BOT - 14, str(n), 22, fill="#8c8c8c"))
+            if n == 8:
+                o.append(T(cx, KB_BOT - 44, "C", 18, fill="#8c8c8c"))
+        else:
+            o.append(T(cx, BLACK_BOT - 48, str(n), 19, fill="#d8d8d8"))
     return "".join(o)
 
 
-def strip(state):
-    o = []
-    o.append(T(60, 227, "POWER", 6.8))
-    x, y, w, h = KEYS["POWER"][:4]
-    o.append(f'<rect x="{x - w / 2}" y="{y - h / 2}" width="{w}" height="{h}" rx="2" fill="#fff" stroke="#000" stroke-width="1.3"/>'
-             f'<rect x="{x - w / 2 + 3}" y="{y - h / 2 + 3}" width="{w / 2 - 3}" height="{h - 6}" fill="#000"/>')
-    for b, x in BTN_X.items():
-        o.append(led(x, LED_Y, 11, 6, state.get(b), 1))
-        o.append(f'<rect x="{x - BTN_W / 2}" y="{BTN_Y - BTN_H / 2}" width="{BTN_W}" height="{BTN_H}" rx="2" '
-                 'fill="#fff" stroke="#000" stroke-width="1.6"/>'
-                 f'<rect x="{x - BTN_W / 2 + 3.5}" y="{BTN_Y - BTN_H / 2 + 3.5}" width="{BTN_W - 7}" '
-                 f'height="{BTN_H - 7}" rx="1.5" fill="none" stroke="#000" stroke-width="0.8"/>')
-    ly = BTN_Y + BTN_H / 2 + 16
-    for b, s in [("LOAD", "LOAD"), ("PLAY", "PLAY"), ("DOWN", "DOWN"), ("UD", "U&D"), ("UP", "UP"),
-                 ("HOLD", "HOLD")]:
-        o.append(T(BTN_X[b], ly, s, 8))
-    o.append(T(BTN_X["KT"], ly, "KEY TRANSPOSE", 7.6))
-    gy = ly + 12
-    for a, b, s in [("LOAD", "PLAY", "SEQUENCER"), ("DOWN", "UP", "ARPEGGIO"), ("HOLD", "HOLD", "LEGATO"),
-                    ("KT", "KT", "REST")]:
-        x0, x1 = BTN_X[a] - BTN_W / 2, BTN_X[b] + BTN_W / 2
-        o.append(f'<path d="M{x0},{gy - 7} L{x0},{gy - 4} L{x1},{gy - 4} L{x1},{gy - 7}" fill="none" '
-                 'stroke="#000" stroke-width="0.8"/>' + T((x0 + x1) / 2, gy + 4, s, 7.6))
-    o.append(f'<text x="985" y="258" font-size="30" font-weight="{WEIGHT}" text-anchor="end" '
-             'letter-spacing="1">SH-101</text>')
-    o.append(T(985, 272, "SYNTHESIZER", 7.5, "end"))
+def leds(state):
+    """The lit and blinking LEDs, in photo coordinates (draw them last, over any callout)."""
+    return DEFS + "".join(photo_led(LED_X[k], LED_Y, state[k]) for k in LEDS if state.get(k))
+
+
+def body(state, with_leds=True, numbers=True):
+    o = [f'<image href="{PHOTO}" x="0" y="0" width="{X1}" height="{Y1}" preserveAspectRatio="none"/>',
+         key_numbers() if numbers else ""]
+    if with_leds:
+        o.append(leds(state))
     return "".join(o)
 
 
-def controllers():
-    o = []
-    o.append(T(55, 290, "VOLUME", 7) + knob(55, 318, 16))
-    o.append(T(140, 290, "PORTAMENTO", 7) + knob(140, 318, 16))
-    for i, s in enumerate(["VCO", "VCF", "MOD"]):
-        o.append(slider(30 + i * 34, 372, 440, s, 430, 6.3))
-    o.append(hswitch(150, 386, ["AUTO", "OFF", "ON"], 0, "PORTAMENTO"))
-    o.append(hswitch(150, 428, ["L", "M", "H"], 1, "TRANSPOSE"))
-    x, y, w, h = KEYS["BENDER"][:4]
-    o.append(f'<rect x="{x - w / 2}" y="{y - h / 2}" width="{w}" height="{h}" rx="3" fill="#fff" stroke="#000" stroke-width="1.4"/>'
-             f'<rect x="{x - 9}" y="{y - h / 2 + 3}" width="18" height="{h - 6}" rx="2" fill="#000"/>'
-             + T(x, y + h / 2 + 9, "BENDER", 6.8))
-    return "".join(o)
-
-
-def keyboard():
-    o = [f'<rect x="{KB_X0 - 4}" y="{KB_Y0 - 4}" width="{KB_X1 - KB_X0 + 8}" height="{KB_Y1 - KB_Y0 + 6}" '
-         'fill="#fff" stroke="#000" stroke-width="1.2"/>']
-    for k in range(32):
-        if k in BLACK:
-            continue
-        x = _white_x[k]
-        o.append(f'<rect x="{x:.1f}" y="{KB_Y0}" width="{WHITE_W:.1f}" height="{KB_Y1 - KB_Y0}" rx="1.5" '
-                 'fill="#fff" stroke="#000" stroke-width="1.2"/>')
-        o.append(T(x + WHITE_W / 2, KB_Y1 - 8, str(k + 1), 12, fill="#707070"))
-        if k == 7:
-            o.append(T(x + WHITE_W / 2, KB_Y1 - 24, "C", 10, fill="#707070"))
-    for k in range(32):
-        if k not in BLACK:
-            continue
-        cx, cy, w, h, _ = KEYS[f"key{k + 1}"]
-        o.append(f'<rect x="{cx - w / 2:.1f}" y="{KB_Y0}" width="{w}" height="{h}" rx="1.5" fill="#000"/>'
-                 + T(cx, KB_Y0 + h - 20, str(k + 1), 10, fill="#fff"))
-    return "".join(o)
-
-
-def body(state, crop):
-    o = [f'<rect x="{X0 + 1}" y="{Y0 + 1}" width="{X1 - X0 - 2}" height="{Y1 - Y0 - 2}" fill="#fff" '
-         'stroke="#000" stroke-width="2"/>']
-    if crop == "full":
-        o.append(upper())
-    o += [strip(state), controllers(), keyboard()]
-    return "".join(o)
-
-
-def svg(state, crop="play"):
-    y0, y1 = CROPS[crop]
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{X0 - 2} {y0 - 2} {X1 - X0 + 4} {y1 - y0 + 4}" '
-            f'font-family="{FONT}">{body(state, crop)}</svg>')
+def svg(state, crop="play", with_leds=True, numbers=True):
+    x0, y0, x1, y1 = CROPS[crop] if isinstance(crop, str) else crop
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x0} {y0} {x1 - x0} {y1 - y0}" '
+            f'font-family="{FONT}">{body(state, with_leds, numbers)}</svg>')
 
 
 def centres():
     return {k: v[:4] for k, v in KEYS.items()}
-
-
-if __name__ == "__main__":                    # writes panel.svg for a look
-    import os
-    open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "panel.svg"), "w").write(
-        svg({"PLAY": "on", "HOLD": "on", "KT": "blink"}, "full"))
