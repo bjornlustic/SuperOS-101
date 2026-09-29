@@ -422,7 +422,18 @@ static void Repl() {
 // Self-test: keyboard, priority, arp, sequencer, EEPROM persistence
 // ---------------------------------------------------------------------------
 static void MidiByte(uint8_t b) { g_midiQ.push_back(b); RunLoops(1); }
-static void MidiClocks(int n)   { while (n-- > 0) MidiByte(0xF8); }
+// Host clock at a real tempo (120 BPM, 20.8 ms per 0xF8): the uClock smoother
+// fires a tick on its PREDICTED time, so back-to-back bytes are a burst to it,
+// not a tempo. Each tick is followed by one period of loop passes, so a check
+// after MidiClocks(n) sees the n-th tick fired.
+static const uint32_t SIM_TICK_US = 20833;
+static void MidiClocks(int n) {
+  while (n-- > 0) {
+    uint32_t until = micros() + SIM_TICK_US;
+    MidiByte(0xF8);
+    while ((int32_t)(until - micros()) > 0) RunLoops(1);
+  }
+}
 
 static int g_fails = 0;
 #define CHECK(cond, msg) do { \
@@ -974,9 +985,16 @@ static int SelfTest() {
   MidiByte(0xFA);                                // Start: rewind to the downbeat
   MidiClocks(1);                                 // first clock = downbeat edge
   CHECK(sim::g_sh[0] == 17 && GateOn(), "Start + 1st clock -> seq step 0 (CV 17)");
-  MidiClocks(6);                                 // next division boundary
-  CHECK(sim::g_sh[0] == 19, "6 clocks at 1/16 -> next step (CV 19)");
-  CHECK(ClockReset(), "division edge pulses CLOCK RESET (LFO hard sync)");
+  MidiClocks(5);
+  {   // 6th clock: the division boundary. The 2 ms CLOCK-RESET pulse is
+      // over long before the tick period is, so watch for it as it fires.
+    bool sawRst = false;
+    uint32_t until = micros() + SIM_TICK_US;
+    MidiByte(0xF8);
+    while ((int32_t)(until - micros()) > 0) { RunLoops(1); sawRst |= ClockReset(); }
+    CHECK(sim::g_sh[0] == 19, "6 clocks at 1/16 -> next step (CV 19)");
+    CHECK(sawRst, "division edge pulses CLOCK RESET (LFO hard sync)");
+  }
   uint8_t rndHeld = sim::g_sh[2];
   MidiClocks(5);                                 // inside the division: no edge
   CHECK(sim::g_sh[2] == rndHeld, "random S/H holds between division edges");
@@ -1033,7 +1051,7 @@ static int SelfTest() {
     CHECK(!GateOn(), "sync on, silent host: PLAY arms silently (strict slave)");
     waitMs(8); ClockTick();
     CHECK(!GateOn(), "sync on, silent host: the LFO steps nothing");
-    MidiByte(0xF8);                         // the host's clock speaks: step 0
+    MidiClocks(1);                         // the host's clock speaks: step 0
     CHECK(GateOn() && sim::g_sh[0] == 17, "armed PLAY starts on the first host tick");
     sxPlay(0);
     // (2) host ticks without ever sending Start (phase unknown): PLAY
@@ -1041,7 +1059,7 @@ static int SelfTest() {
     MidiClocks(4);                          // stream alive, mid-division, no 0xFA
     sxPlay(1);
     CHECK(!GateOn(), "unanchored clock: PLAY arms silently");
-    MidiByte(0xF8);
+    MidiClocks(1);
     CHECK(GateOn() && sim::g_sh[0] == 17, "unanchored clock: step 0 lands on the next tick");
     sxPlay(0);
     // (3) an 0xFA-anchored stream keeps its phase: a LOCAL play press while
@@ -1053,7 +1071,7 @@ static int SelfTest() {
     sxPlay(0);                              // local stop; the host keeps ticking
     MidiClocks(2);                          // mid-division
     sxPlay(1);
-    MidiByte(0xF8);                         // tick 4 of 6: still inside the division
+    MidiClocks(1);                         // tick 4 of 6: still inside the division
     CHECK(!GateOn(), "anchored clock: PLAY holds for the host's boundary");
     MidiClocks(3);                          // ticks 5,6,7: the edge fires on tick 7 (tick counter back at 0)
     CHECK(GateOn() && sim::g_sh[0] == 17, "anchored clock: step 0 lands on the boundary");
@@ -1066,13 +1084,13 @@ static int SelfTest() {
     CHECK(!GateOn(), "after host Stop: PLAY arms, nothing free-runs");
     waitMs(8); ClockTick();
     CHECK(!GateOn(), "after host Stop: the LFO still steps nothing");
-    MidiByte(0xF8);
+    MidiClocks(1);
     CHECK(GateOn() && sim::g_sh[0] == 17, "after host Stop: the armed PLAY starts when ticks resume");
     sxPlay(0);
     // (5b) sync ON is full transport slaving: the host's 0xFA starts the
     // sequencer from silence, and 0xFC stops it (back to keyboard mode).
     waitMs(320);
-    MidiByte(0xFA); MidiByte(0xF8);
+    MidiByte(0xFA); MidiClocks(1);
     CHECK(GateOn() && sim::g_sh[0] == 17, "sync on: 0xFA starts the sequencer itself (step 0)");
     MidiClocks(6);
     CHECK(sim::g_sh[0] == 19, "sync on: it keeps stepping on the host's divisions");
@@ -1081,7 +1099,7 @@ static int SelfTest() {
     CHECK(sim::g_sh[0] == 19 && !GateOn(), "sync on: 0xFC stops it (keyboard mode, T1 steps nothing)");
     // sync OFF keeps the old semantics: 0xFA never force-starts
     midiclk::SetSync(false); RunLoops(2);
-    MidiByte(0xFA); MidiByte(0xF8); RunLoops(2);
+    MidiByte(0xFA); MidiClocks(1); RunLoops(2);
     CHECK(!GateOn(), "sync off: 0xFA does not start the sequencer");
     midiclk::SetSync(true); RunLoops(2);
     // (5) after a Stop, a fresh Start-less stream is an implicit continue:
@@ -1089,7 +1107,7 @@ static int SelfTest() {
     // host that never sends Start), and PLAY locks to it.
     MidiClocks(2);
     sxPlay(1);
-    MidiByte(0xF8);
+    MidiClocks(1);
     CHECK(GateOn() && sim::g_sh[0] == 17, "resumed Start-less stream: PLAY locks, step 0 on the next tick");
     MidiClocks(6);
     CHECK(sim::g_sh[0] == 19, "resumed Start-less stream: steps follow the division, not the LFO");
@@ -1097,7 +1115,7 @@ static int SelfTest() {
     midiclk::SetSync(false); RunLoops(2);
   }
 
-  // Jitter smoothing (midiclock.h Sched): ticks arrive with pseudo-random
+  // Jitter smoothing (uclock.h): ticks arrive with pseudo-random
   // jitter; the step boundaries must land on the smoothed timebase, tighter
   // than the arrival jitter they were carried by.
   puts("clock jitter smoothing:");
@@ -1162,6 +1180,91 @@ static int SelfTest() {
 
     CHECK(rises.size() >= 25, "jittered clock: one step per division, none dropped");
     CHECK(maxDev < 2500, "jittered clock: step intervals smoother than the wire (raw would be ~5 ms)");
+  }
+
+  // uClock robustness against real masters (uclock.h): every 0xF8 fires
+  // exactly one divider tick, so step count == ticks / division under any
+  // delivery pattern, and the first clock after Start is the downbeat.
+  puts("uClock: MPC Live starts, USB bursts, tempo changes:");
+  {
+    auto sxP = [&](uint8_t on) {
+      for (uint8_t v : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x1E, on, (uint8_t)0xF7}) g_midiQ.push_back(v);
+      RunLoops(2);
+    };
+    auto waitUs = [&](uint32_t us) { uint32_t u = micros() + us; while ((int32_t)(u - micros()) > 0) RunLoops(1); };
+    midiclk::SetSync(true); midiclk::SetDiv(6); midiclk::SetLfoSync(false);
+    for (uint8_t v : {0xF0, 0x7D, 0x1D, 6, 0xF7}) g_midiQ.push_back(v); RunLoops(2);   // 4 NOTE steps
+    // Deliver ticks at the given arrival offsets (us from t0); record every
+    // gate rise. 'group' ticks arriving at one offset model a USB burst.
+    auto drive = [&](const std::vector<uint32_t>& at, std::vector<uint32_t>& rises) {
+      uint32_t t0 = micros(); bool prev = GateOn();
+      for (uint32_t a : at) {
+        while ((int32_t)(t0 + a - micros()) > 0) {
+          RunLoops(1); bool g = GateOn(); if (g && !prev) rises.push_back(micros() - t0); prev = g;
+        }
+        g_midiQ.push_back(0xF8);
+      }
+      uint32_t end = micros() + 60000;
+      while ((int32_t)(end - micros()) > 0) {
+        RunLoops(1); bool g = GateOn(); if (g && !prev) rises.push_back(micros() - t0); prev = g;
+      }
+    };
+    // (1) MPC Live: silent while stopped, Start then the first clock 1 ms
+    // later, 129 BPM (19.38 ms ticks). Twelve starts: step 0 must sound on
+    // the FIRST clock every time (the 808 played one clock late on 8 of 12
+    // before its fix), and one step per 6 ticks after it.
+    int onTime = 0, countOk = 0;
+    for (int run = 0; run < 12; ++run) {
+      sxP(0); waitUs(450000);                    // stopped, dead wire
+      MidiByte(0xFA); waitUs(1000);
+      std::vector<uint32_t> at, rises;
+      for (int t = 0; t < 48; ++t) at.push_back((uint32_t)t * 19380);
+      drive(at, rises);
+      MidiByte(0xFC); RunLoops(2);
+      if (!rises.empty() && rises[0] < 1500) ++onTime;
+      if (rises.size() == 8) ++countOk;
+    }
+    printf("  (MPC Live starts: %d/12 on the first clock, %d/12 with exactly 8 steps in 48 ticks)\n", onTime, countOk);
+    CHECK(onTime == 12, "MPC Live start: step 0 on the first clock after Start, 12 of 12");
+    CHECK(countOk == 12, "MPC Live start: one step per division, none dropped or doubled");
+    // (2) USB burst delivery: ticks arrive in pairs and triples (host frames
+    // batching bytes). Step count must still be exact, intervals near 6 ticks.
+    {
+      MidiByte(0xFA);
+      std::vector<uint32_t> at, rises;
+      for (int t = 0; t < 120; ++t) {
+        uint32_t ideal = (uint32_t)t * 20833;
+        uint32_t a = (t % 3 == 1) ? ideal + 20833 : (t % 3 == 2 ? ideal : ideal);   // t%3==1 slips into t+1's frame
+        at.push_back(a);
+      }
+      std::sort(at.begin(), at.end());
+      drive(at, rises);
+      MidiByte(0xFC); RunLoops(2);
+      int32_t worst = 0;
+      for (size_t i = 3; i < rises.size(); ++i) {
+        int32_t d = (int32_t)(rises[i] - rises[i - 1]) - 6 * 20833;
+        if (d < 0) d = -d; if (d > worst) worst = d;
+      }
+      printf("  (USB bursts: %zu steps in 120 ticks, worst interval dev %.1f ms)\n", rises.size(), worst / 1000.0);
+      CHECK(rises.size() == 20, "burst-delivered clock: exactly one step per 6 ticks");
+      CHECK(worst < 3000, "burst-delivered clock: step intervals stay on the grid");
+    }
+    // (3) tempo changes mid-run: 120 -> 90 -> 180 BPM, and an exact 2x jump.
+    {
+      MidiByte(0xFA);
+      std::vector<uint32_t> at, rises; uint32_t t = 0;
+      for (int i = 0; i < 48; ++i) { at.push_back(t); t += 20833; }
+      for (int i = 0; i < 48; ++i) { at.push_back(t); t += 27778; }
+      for (int i = 0; i < 48; ++i) { at.push_back(t); t += 13889; }
+      for (int i = 0; i < 48; ++i) { at.push_back(t); t += 27778; }
+      drive(at, rises);
+      MidiByte(0xFC); RunLoops(2);
+      printf("  (tempo changes: %zu steps in 192 ticks)\n", rises.size());
+      CHECK(rises.size() == 32, "tempo changes: step count exact across 120/90/180/90 BPM");
+    }
+    sxP(0);
+    for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);
+    midiclk::SetSync(false); RunLoops(2);
   }
 
   // AUTO LFO division (lfoDiv 127): the division follows the measured

@@ -267,6 +267,7 @@ void superos_setup() {
   g_lastClock = false; g_rstUntilMs = 0; g_clkResync = false; g_portaUntilMs = 0;
   g_lastEditMs = 0; g_lastRawFallMs = 0; g_rstSinceFall = false; g_rndHeld = 0;
   g_engine.begin();
+  midiclk::DropTicks();   // no edge counted under the other firmware fires here
   // Prime the button edge detector with the current state so a button that
   // is still held from a firmware switch / power-on does not register as a
   // fresh press (which would toggle PLAY/LOAD/arp modes at boot).
@@ -292,6 +293,7 @@ void superos_teardown() {
 void superos_loop() {
   // MIDI: notes, SysEx, realtime (divided clock + transport via midiclock.h)
   midi::Poll();
+  midiclk::Service();   // smoothed ticks into the divider (uclock.h)
   bool divEdge = midiclk::ConsumeEdge();
   // Sync ON makes the 101 a real transport slave: the host's Start STARTS
   // the sequencer (play in the DAW and the machine plays; nobody has to

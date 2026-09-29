@@ -457,7 +457,7 @@ static inline void T1Qualify() {}
 // ticks stop, the divider freezes and so does the ROM's sequencer; the LFO pin
 // never steps a synced machine (the player asked for a slave, not a fallback).
 static inline bool T1Source() {
-  if (midiclk::SyncOn()) return midiclk::T1Level();
+  if (midiclk::SyncOn()) { midiclk::Service(); return midiclk::T1Level(); }
   return (PIND & (1u << T1_CLOCK_BIT)) != 0;
 }
 static inline void T1Watch() {
