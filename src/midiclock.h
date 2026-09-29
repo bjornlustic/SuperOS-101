@@ -38,6 +38,8 @@ inline uint8_t LfoTicks(uint8_t i) {
   return i == 10 ? 48 : i == 11 ? 96 : 24;
 }
 
+static const uint8_t SYNC_DELAY_MAX = 60;   // ms; 16 queued ticks cover it past 300 BPM
+
 // A 0xF8 gap longer than this means the host's clock is gone (one tick at
 // 10 BPM is 250 ms; any real tempo ticks far faster).
 static const uint16_t TICK_TIMEOUT_MS = 300;
@@ -75,6 +77,14 @@ struct State {
   // boundary (Service), consumed once each by the main loop.
   bool edge = false, half = false, lfoEdge = false;
   uint8_t pending = 0;      // ticks uclk released, not yet into the divider
+  // Sync delay: every released tick waits delayMs before it reaches the
+  // divider, so the whole slaved machine (steps, the downbeat after Start,
+  // LFO resets, the 80C49's T1) plays later by a fixed amount. Trims the 101
+  // against gear whose sound path is slower (a mixer, an interface, a DAW).
+  // A clock cannot be played EARLIER than it arrives, so only positive.
+  uint8_t  delayMs = 0;     // 0..SYNC_DELAY_MAX
+  uint32_t dq[16];          // release times + delay, in us (ring)
+  uint8_t  dqHead = 0, dqN = 0;
 };
 
 inline State& S() { static State s; return s; }
@@ -82,7 +92,7 @@ inline State& S() { static State s; return s; }
 // Forget owed ticks and pending edges: after a transport event or a divider
 // re-anchor, nothing counted against the old phase may fire later, and the
 // next 0xF8 fires on arrival (uclk seeds from the wire).
-inline void DropTicks() { uclk::Reset(); S().pending = 0; S().edge = S().half = S().lfoEdge = false; }
+inline void DropTicks() { uclk::Reset(); S().pending = 0; S().dqN = 0; S().edge = S().half = S().lfoEdge = false; }
 
 // --- settings (EEPROM, see combined.h map) ---------------------------------
 inline void Save() {
@@ -92,6 +102,7 @@ inline void Save() {
   eeprom_update_byte(EE_CFG_FLAGS, (uint8_t)((S().sync ? 1 : 0) | (S().lfoSync ? 0 : 2)));
   eeprom_update_byte(EE_CFG_DIV, S().divIdx);
   eeprom_update_byte(EE_CFG_LFODIV, S().lfoDiv);
+  eeprom_update_byte(EE_CFG_SYNCDLY, S().delayMs);
 }
 
 inline void Begin() {
@@ -103,6 +114,8 @@ inline void Begin() {
     S().divIdx = (d < DIV_COUNT) ? d : DIV_DEFAULT;
     uint8_t l = eeprom_read_byte(EE_CFG_LFODIV);
     S().lfoDiv = (l < LFO_DIV_COUNT || l == LFO_DIV_AUTO) ? l : 0;
+    uint8_t dl = eeprom_read_byte(EE_CFG_SYNCDLY);   // 0xFF on images from before it existed
+    S().delayMs = dl <= SYNC_DELAY_MAX ? dl : 0;
   }
 }
 
@@ -118,6 +131,8 @@ inline void SetSync(bool on) {
 inline void SetDiv(uint8_t i) {
   if (i < DIV_COUNT) { S().divIdx = i; S().tick = 0; DropTicks(); Save(); }
 }
+inline uint8_t SyncDelayMs() { return S().delayMs; }
+inline void SetSyncDelay(uint8_t ms) { if (ms <= SYNC_DELAY_MAX && ms != S().delayMs) { S().delayMs = ms; S().dqN = 0; Save(); } }
 inline void SetLfoSync(bool on) { S().lfoSync = on; S().lfoTick = 0; Save(); }
 inline void SetLfoDiv(uint8_t i) {
   if (i < LFO_DIV_COUNT || i == LFO_DIV_AUTO) {
@@ -199,10 +214,22 @@ inline void Service() {
   State& s = S();
   uint8_t& pending = s.pending;
   if (!s.running) { pending = 0; return; }
-  uint8_t n = uclk::Poll(micros());
-  pending = (uint8_t)(pending + n > 250 ? 250 : pending + n);
-  if (!pending) return;
-  --pending;
+  const uint32_t nowUs = micros();
+  uint8_t n = uclk::Poll(nowUs);
+  if (s.delayMs) {
+    // Delay line: each released tick is due delayMs later. At most one tick
+    // leaves per call, like the undelayed path.
+    const uint32_t d = (uint32_t)s.delayMs * 1000;
+    while (n--) {
+      if (s.dqN < 16) { s.dq[(uint8_t)(s.dqHead + s.dqN) & 15] = nowUs + d; ++s.dqN; }
+    }
+    if (!s.dqN || (int32_t)(nowUs - s.dq[s.dqHead]) < 0) return;
+    s.dqHead = (uint8_t)((s.dqHead + 1) & 15); --s.dqN;
+  } else {
+    pending = (uint8_t)(pending + n > 250 ? 250 : pending + n);
+    if (!pending) return;
+    --pending;
+  }
   const uint8_t ticksN = DIV_TICKS[s.divIdx];
   const uint8_t lfoN   = LfoTicks(LfoDivEff());
   if (s.tick == 0) s.edge = true;

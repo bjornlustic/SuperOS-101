@@ -20,6 +20,7 @@
 //   key 14        -> toggle LFO hard-sync
 //   keys 15-18    -> sequencer direction FWD / BWD / PING-PONG / RANDOM
 //   key 19        -> pedal jack route: HOLD <-> KEY TRANSPOSE
+//   keys 20-31    -> sync delay 0 2 4 6 8 10 12 15 18 21 25 30 ms
 //   KEY-TRANSPOSE -> exit, resume the running firmware
 #pragma once
 #include <Arduino.h>
@@ -114,6 +115,10 @@ inline void Poll() {
   // toggles the pedal route HOLD <-> KEY TRANSPOSE (SuperOS; engine.h).
   for (uint8_t k = 0; k < engine::DIR_COUNT; ++k)
     if (keyRise & (1UL << (14 + k))) { engine::DirSetting() = k; engine::SaveFeatures(); }
+  // Keys 20-31: sync delay (the slaved machine plays this many ms later).
+  static const uint8_t DLY[12] = {0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 25, 30};
+  for (uint8_t k = 0; k < 12; ++k)
+    if (keyRise & (1UL << (19 + k))) midiclk::SetSyncDelay(DLY[k]);
   if (keyRise & (1UL << 18)) {
     controls::PedalRoute() = controls::PedalRoute() == controls::PEDAL_HOLD ? controls::PEDAL_TRANSPOSE : controls::PEDAL_HOLD;
     engine::SaveFeatures();

@@ -1263,6 +1263,34 @@ static int SelfTest() {
       printf("  (tempo changes: %zu steps in 192 ticks)\n", rises.size());
       CHECK(rises.size() == 32, "tempo changes: step count exact across 120/90/180/90 BPM");
     }
+    // (4) sync delay: every step, the downbeat included, lands the set
+    // number of ms later; nothing is dropped or doubled.
+    {
+      auto startRun = [&](uint8_t dly) {
+        midiclk::SetSyncDelay(dly);
+        sxP(0); waitUs(450000);
+        MidiByte(0xFA); waitUs(1000);
+        std::vector<uint32_t> at, rises;
+        for (int t = 0; t < 48; ++t) at.push_back((uint32_t)t * 19380);
+        drive(at, rises);
+        MidiByte(0xFC); RunLoops(2);
+        return rises;
+      };
+      // Measured against the ideal grid (6 ticks x 19.38 ms per step), with
+      // an undelayed warm-up run first so the smoother already has this tempo.
+      startRun(0);
+      std::vector<uint32_t> r0 = startRun(0), r20 = startRun(20);
+      auto worstOff = [](const std::vector<uint32_t>& r, int32_t off) {
+        int32_t w = 0;
+        for (size_t i = 0; i < r.size(); ++i) { int32_t d = (int32_t)r[i] - (int32_t)(i * 6 * 19380) - off; if (d < 0) d = -d; if (d > w) w = d; }
+        return w;
+      };
+      int32_t w0 = worstOff(r0, 0), w20 = worstOff(r20, 20000);
+      printf("  (sync delay: 0 ms run worst %.2f ms off grid, 20 ms run worst %.2f ms off grid+20)\n", w0 / 1000.0, w20 / 1000.0);
+      CHECK(r0.size() == 8 && r20.size() == 8 && w0 < 1500 && w20 < 1500,
+            "sync delay 20 ms: every step (downbeat included) lands 20 ms later, count unchanged");
+      midiclk::SetSyncDelay(0);
+    }
     sxP(0);
     for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);
     midiclk::SetSync(false); RunLoops(2);

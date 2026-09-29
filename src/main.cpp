@@ -107,13 +107,14 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, latched, loopLen, rtRec, tune, queued(0x7F none)]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[9] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[10] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
-                  (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F)};
+                  (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
+                  midiclk::SyncDelayMs()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendAck(uint8_t code) { uint8_t b[2] = {0x14, code}; midi::SendSysex(b, 2); }
@@ -222,7 +223,8 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     // 2 transpose (value = semitones + 64; it stays, as on the stock panel),
     // 3 transpose mode 0/1 (plain keys transpose while playing),
     // 4 loop length (0 = full pattern), 5 real-time record 0/1 (while
-    // playing), 6 tune mode 0/1 (from keyboard mode). 0x67 = read only.
+    // playing), 6 tune mode 0/1 (from keyboard mode), 7 sync delay in ms
+    // (0..60: the slaved machine plays that much later). 0x67 = read only.
     // Out-of-range values leave the setting alone; the 0x66 reply shows the
     // applied state either way.
     case 0x65:
@@ -236,6 +238,7 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           case 4: if (v <= engine::MAX_STEPS) g_engine.seq().setLoopLength(v); break;
           case 5: g_engine.setRtRec(v != 0); break;
           case 6: g_engine.setTune(v != 0); break;
+          case 7: midiclk::SetSyncDelay(v); break;
           default: break;
         }
       }

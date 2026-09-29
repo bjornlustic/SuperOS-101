@@ -73,6 +73,9 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
   **PLAY held + LOAD** again ends it; the edits persist when playback stops.
 - **Pedal as transpose**: config menu key 19 routes the HOLD pedal jack to act as the
   KEY TRANSPOSE button.
+- **Sync delay**: config menu keys 20-31 = 0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 25, 30 ms
+  (SysEx 0x65 id 7: 0-60 ms). With MIDI sync on, the whole machine plays that much later
+  than the incoming clock, to line the 101 up with slower gear or listening paths. Persists.
 - **Tune**: **KEY TRANSPOSE held + LOAD** (from keyboard mode) holds an A with the gate
   open: 440 Hz at 8' with TRANSPOSE in the middle, and MIDI OUT note 69 for a tuner.
   Any function button leaves it (LOAD LED blinks while tuning).
