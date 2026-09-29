@@ -200,6 +200,7 @@
   .config-inner { padding:14px; display:flex; flex-wrap:wrap; gap:16px 24px; align-items:flex-start; }
   .config-field { display:flex; flex-direction:column; gap:6px; }
   .config-field > label { font-size:9px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); }
+  input[type="range"] { accent-color:var(--black); width:160px; cursor:pointer; }
   .config-note { font-size:10px; color:var(--gray-4); max-width:420px; line-height:1.5; }
 
   /* Clock divide selector */
@@ -332,7 +333,7 @@
         </div>
         <div class="config-field">
           <label>Clock sync</label>
-          <button class="btn" id="btnSync" title="ON: the sequencer/arp steps on incoming MIDI clock at the division below; when no clock is on the wire it falls back to the LFO / EXT CLK, so Play always plays. OFF: it always steps on the LFO / EXT CLK.">Off</button>
+          <button class="btn" id="btnSync" title="ON: strict MIDI slave. Only incoming MIDI clock steps the sequencer/arp, at the division below; the host's Start starts it and Stop stops it, and with no clock on the wire it stays silent (Play only arms it). OFF: it steps on the LFO / EXT CLK.">Off</button>
         </div>
         <div class="config-field">
           <label>Clock divide (of incoming MIDI clock, 24 ppqn)</label>
@@ -344,6 +345,70 @@
           <button class="btn" id="btnLfoSync" title="LOCKED: the analog LFO is hard-synced to the MIDI clock at the rate below. FREE: the LFO free-runs for modulation (rate knob) while the sequencer still steps from the clock.">Locked</button>
           <div class="div-grid" id="lfoDivGrid"></div>
           <div class="config-note">LOCKED hard-syncs the analog LFO to the clock at this musical rate, from <b>1/1</b> (a bar) up. FREE lets the LFO run at its rate knob for modulation while the sequencer stays clocked. <b>AUTO</b> follows the LFO RATE slider: the firmware measures the slider's rate and locks to the nearest division, so sweeping the slider steps through musical rates. Panel menu: <b>key 14</b> toggles locked/free.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance (SuperOS only: 0x65 set / 0x67 read -> 0x66) -->
+  <div class="config-panel" id="perfPanel" style="display:none">
+    <div class="config-bar is-open" id="perfBar">
+      <span class="config-bar-arrow">&#9654;</span>
+      <span class="config-bar-label">Performance</span>
+      <span class="config-bar-status" id="perfStatus">reading...</span>
+    </div>
+    <div class="config-body is-open" id="perfBody">
+      <div class="config-inner">
+        <div class="config-field" data-f="0">
+          <label>Sequencer direction</label>
+          <div class="div-grid" id="dirGrid"></div>
+          <div class="config-note">Panel: while playing, <b>UP</b> / <b>DOWN</b> / <b>U&amp;D</b>, <b>DOWN + U&amp;D</b> = random. Menu keys 15&#8211;18.</div>
+        </div>
+        <div class="config-field" data-f="9">
+          <label>Arp octave range</label>
+          <div class="div-grid" id="arpGrid"></div>
+          <div class="config-note">Panel: in arp mode, <b>KEY TRANSPOSE + UP / DOWN</b>.</div>
+        </div>
+        <div class="config-field" data-f="2">
+          <label>Transpose (semitones)</label>
+          <div class="seq-toolbar-steps">
+            <button class="len-adj-btn" id="btnTrDn" title="One semitone down">&#8722;</button>
+            <input type="number" class="seq-pat-len" id="inTr" min="-36" max="36" value="0" />
+            <button class="len-adj-btn" id="btnTrUp" title="One semitone up">+</button>
+            <button class="btn" id="btnTrReset" style="margin-left:6px" title="No transpose (panel: KEY TRANSPOSE + lowest C)">Reset</button>
+          </div>
+        </div>
+        <div class="config-field" data-f="3">
+          <label>Transpose mode</label>
+          <button class="btn" id="btnTrMode" title="ON: while the sequencer plays (or a HOLD-latched arp runs) plain key presses transpose. Panel: double-tap KEY TRANSPOSE. Turning it off also clears the transpose.">Off</button>
+        </div>
+        <div class="config-field" data-f="4">
+          <label>Loop length</label>
+          <select id="selLoop" title="Play only the first n steps; the pattern itself is untouched. Panel: while playing, HOLD + key n."></select>
+        </div>
+        <div class="config-field" data-f="8">
+          <label>Sync delay (ms)</label>
+          <div class="seq-toolbar-steps" style="gap:8px">
+            <input type="range" id="rngDelay" min="0" max="60" value="0" />
+            <input type="number" id="inDelay" min="0" max="60" value="0" style="width:64px" />
+          </div>
+          <div class="config-note">With MIDI sync on, the whole machine plays this much later than the incoming clock. Menu keys 20&#8211;31.</div>
+        </div>
+        <div class="config-field" data-f="1">
+          <label>Pedal jack</label>
+          <select id="selPedal" title="What the HOLD pedal jack does. Menu key 19."><option value="0">Hold</option><option value="1">Key transpose</option></select>
+        </div>
+        <div class="config-field" data-f="6">
+          <label>Tune (A 440)</label>
+          <button class="btn" id="btnTune" title="Holds an A with the gate open (440 Hz at 8' with TRANSPOSE centred). Only from keyboard mode. Panel: KEY TRANSPOSE + LOAD.">Off</button>
+        </div>
+        <div class="config-field" data-f="5">
+          <label>Real-time record</label>
+          <button class="btn" id="btnRtRec" title="Keys overwrite the step they land on. Only while playing. Panel: PLAY + LOAD.">Off</button>
+        </div>
+        <div class="config-field" data-f="7">
+          <label>Queued pattern</label>
+          <span class="status is-ok" id="queued" style="padding-left:0">&#8212;</span>
         </div>
       </div>
     </div>
@@ -373,8 +438,9 @@
         <div class="mm-legend">
           <span><b>Keys 1&#8211;10</b> (red, lowest ten keys, black keys included) pick the clock division directly.
           <b>Key 11</b> = MC-202 accent model &#183; <b>Key 12</b> = TB-303 accent model &#183; <b>Key 13</b> = toggle MIDI filter-cutoff CC &#183;
-          <b>Key 14</b> = LFO locked-to-clock / free-running toggle.
-          The accent model and CC toggle are panel-menu only; channel, sync, divide and the LFO lock can also be set from this page.</span>
+          <b>Key 14</b> = LFO locked-to-clock / free-running toggle &#183; <b>Keys 15&#8211;18</b> = sequencer direction (forward, backward, ping-pong, random) &#183;
+          <b>Key 19</b> = pedal jack HOLD / KEY TRANSPOSE &#183; <b>Keys 20&#8211;31</b> = sync delay 0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 25, 30 ms.
+          The accent model and CC toggle are panel-menu only; channel, sync, divide, the LFO lock, direction, pedal and sync delay can also be set from this page.</span>
         </div>
       </div>
     </div>
@@ -572,7 +638,8 @@ function onDeviceReply(mode) {
       log('reconnected; local edits kept (Resync to reload from the synth)');
     }
     updateLinkUi();
-  } else if (mode !== deviceMode) setMode(mode);
+    if (mode === 'superos') requestFeatures(true);
+  } else if (mode !== deviceMode) { setMode(mode); if (mode === 'superos') requestFeatures(true); }
 }
 function setMode(m) {
   deviceMode = m;
@@ -580,6 +647,8 @@ function setMode(m) {
   $('fwStatus').textContent = m === 'superos' ? ('Firmware: SuperOS ' + cfg.version) : m === 'emu' ? ('Firmware: 80C49 emulator ' + cfg.version) : 'Firmware: unknown';
   $('fwStatus').className = 'status is-ok';
   $('btnFwSwitch').textContent = m === 'emu' ? 'Switch to SuperOS' : 'Switch to emulator';
+  if (m !== 'superos') feat = null;   // only SuperOS has the performance features
+  renderFeatures();
   updateLinkUi();
 }
 
@@ -610,6 +679,7 @@ function handleSysex(b) {
         renderAll();
         updateLinkUi();
       }
+      requestFeatures();   // throttled: the keepalive and panel selections keep the queued pattern fresh
       break;
     }
     case 0x41:   // emulator status; the 0x21 fw byte is authoritative (both
@@ -646,7 +716,15 @@ function handleSysex(b) {
       renderPlayhead();
       clearTimeout(playheadTimer);
       playheadTimer = setTimeout(() => { unitPlaying = false; playPos = -1; renderPlayhead(); renderPills(); }, 2500);
+      requestFeatures();
       break;
+    case 0x66: {   // performance features; the device's applied state is the truth
+      const nf = b.slice(1);
+      const changed = JSON.stringify(nf) !== JSON.stringify(feat);
+      feat = nf;
+      if (changed) { log('performance: ' + featSummary(), 'log-ok'); renderFeatures(); }
+      break;
+    }
     case 0x24: break;   // CV DAC config reply (no UI here yet; requested by Resync)
     default: log('101: unknown SysEx cmd 0x' + cmd.toString(16));
   }
@@ -726,7 +804,7 @@ function pullAll() { dirty.fill(false); lastSent = null; readAll(); }
 // Resync: config + clock + CV config + every pattern, fresh from the synth.
 function resync() {
   log('resync: reading config + all patterns from the synth...', 'log-ok');
-  sendSysex([0x20]); sendSysex([0x23]);
+  sendSysex([0x20]); sendSysex([0x23]); requestFeatures(true);
   pullAll();
 }
 // Push: everything the editor holds goes to the synth (all 8 patterns + config).
@@ -761,7 +839,7 @@ $('btnPlay').onclick = async () => {
     if (dirty[curPat]) { writePattern(curPat); await new Promise(r => setTimeout(r, 150)); }
     if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; await new Promise(r => setTimeout(r, 80)); }
     if (!patterns[curPat].length) log('pattern ' + (curPat + 1) + ' is empty: nothing to play', 'log-err');
-    if (cfg.sync) log('MIDI clock sync is ON: with clock arriving it steps at ' + DIVS[cfg.div] + '; with no clock it plays from the LFO');
+    if (cfg.sync) log('MIDI clock sync is ON: it steps at ' + DIVS[cfg.div] + ' of the incoming clock and starts on the host\'s Start; with no clock it waits');
   }
   sendSysex([0x1E, playing ? 1 : 0]);
   $('btnPlay').innerHTML = playing ? '&#9632; Stop' : '&#9654; Play'; $('btnPlay').classList.toggle('is-on', playing);
@@ -815,16 +893,119 @@ function buildDivGrid(el, key, showKeys, idxList) {
 buildDivGrid($('divGrid'), 'div', true);
 buildDivGrid($('lfoDivGrid'), 'lfoDiv', false, LFO_DIV_IDX);
 
+// ---------------------------------------------------------------------------
+// Performance features (SuperOS only): 0x65 <id> <value> sets, 0x67 reads,
+// both answered by 0x66 <dir><pedal><transpose+64><tmode><loopLen><rtRec>
+// <tune><queued|0x7F><syncDelayMs><arpRange>. Older firmware sends fewer
+// bytes; controls whose byte is missing stay hidden. The UI only ever shows
+// the 0x66 reply, so a refused value (tune outside keyboard mode, real-time
+// record while stopped) snaps back to what the unit applied.
+// ---------------------------------------------------------------------------
+const DIR_NAMES = ['FWD', 'BWD', 'P-P', 'RND'];
+let feat = null, featReqMs = 0;
+function requestFeatures(force) {
+  if (!midiOut || deviceMode !== 'superos') return;
+  const now = Date.now();
+  if (!force && (now - featReqMs < 1000 || document.visibilityState !== 'visible' || !$('perfBody').classList.contains('is-open'))) return;
+  featReqMs = now;
+  sendSysex([0x67]);
+}
+function sendFeature(id, v, what) {
+  if (!feat || deviceMode !== 'superos') return;
+  if (sendSysex([0x65, id, v])) log('performance -> unit: ' + what, 'log-syx');
+}
+const fTr = () => feat[2] - 64;
+function featSummary() {
+  const f = feat, parts = [];
+  const add = (i, txt) => { if (f.length > i) parts.push(txt()); };
+  add(0, () => 'dir ' + (DIR_NAMES[f[0]] || f[0]));
+  add(9, () => 'arp ' + f[9] + ' oct');
+  add(2, () => 'transpose ' + (fTr() > 0 ? '+' : '') + fTr());
+  add(3, () => 'tmode ' + (f[3] ? 'on' : 'off'));
+  add(4, () => 'loop ' + (f[4] ? f[4] : 'full'));
+  add(8, () => 'delay ' + f[8] + ' ms');
+  add(1, () => 'pedal ' + (f[1] ? 'transpose' : 'hold'));
+  add(6, () => 'tune ' + (f[6] ? 'on' : 'off'));
+  add(5, () => 'rt-rec ' + (f[5] ? 'on' : 'off'));
+  add(7, () => 'queued ' + (f[7] === 0x7F ? 'none' : 'P' + (f[7] + 1)));
+  return parts.join(', ');
+}
+function renderFeatures() {
+  $('perfPanel').style.display = deviceMode === 'superos' ? '' : 'none';
+  $('perfStatus').textContent = feat ? featSummary() : (verified ? 'no reply yet (firmware without 0x67?)' : 'reading...');
+  document.querySelectorAll('#perfBody .config-field').forEach(el => el.style.display = feat && feat.length > +el.dataset.f ? '' : 'none');
+  if (!feat) return;
+  const f = feat, tog = (id, on) => { $(id).textContent = on ? 'On' : 'Off'; $(id).classList.toggle('is-on', !!on); };
+  document.querySelectorAll('#dirGrid .div-btn').forEach(d => d.classList.toggle('is-on', +d.dataset.idx === f[0]));
+  document.querySelectorAll('#arpGrid .div-btn').forEach(d => d.classList.toggle('is-on', +d.dataset.idx === f[9]));
+  if (document.activeElement !== $('inTr')) $('inTr').value = fTr();
+  tog('btnTrMode', f[3]);
+  if (f.length > 4) {
+    if (![...$('selLoop').options].some(o => +o.value === f[4])) {   // a panel loop past 32 steps
+      const o = document.createElement('option'); o.value = f[4]; o.textContent = f[4] + ' steps'; $('selLoop').appendChild(o);
+    }
+    $('selLoop').value = f[4];
+  }
+  tog('btnRtRec', f[5]); tog('btnTune', f[6]);
+  $('queued').textContent = f.length > 7 ? (f[7] === 0x7F ? 'none' : 'Pattern ' + (f[7] + 1) + ' (next, at the end of this pass)') : '';
+  $('selPedal').value = f[1];
+  if (document.activeElement !== $('inDelay')) $('inDelay').value = f[8];
+  $('rngDelay').value = f[8];
+}
+DIR_NAMES.forEach((n, i) => {
+  const b = document.createElement('button');
+  b.className = 'div-btn'; b.dataset.idx = i;
+  b.innerHTML = '<span class="dv">' + n + '</span><span class="dk">key ' + (15 + i) + '</span>';
+  b.title = ['Forward', 'Backward', 'Ping-pong', 'Random'][i];
+  b.onclick = () => sendFeature(0, i, 'direction ' + n);
+  $('dirGrid').appendChild(b);
+});
+[1, 2, 3].forEach(r => {
+  const b = document.createElement('button');
+  b.className = 'div-btn'; b.dataset.idx = r;
+  b.innerHTML = '<span class="dv">' + r + '</span><span class="dk">oct</span>';
+  b.title = r + ' octave' + (r > 1 ? 's' : '');
+  b.onclick = () => sendFeature(8, r, 'arp range ' + r + ' oct');
+  $('arpGrid').appendChild(b);
+});
+function setTransposeUi(t) {
+  t = Math.max(-36, Math.min(36, t | 0));
+  sendFeature(2, t + 64, 'transpose ' + t);
+  if (feat) { feat[2] = t + 64; renderFeatures(); }   // optimistic; the 0x66 reply corrects it
+}
+$('btnTrDn').onclick = () => setTransposeUi(fTr() - 1);
+$('btnTrUp').onclick = () => setTransposeUi(fTr() + 1);
+$('btnTrReset').onclick = () => setTransposeUi(0);
+$('inTr').onchange = () => setTransposeUi(+$('inTr').value);
+$('btnTrMode').onclick = () => sendFeature(3, feat[3] ? 0 : 1, 'transpose mode ' + (feat[3] ? 'off' : 'on'));
+$('btnRtRec').onclick = () => sendFeature(5, feat[5] ? 0 : 1, 'real-time record ' + (feat[5] ? 'off' : 'on'));
+$('btnTune').onclick = () => sendFeature(6, feat[6] ? 0 : 1, 'tune ' + (feat[6] ? 'off' : 'on'));
+$('selPedal').onchange = () => sendFeature(1, +$('selPedal').value, 'pedal ' + ($('selPedal').value === '1' ? 'key transpose' : 'hold'));
+// Loop length: 1..127 is all SysEx can carry (128 is a status byte); 0 = full.
+(function fillLoop() {
+  const o = document.createElement('option'); o.value = 0; o.textContent = 'Full'; $('selLoop').appendChild(o);
+  for (let n = 1; n <= 32; ++n) { const x = document.createElement('option'); x.value = n; x.textContent = n + (n === 1 ? ' step' : ' steps'); $('selLoop').appendChild(x); }
+})();
+$('selLoop').onchange = () => { const n = +$('selLoop').value; sendFeature(4, n, 'loop ' + (n || 'full')); };
+// Sync delay: the number mirrors the slider while dragging; one 0x65 on release.
+const setDelay = v => { v = Math.max(0, Math.min(60, v | 0)); sendFeature(7, v, 'sync delay ' + v + ' ms'); };
+$('rngDelay').oninput = () => $('inDelay').value = $('rngDelay').value;
+$('rngDelay').onchange = () => setDelay(+$('rngDelay').value);
+$('inDelay').onchange = () => setDelay(+$('inDelay').value);
+document.addEventListener('visibilitychange', () => requestFeatures());
+
 // Collapsible panels
-[['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
+[['perfBar','perfBody'],['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
   $(bar).onclick = () => { $(bar).classList.toggle('is-open'); $(body).classList.toggle('is-open'); };
 });
 
-// Panel-menu keyboard map: the 13 lowest keys of the SH-101 keyboard (starts on F).
+// Panel-menu keyboard map: the 31 lowest keys of the SH-101 keyboard (starts on F).
 (function buildMenuMap() {
   const el = $('mmKbd');
-  const KEY_FN = ['1/4','1/4 dot','1/4 trip','1/8','1/8 dot','1/8 trip','1/16','1/16 dot','1/16 trip','1/32','MC-202 accent','TB-303 accent','Cutoff CC on/off'];
-  for (let k = 0; k < 13; ++k) {
+  const KEY_FN = ['1/4','1/4 dot','1/4 trip','1/8','1/8 dot','1/8 trip','1/16','1/16 dot','1/16 trip','1/32','MC-202 accent','TB-303 accent','Cutoff CC on/off',
+                  'LFO lock/free','Dir FWD','Dir BWD','Dir P-P','Dir RND','Pedal route',
+                  ...[0, 2, 4, 6, 8, 10, 12, 15, 18, 21, 25, 30].map(ms => 'Delay ' + ms + ' ms')];
+  for (let k = 0; k < KEY_FN.length; ++k) {
     const midi = 53 + k;   // key 0 = F3
     const black = [1,3,6,8,10].includes(midi % 12);
     const d = document.createElement('div');
@@ -1048,7 +1229,7 @@ function renderPlayhead() {
   document.querySelectorAll('#steps .step-card').forEach(d =>
     d.classList.toggle('is-playing-step', show && +d.dataset.i === playPos));
 }
-function renderAll() { renderPills(); renderSteps(); renderConfig(); }
+function renderAll() { renderPills(); renderSteps(); renderConfig(); renderFeatures(); }
 
 document.addEventListener('keydown', ev => {
   if (['SELECT','INPUT'].includes(document.activeElement.tagName)) return;

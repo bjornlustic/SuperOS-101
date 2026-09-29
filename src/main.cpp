@@ -235,7 +235,7 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           case 0: g_engine.seq().setDirection(v); break;
           case 1: if (v <= controls::PEDAL_TRANSPOSE) { controls::PedalRoute() = v; engine::FeatDirty() = true; } break;
           case 2: if (v >= 64 - 36 && v <= 64 + 36) g_engine.setTranspose((int8_t)(v - 64), g_engine.transposeLatched()); break;
-          case 3: g_engine.setTranspose(v ? g_engine.transpose() : 0, v != 0); break;
+          case 3: g_engine.setTranspose(g_engine.transpose(), v != 0); break;   // like the panel: leaving the mode keeps the transpose
           case 4: if (v <= engine::MAX_STEPS) g_engine.seq().setLoopLength(v); break;
           case 5: g_engine.setRtRec(v != 0); break;
           case 6: g_engine.setTune(v != 0); break;
