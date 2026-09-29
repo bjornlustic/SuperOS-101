@@ -567,7 +567,7 @@ static int SelfTest() {
   sim::g_buttons = 1u << 0; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // LOAD (save)
   {
     uint8_t buf[101]; uint8_t n = persist::Store().read(persist::FB_PATTERN_BASE + 0, buf, sizeof(buf));
-    CHECK(n == 5 && buf[0] == 3, "pattern 0 saved to the flash arena (len 3 + ratchet byte)");
+    CHECK(n == 7 && buf[0] == 3 && buf[5] == 0xFF && buf[6] == 0x0F, "pattern 0 saved to the flash arena (len 3 + ratchet byte + scale off/all)");
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
   CHECK(sim::g_sh[0] == 17 && GateOn(), "PLAY -> step 1 sounds immediately (CV 17)");
@@ -688,7 +688,7 @@ static int SelfTest() {
           "SysEx 0x10 -> 0x11 returns the same pattern (+ ratchet tail)");
     for (int i = 0; i < 2000; ++i) { delayMicroseconds(1000); RunLoops(1); }   // > 500 ms quiet: deferred flush
     uint8_t buf[101]; uint8_t k = persist::Store().read(persist::FB_PATTERN_BASE + 5, buf, sizeof(buf));
-    CHECK(k == 5 && buf[0] == 3 && buf[3] == (0x80 | 22) && buf[4] == 0, "pattern 5 flushed to the flash arena");
+    CHECK(k == 7 && buf[0] == 3 && buf[3] == (0x80 | 22) && buf[4] == 0, "pattern 5 flushed to the flash arena (+ 2 scale bytes)");
   }
 
   // 0x3B -> 0x3C bench probe, SuperOS LED/gate words (gate G12 observability,
@@ -1604,6 +1604,78 @@ static int SelfTest() {
       tap(B_UP); btn(B_KT, true); tap(B_DOWN); tap(B_DOWN); btn(B_KT, false); tap(B_UP);
       CHECK(engine::ArpRange() == 1, "KEY TRANSPOSE + DOWN: back to 1 octave (floor 1)");
       WaitVirtMs(40);
+    }
+
+    // Scale + randomizers (SuperOS-303 style).
+    {
+      auto readScale = [&](uint8_t pat) {
+        g_midiOut.clear(); sx({0x2A, pat});
+        for (size_t i = 0; i + 6 < g_midiOut.size(); ++i)
+          if (g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x2A && g_midiOut[i + 3] == pat)
+            return (int)(g_midiOut[i + 4] | ((g_midiOut[i + 5] & 0x1F) << 7) | (g_midiOut[i + 6] ? 0x8000 : 0));
+        return -1;
+      };
+      auto readPattern = [&](uint8_t pat) {
+        g_midiOut.clear(); sx({0x10, pat});
+        std::vector<uint8_t> raw;
+        for (size_t i = 0; i + 3 < g_midiOut.size(); ++i)
+          if (g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x11 && g_midiOut[i + 3] == pat) {
+            size_t j = i + 6;
+            while (j < g_midiOut.size() && g_midiOut[j] != 0xF7) {
+              uint8_t msb = g_midiOut[j++];
+              for (int k = 0; k < 7 && j < g_midiOut.size() && g_midiOut[j] != 0xF7; ++k) raw.push_back((uint8_t)(g_midiOut[j++] | (((msb >> k) & 1) << 7)));
+            }
+            break;
+          }
+        return raw;
+      };
+      CHECK(readScale(7) == 0x0FFF, "0x2A read: a pattern without a scale is off, all 12 notes");
+      // C major on pattern 8 (10 11 12 13 = A#.. C#: cv 10 = MIDI 46 A#2).
+      sx({0x2A, 7, 0xB5 & 0x7F, (0xAB5 >> 7) & 0x1F, 1});
+      CHECK(readScale(7) == (0xAB5 | 0x8000), "0x2A set: C major on, read back");
+      play(); std::string sq = first() + run(3); tap(B_PLAY); WaitVirtMs(40);
+      printf("  (pattern 10 11 12 13 in C major plays: %s)\n", sq.c_str());
+      // cv 10 = A#: nearest A (9) (tie to lower), 11 = B, 12 = C, 13 = C#: C (12)
+      CHECK(sq == "9 11 12 12 ", "scale on: the output snaps to C major, the pattern itself is unchanged");
+      std::vector<uint8_t> raw = readPattern(7);
+      CHECK(raw.size() >= 5 && raw[1] == 10 && raw[4] == 13, "scale is non-destructive: stored steps untouched");
+      sx({0x2A, 7, 0xB5 & 0x7F, (0xAB5 >> 7) & 0x1F, 0});
+      // 0x68 seeded randomize: same seed, same pattern; pitches in the scale.
+      sx({0x2A, 5, 0xB5 & 0x7F, (0xAB5 >> 7) & 0x1F, 1});
+      sx({0x68, 5, 0, 0x7F, 0x21, 0x03}); std::vector<uint8_t> a1 = readPattern(5);
+      sx({0x68, 5, 0, 0x7F, 0x21, 0x03}); std::vector<uint8_t> a2 = readPattern(5);
+      bool inKey = a1.size() > 1, hasNote = false;
+      for (size_t i = 1; i < a1.size() && i <= a1[0]; ++i) {
+        uint8_t st = a1[i]; if ((st >> 6) == 1) continue; hasNote = true;
+        if (!((0xAB5 >> ((st & 0x3F) % 12)) & 1)) inKey = false;
+      }
+      CHECK(a1 == a2 && a1.size() > 1, "0x68 randomize: the same seed gives the same pattern");
+      CHECK(inKey && hasNote, "0x68 randomize: every written note is in the pattern's scale");
+      std::vector<uint8_t> before = readPattern(5);
+      sx({0x68, 5, 3, 0x7F, 0x55, 0x01});                 // mutate
+      std::vector<uint8_t> after = readPattern(5);
+      int diff = 0; for (size_t i = 1; i < before.size() && i < after.size() && i <= before[0]; ++i) diff += before[i] != after[i];
+      printf("  (mutate changed %d of %u steps)\n", diff, before.empty() ? 0 : before[0]);
+      CHECK(diff >= 1 && diff <= 4, "0x68 mutate: a few steps change, the rest stay");
+      // Panel: PLAY held + U&D randomizes the current pattern.
+      sx({0x1D, 5});
+      before = readPattern(5);
+      btn(B_PLAY, true); tap(B_UD); btn(B_PLAY, false);
+      after = readPattern(5);
+      CHECK(before != after && (sim_portf & 7) == 0, "panel PLAY + U&D: randomizes the pattern, does not start play");
+      // Panel scale: PLAY + KEY TRANSPOSE + key = root, Major; same key again = next scale; KT tap = off.
+      btn(B_PLAY, true); btn(B_KT, true); key(9, true); key(9, false);   // key 10 = D
+      int s1 = readScale(5);
+      key(9, true); key(9, false);
+      int s2 = readScale(5);
+      btn(B_KT, false); btn(B_PLAY, false);
+      printf("  (PLAY+KT+D: %03X, again: %03X)\n", s1 & 0xFFF, s2 & 0xFFF);
+      CHECK(s1 == (0x8000 | engine::ScalePreset(0, 2)) && s2 == (0x8000 | engine::ScalePreset(1, 2)),
+            "panel PLAY + KT + key: D major, the same key again: D minor");
+      btn(B_PLAY, true); tap(B_KT); btn(B_PLAY, false);
+      CHECK(readScale(5) == engine::ScalePreset(1, 2), "panel PLAY + KT tap: scale off (mask kept)");
+      CHECK(!(sim_portf & 0x40) && (sim_portf & 7) == 0, "scale gestures neither transpose nor start play");
+      sx({0x1D, 7}); WaitVirtMs(40);
     }
 
     // Tune mode: KEY TRANSPOSE + LOAD from keyboard mode holds A (440 Hz at 8').

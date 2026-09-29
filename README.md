@@ -58,6 +58,17 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
 - **Shift (SH-1oh1)**: while playing, **KEY TRANSPOSE + UP / DOWN** plays the next /
   previous step now (move the pattern against the clock).
 - **Random arp (SH-1oh1)**: **DOWN + U&D together** (U&D LED blinks); again = off.
+- **Randomize (SuperOS-303 style)**: **PLAY held + U&D** = new pattern (rhythm + pitch),
+  **PLAY held + UP** = new pitches, **PLAY held + DOWN** = mutate (2 to 4 small edits). Written
+  notes land in the pattern's scale. SysEx 0x68 [pat, op 0 full / 1 pitch / 2 rhythm / 3 mutate /
+  4 octaves / 5 legato, density (0x7F = panel weights), seed lo, hi]; the fleet 0x2E is unchanged.
+- **Scale (per pattern, the 303's 35 scales)**: **PLAY held + KEY TRANSPOSE + a key** = that
+  note as the root, Major; the same key again steps through the scales. **PLAY held + KEY
+  TRANSPOSE tap** = scale on / off. Non-destructive: the output snaps to the nearest scale note
+  (lower on a tie) before any transpose. SysEx 0x2A [pat] reads, [pat, mask lo7, hi5, on] sets.
+- **Resync**: SysEx 0x65 id 9 (the editor's Resync) puts the sequence back on the one.
+  Direction, loop length, pattern switches and clock-division changes never move it off the
+  grid; ping-pong repeats its end steps so a round trip stays on the bar.
 - **Arp octave range**: in arp mode, **KEY TRANSPOSE + UP / DOWN** = one octave more / less
   (1 to 3). UP climbs octave by octave, DOWN starts at the top, U&D bounces across the whole
   span, random picks an octave too. Persists. (Our addition; the SH-1oh1 has no range.)

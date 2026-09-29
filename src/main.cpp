@@ -117,6 +117,11 @@ static void SendFeatures() {
                   midiclk::SyncDelayMs(), engine::ArpRange()};
   midi::SendSysex(b, sizeof(b));
 }
+static void SendScale(uint8_t p) {
+  uint16_t sc = g_engine.seq().scale(p);
+  uint8_t b[5] = {0x2A, p, (uint8_t)(sc & 0x7F), (uint8_t)((sc >> 7) & 0x1F), (uint8_t)((sc & 0x8000) ? 1 : 0)};
+  midi::SendSysex(b, sizeof(b));
+}
 static void SendAck(uint8_t code) { uint8_t b[2] = {0x14, code}; midi::SendSysex(b, 2); }
 // 0x24: CV DAC config (cvdac.h Pack order) + live codes for the editor's meters.
 static void SendCvConfig() {
@@ -249,6 +254,28 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
       SendFeatures();
       break;
     case 0x67: SendFeatures(); break;
+    // 0x2A SCALE [pat] = read, [pat, mask_lo7, mask_hi5, on] = set; both
+    // answered with 0x2A [pat, mask_lo7, mask_hi5, on] (the SuperOS-303's
+    // layout; the device also sends it after a panel scale change).
+    case 0x2A:
+      if (len >= 5 && body[1] < engine::NUM_PATTERNS)
+        g_engine.seq().setScale(body[1], (uint16_t)(body[2] | ((uint16_t)(body[3] & 0x1F) << 7)), body[4] != 0);
+      if (len >= 2 && body[1] < engine::NUM_PATTERNS) { SendScale(body[1]); g_engine.seq().consumeScaleChanged(); }
+      break;
+    // 0x68 RANDOMIZE-MUSICAL [pat, op, density, seed_lo, seed_hi]: op 0 full,
+    // 1 pitches, 2 rhythm, 3 mutate, 4 octaves, 5 legato; density 0..127 or
+    // 127+ = 0x7F -> panel weights; seed 0 = entropy. Ack 0x14, then the
+    // pattern (0x11). 0x2E RANDOMIZE stays the fleet contract, untouched.
+    case 0x68:
+      if (len >= 6) {
+        uint16_t seed = (uint16_t)(body[4] | ((uint16_t)body[5] << 7));
+        uint8_t dens = body[3] >= 0x7F ? engine::Sequencer::RND_WEIGHTED : body[3];
+        bool ok = g_engine.seq().randomizeMusical(body[1], body[2], dens, seed, (uint16_t)micros());
+        if (ok) g_lastEditMs = millis();
+        SendAck(ok ? 0 : 2);
+        if (ok) { SendPattern(body[1]); g_engine.seq().consumeEdited(); }
+      } else SendAck(1);
+      break;
     case 0x20: SendConfig(); break;
     case 0x23: SendCvConfig(); break;
     case 0x25: {   // set CV DAC config; the editor gets the applied values back
@@ -464,7 +491,9 @@ void superos_loop() {
     uint8_t ed = g_engine.seq().consumeEdited();
     for (uint8_t p = 0; ed && p < engine::NUM_PATTERNS; ++p) if (ed & (1u << p)) SendPattern(p);
     if (g_engine.seq().consumeSelChanged()) SendConfig();
-  } else { g_engine.seq().consumeStepChanged(); g_engine.seq().consumeEdited(); g_engine.seq().consumeSelChanged(); }
+    uint8_t sc = g_engine.seq().consumeScaleChanged();
+    for (uint8_t p = 0; sc && p < engine::NUM_PATTERNS; ++p) if (sc & (1u << p)) SendScale(p);
+  } else { g_engine.seq().consumeScaleChanged(); g_engine.seq().consumeStepChanged(); g_engine.seq().consumeEdited(); g_engine.seq().consumeSelChanged(); }
 
   // Deferred pattern persistence: SysEx writes and panel edits land in RAM;
   // flush one dirty pattern per pass once things have been quiet for 500 ms

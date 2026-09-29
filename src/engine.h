@@ -69,6 +69,19 @@ inline void SaveFeatures() {
   eeprom_update_byte((uint8_t*)EE_A_FEAT_ARPRANGE, ArpRange());
   FeatDirty() = false;
 }
+// Scales, the SuperOS-303's 35 presets in the same order (bit 0 = C). A
+// pattern's scale is the preset mask rotated to a root, stored per pattern.
+static const uint8_t NUM_SCALES = 35;
+static const uint16_t SCALE_MASKS[NUM_SCALES] = {   // 70 B of RAM; plenty free
+  0xAB5, 0x5AD, 0x6AD, 0x6B5, 0xAD5, 0x5AB, 0x56B, 0x555, 0x6DB, 0xB6D,
+  0x4E9, 0x4A9, 0x295, 0x9AD, 0x9B5, 0x6CD, 0x5B3, 0xAAD, 0xB55, 0x6D5,
+  0x55B, 0x57B, 0x9B3, 0x9CD, 0x18D, 0x4A3, 0x463, 0x28D, 0x18B, 0x1A3,
+  0xDDD, 0x9E7, 0x8E3, 0xD75, 0xBEF };
+inline uint16_t ScalePreset(uint8_t i, uint8_t root) {
+  uint16_t m = SCALE_MASKS[i < NUM_SCALES ? i : 0];
+  root %= 12;
+  return (uint16_t)(((m << root) | (m >> (12 - root))) & 0xFFF);
+}
 // KEY TRANSPOSE reference: key 7 (C4, MIDI 60) plays the sequence as written.
 static const uint8_t TRANSPOSE_REF_KEY = 7;
 // Legato (2): this step's note starts WITHOUT the gate dropping after the
@@ -172,6 +185,10 @@ class Sequencer {
   // note retriggers evenly inside its clock period. Packed 4 steps/byte so the
   // whole lane costs 256 bytes, not another KB of a 2.5 KB SRAM part.
   uint8_t rat_[NUM_PATTERNS][MAX_STEPS / 4];
+  // Scale per pattern: bits 0-11 = allowed pitch classes (bit 0 = C), bit 15
+  // = on. Non-destructive: steps keep their pitch, the output snaps to the
+  // nearest allowed note (lower on a tie), before any transpose (as the 303).
+  uint16_t scale_[NUM_PATTERNS];
   static const uint8_t RAT_MAX = 2;
   static uint8_t RatBytes(uint8_t len) { return (uint8_t)((len + 3) >> 2); }
   uint8_t len_[NUM_PATTERNS];
@@ -182,6 +199,7 @@ class Sequencer {
   bool    stepChanged_ = false;
   bool    selChanged_ = false;
   uint8_t edited_ = 0;                // bit p = edited on the panel since last consume
+  uint8_t scaleChanged_ = 0;          // bit p = scale changed (mirror to the editor, 0x2A)
   // Playback shape (runtime; DirSetting() persists via the engine's settings):
   bool    started_ = false;           // false: the next advance plays the FIRST step
   bool    halfSeen_ = false;          // the current step's half-step has passed
@@ -315,7 +333,7 @@ class Sequencer {
     started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0; steps_ = 0;
     chainN_ = 0; chainPos_ = 0; wcur_ = 0;
   }
-  Sequencer() { memset(len_, 0, sizeof(len_)); }
+  Sequencer() { memset(len_, 0, sizeof(len_)); for (uint8_t i = 0; i < NUM_PATTERNS; ++i) scale_[i] = 0x0FFF; }
   uint8_t current() const { return cur_; }
   uint8_t length(uint8_t p) const { return p < NUM_PATTERNS ? len_[p] : 0; }
   uint8_t length() const { return len_[cur_]; }
@@ -508,17 +526,114 @@ class Sequencer {
     uint8_t next = step_[cur_][peekNext()];
     if (StepKind(next) != STEP_LEGATO) curGate_ = false;
   }
-  uint8_t cv()   const { return curCv_; }
+  uint8_t cv()   const { return quantize(curCv_); }
+  // --- scale ---
+  uint16_t scale(uint8_t p) const { return scale_[p < NUM_PATTERNS ? p : 0]; }
+  bool scaleOn() const { return (scale_[cur_] & 0x8000) && (scale_[cur_] & 0xFFF); }
+  void setScale(uint8_t p, uint16_t mask, bool on) {
+    if (p >= NUM_PATTERNS) return;
+    mask &= 0xFFF; if (!mask) mask = 0xFFF;
+    scale_[p] = (uint16_t)(mask | (on ? 0x8000 : 0));
+    dirty_ |= (uint8_t)(1u << p); scaleChanged_ |= (uint8_t)(1u << p);
+  }
+  uint8_t consumeScaleChanged() { uint8_t c = scaleChanged_; scaleChanged_ = 0; return c; }
+  // cv -> nearest allowed note (MIDI = cv + 36, so C is cv 0, 12, 24 ...).
+  uint8_t quantize(uint8_t cv, uint8_t p = 0xFF) const {
+    uint16_t sc = scale_[p < NUM_PATTERNS ? p : cur_];
+    if (!(sc & 0x8000)) return cv;
+    uint16_t m = sc & 0xFFF;
+    if (!m || ((m >> (cv % 12)) & 1)) return cv;
+    for (int8_t d = 1; d <= 12; ++d) {
+      int16_t lo = (int16_t)cv - d, hi = (int16_t)cv + d;
+      if (lo >= 0 && ((m >> (lo % 12)) & 1)) return (uint8_t)lo;
+      if (hi <= CV_MAX && ((m >> (hi % 12)) & 1)) return (uint8_t)hi;
+    }
+    return cv;
+  }
+  // --- musical randomizers (SuperOS-303 style; SysEx 0x68, panel) ---
+  // ops: 0 full (rhythm + pitch), 1 pitches, 2 rhythm (note / rest / legato,
+  // pitches kept), 3 mutate (2-4 small edits), 4 octaves, 5 legato flags.
+  // Pitches: a semitone of the C4 octave and an octave weighted 20% down /
+  // 60% centre / 20% up, snapped to the pattern's scale when it is on (so
+  // written notes are in key). density 0..127 = share of note steps; 0xFF =
+  // the 303's panel weights (60% note, 25% rest, 15% legato). seed 0 =
+  // entropy; nonzero repeats exactly. Ratchets are kept.
+  static const uint8_t RND_WEIGHTED = 0xFF;
+  bool randomizeMusical(uint8_t p, uint8_t op, uint8_t density, uint16_t seed, uint16_t entropy) {
+    if (p >= NUM_PATTERNS || op > 5) return false;
+    uint16_t st = seed ? seed : (uint16_t)(entropy | 1);
+    auto rnd = [&st](uint8_t n) -> uint8_t { st ^= st << 7; st ^= st >> 9; st ^= st << 8; return (uint8_t)(st % n); };
+    auto pitch = [&]() -> uint8_t {
+      uint8_t semi = rnd(13);                       // one draw per value, fixed order
+      uint8_t o = rnd(10);
+      int16_t cv = 24 + semi + (o < 2 ? -12 : (o >= 8 ? 12 : 0));
+      return quantize((uint8_t)cv, p);
+    };
+    uint8_t len = len_[p];
+    if (!len) { if (op != 0) return false; len = 16; setLength(p, 16); }
+    if (op == 3) {                                   // mutate
+      uint8_t passes = (uint8_t)(2 + rnd(3));
+      for (uint8_t i = 0; i < passes; ++i) {
+        uint8_t k = rnd(len), a = rnd(4), sb = step_[p][k];
+        StepType t = StepKind(sb);
+        if (a == 0 && t != STEP_REST) sb = StepByte(pitch(), t);
+        else if (a == 1) sb = (t == STEP_REST) ? StepByte(pitch(), STEP_NOTE) : StepByte(StepCv(sb), STEP_REST);
+        else if (a == 2 && t != STEP_REST) sb = StepByte(StepCv(sb), t == STEP_LEGATO ? STEP_NOTE : STEP_LEGATO);
+        else if (a == 3 && t != STEP_REST) {
+          int16_t c = (int16_t)StepCv(sb) + (rnd(2) ? 1 : -1);
+          if (c < 0) c = 0; if (c > CV_MAX) c = CV_MAX;
+          uint8_t q = quantize((uint8_t)c, p);
+          if (q == StepCv(sb)) q = quantize((uint8_t)(c + (c > StepCv(sb) ? 1 : -1)), p);
+          sb = StepByte(q, t);
+        }
+        step_[p][k] = sb;
+      }
+    } else {
+      StepType prev = STEP_REST;
+      for (uint8_t i = 0; i < len; ++i) {
+        uint8_t sb = step_[p][i];
+        StepType t = StepKind(sb);
+        if (op == 0 || op == 2) {                    // rhythm
+          if (density == RND_WEIGHTED) {
+            uint8_t r = rnd(20);
+            t = (i == 0 || prev == STEP_REST) ? (r < 12 ? STEP_NOTE : STEP_REST)
+                                              : (r < 12 ? STEP_NOTE : (r < 17 ? STEP_REST : STEP_LEGATO));
+          } else {
+            uint8_t r = rnd(127);
+            t = (r >= density) ? STEP_REST
+                               : ((i && prev != STEP_REST && rnd(4) == 0) ? STEP_LEGATO : STEP_NOTE);
+          }
+          uint8_t cv = StepCv(sb);
+          if (op == 0 && t != STEP_REST) cv = pitch();
+          if (op == 2 && t != STEP_REST && StepKind(sb) == STEP_REST) cv = pitch();   // a new note needs a pitch
+          sb = StepByte(cv, t);
+        } else if (t != STEP_REST) {
+          if (op == 1) sb = StepByte(pitch(), t);
+          else if (op == 4) {                        // octave: keep the pitch class
+            uint8_t o = rnd(10);
+            int16_t c = (StepCv(sb) % 12) + 24 + (o < 2 ? -12 : (o >= 8 ? 12 : 0));
+            sb = StepByte((uint8_t)c, t);
+          } else if (op == 5 && i) sb = StepByte(StepCv(sb), rnd(4) == 0 ? STEP_LEGATO : STEP_NOTE);
+        }
+        step_[p][i] = sb;
+        prev = StepKind(sb);
+      }
+    }
+    dirty_ |= (uint8_t)(1u << p); edited_ |= (uint8_t)(1u << p);
+    if (p == cur_) stepChanged_ = true;
+    return true;
+  }
   bool    gate() const { return curGate_; }
 
   // --- persistence (flash arena; payload [0]=len [1..len]=steps, then
   // RatBytes(len) packed ratchet bytes; records written before ratchets
   // existed are exactly 1+len and load with every ratchet off) ---
   void loadAll() {
-    uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4];
+    uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2];
     for (uint8_t p = 0; p < NUM_PATTERNS; ++p) {
       len_[p] = 0;
       memset(rat_[p], 0, sizeof(rat_[p]));
+      scale_[p] = 0x0FFF;
       if (!persist::Available()) continue;
       uint8_t n = persist::Store().read((uint16_t)(persist::FB_PATTERN_BASE + p), buf, sizeof(buf));
       if (n >= 1 && buf[0] <= MAX_STEPS && n >= (uint8_t)(1 + buf[0])) {
@@ -526,6 +641,13 @@ class Sequencer {
         memcpy(step_[p], buf + 1, len_[p]);
         if (n >= (uint8_t)(1 + len_[p] + RatBytes(len_[p])))
           memcpy(rat_[p], buf + 1 + len_[p], RatBytes(len_[p]));
+        // scale: 2 bytes after the ratchet tail (records from before scales
+        // end at the tail and load as scale off, all notes)
+        uint8_t so = (uint8_t)(1 + len_[p] + RatBytes(len_[p]));
+        if (n >= (uint8_t)(so + 2)) {
+          uint16_t sc = (uint16_t)(buf[so] | ((uint16_t)buf[so + 1] << 8));
+          scale_[p] = (sc & 0xFFF) ? (uint16_t)(sc & 0x8FFF) : 0x0FFF;
+        }
       }
     }
     dirty_ = 0;
@@ -539,11 +661,13 @@ class Sequencer {
       if (!(dirty_ & (1u << p))) continue;
       dirty_ &= (uint8_t)~(1u << p);
       if (!persist::Available()) return false;
-      uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4];
+      uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2];
       buf[0] = len_[p];
       memcpy(buf + 1, step_[p], len_[p]);
       memcpy(buf + 1 + len_[p], rat_[p], RatBytes(len_[p]));
-      persist::Store().write((uint16_t)(persist::FB_PATTERN_BASE + p), buf, (uint8_t)(len_[p] + 1 + RatBytes(len_[p])));
+      uint8_t so = (uint8_t)(1 + len_[p] + RatBytes(len_[p]));
+      buf[so] = (uint8_t)(scale_[p] & 0xFF); buf[so + 1] = (uint8_t)(scale_[p] >> 8);
+      persist::Store().write((uint16_t)(persist::FB_PATTERN_BASE + p), buf, (uint8_t)(so + 2));
       return true;
     }
     return false;
@@ -640,7 +764,7 @@ class NoteEngine {
     if (kt && b.pressed(BTN_LOAD) && mode_ == MODE_KEYBOARD) { tune_ = true; return; }
     // KEY TRANSPOSE double tap = transpose mode on/off (not in LOAD, where it
     // is the rest button, nor while real-time recording).
-    if (b.pressed(BTN_KEYTRANS) && mode_ != MODE_SEQ_LOAD && !rtRec_) {
+    if (b.pressed(BTN_KEYTRANS) && mode_ != MODE_SEQ_LOAD && !rtRec_ && !b.down(BTN_PLAY)) {
       if (ktLastPressMs_ && nowMs - ktLastPressMs_ < 400) { ktLatched_ = !ktLatched_; ktLastPressMs_ = 0; }
       else ktLastPressMs_ = nowMs;
     }
@@ -651,6 +775,8 @@ class NoteEngine {
       // DOWN takes the last step back (SH-1oh1).
       if (b.pressed(BTN_UP))   seq_.cycleLastRatchet(+1);
       if (b.pressed(BTN_DOWN)) seq_.deleteLast();
+    } else if (playHeld) {
+      // PLAY held: UP / DOWN / U&D belong to the randomizers (below).
     } else if (mode_ == MODE_SEQ_PLAY && kt) {
       // Shift (SH-1oh1): KEY TRANSPOSE + UP / DOWN plays the next / previous
       // step now, moving the pattern against the clock.
@@ -688,8 +814,34 @@ class NoteEngine {
     if (b.pressed(BTN_PLAY)) { playHeldUsed_ = false; songN_ = 0; }
     if (playHeld) {
       uint32_t fresh = rawKeys & ~prevRaw_ & 0xFF;   // own edge memory: the held-PLAY keys never reach prevMask_
-      for (uint8_t k = 0; k < 8; ++k)
-        if ((fresh & (1UL << k)) && songN_ < Sequencer::CHAIN_MAX) { songBuf_[songN_++] = k; playHeldUsed_ = true; }
+      if (!kt)
+        for (uint8_t k = 0; k < 8; ++k)
+          if ((fresh & (1UL << k)) && songN_ < Sequencer::CHAIN_MAX) { songBuf_[songN_++] = k; playHeldUsed_ = true; }
+      // PLAY held + U&D / UP / DOWN: randomize the pattern (rhythm + pitch) /
+      // its pitches / mutate it (SuperOS-303 style, in the pattern's scale).
+      const uint16_t ent = (uint16_t)micros();
+      if (b.pressed(BTN_UD))   { seq_.randomizeMusical(seq_.current(), 0, Sequencer::RND_WEIGHTED, 0, ent); playHeldUsed_ = true; }
+      if (b.pressed(BTN_UP))   { seq_.randomizeMusical(seq_.current(), 1, Sequencer::RND_WEIGHTED, 0, ent); playHeldUsed_ = true; }
+      if (b.pressed(BTN_DOWN)) { seq_.randomizeMusical(seq_.current(), 3, Sequencer::RND_WEIGHTED, 0, ent); playHeldUsed_ = true; }
+      // Scale: PLAY held + KEY TRANSPOSE + a key = that note as the root
+      // (Major first; the same key again steps through the 35 scales); PLAY
+      // held + a KEY TRANSPOSE tap alone = scale on / off.
+      if (kt) {
+        uint32_t f = rawKeys & ~prevRaw_;
+        if (f) {
+          uint8_t root = (uint8_t)((lowestKey(f) + 5) % 12);       // key 1 = F
+          scalePreset_ = (root == scaleRoot_ && scaleKeyUsed_) ? (uint8_t)((scalePreset_ + 1) % NUM_SCALES) : 0;
+          scaleRoot_ = root; scaleKeyUsed_ = true;
+          seq_.setScale(seq_.current(), ScalePreset(scalePreset_, root), true);
+          playHeldUsed_ = true;
+        }
+      }
+      if (b.pressed(BTN_KEYTRANS)) scaleKeyUsed_ = false;
+      if (b.released(BTN_KEYTRANS) && !scaleKeyUsed_) {
+        uint16_t sc = seq_.scale(seq_.current());
+        seq_.setScale(seq_.current(), sc & 0xFFF, !(sc & 0x8000));
+        playHeldUsed_ = true;
+      }
       // PLAY held + LOAD while playing: real-time record on/off.
       if (b.pressed(BTN_LOAD) && mode_ == MODE_SEQ_PLAY) {
         rtRec_ = !rtRec_; rtKey_ = -1; playHeldUsed_ = true;
@@ -718,6 +870,8 @@ class NoteEngine {
     }
   }
   int8_t nudge_ = 0;
+  uint8_t scaleRoot_ = 0, scalePreset_ = 0;
+  bool scaleKeyUsed_ = false;
   Mode preArp_ = MODE_KEYBOARD;
   uint32_t prevRaw_ = 0;
  public:
@@ -814,13 +968,16 @@ class NoteEngine {
       return t;
     }
     if (prevTune_) { prevTune_ = false; prevMask_ = mask; }   // no key edge out of tune mode
-    if (b.down(controls::BTN_PLAY) && mode_ != MODE_SEQ_LOAD) mask &= ~0xFFUL;  // select keys are not notes
+    if (b.down(controls::BTN_PLAY) && mode_ != MODE_SEQ_LOAD) {
+      mask &= ~0xFFUL;                                  // select keys are not notes
+      if (b.down(controls::BTN_KEYTRANS)) mask = 0;     // scale-root keys are not notes either
+    }
     // KEY TRANSPOSE held (any mode but LOAD / real-time record): a fresh key
     // sets the transpose instead of playing. In transpose mode (double tap),
     // plain keys do the same in sequencer play and in a HOLD-latched arp.
     // Keys used this way stay out of the voice until released.
     {
-      const bool ktDown = b.down(controls::BTN_KEYTRANS) && mode_ != MODE_SEQ_LOAD && !rtRec_;
+      const bool ktDown = b.down(controls::BTN_KEYTRANS) && mode_ != MODE_SEQ_LOAD && !rtRec_ && !b.down(controls::BTN_PLAY);
       const bool modeKeys = ktLatched_ && ((mode_ == MODE_SEQ_PLAY && !rtRec_) || (IsArp(mode_) && hold && holdMask_));
       if (ktDown || modeKeys) {
         uint32_t fresh = mask & ~prevMask_ & ~ktKeys_ & ~holdMask_;
