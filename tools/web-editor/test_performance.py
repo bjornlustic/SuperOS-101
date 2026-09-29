@@ -5,7 +5,7 @@ A fake navigator.requestMIDIAccess stands in for the unit: it answers 0x20
 with a 0x21 config and 0x65/0x67 with a 0x66 built by the same rules as
 src/main.cpp OnSysex (out-of-range values ignored, tune only in keyboard mode,
 real-time record only while playing), holds 16 patterns and their scales
-(0x10/0x13 -> 0x11, 0x2A, 0x68 -> 0x14 + 0x11). No real
+(0x10/0x13 -> 0x11, 0x12 -> 0x14, 0x2A, 0x68 and 0x69 -> 0x14 + 0x11). No real
 MIDI port is touched.
 
     python3 tools/web-editor/test_performance.py
@@ -27,15 +27,21 @@ FAKE = r"""
   const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp].slice(0, 1 + st.featLen);
   const NP = 16;   // patterns on the unit (firmware e770f60)
   st.pats = Array.from({length: NP}, (_, p) => p === 0 ? Array.from({length: 16}, (_, i) => [12, 13, 14, 15][i % 4] | (i === 5 ? 1 << 6 : 0) | (i === 9 ? 2 << 6 : 0)) : []);
+  st.rats = Array.from({length: NP}, () => []);   // ratchet per step, 0..2
   st.scales = Array.from({length: NP}, () => ({mask: 0xFFF, on: 0}));
   st.rnd = [];
   const pack7 = src => { const out = []; for (let i = 0; i < src.length; i += 7) { const ch = src.slice(i, i + 7); let msb = 0;
     ch.forEach((b, k) => { if (b & 0x80) msb |= 1 << k; }); out.push(msb, ...ch.map(b => b & 0x7F)); } return out; };
   const sendPat = p => {
-    const steps = st.pats[p], raw = [steps.length, ...steps, ...new Array(Math.ceil(steps.length / 4)).fill(0)];
+    const steps = st.pats[p], tail = new Array(Math.ceil(steps.length / 4)).fill(0);
+    steps.forEach((_, i) => tail[i >> 2] |= (st.rats[p][i] || 0) << ((i & 3) * 2));
+    const raw = [steps.length, ...steps, ...tail];
     let x = 0; raw.forEach(v => x ^= v);
     reply([0x11, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
   };
+  window.__sendPat = sendPat;
+  const unpack7 = src => { const out = []; let i = 0;
+    while (i < src.length) { const msb = src[i++]; for (let k = 0; k < 7 && i < src.length; ++k) out.push(src[i++] | ((msb >> k) & 1 ? 0x80 : 0)); } return out; };
   const output = {id: 'out1', name: 'SuperOS-101', state: 'connected', send(d) {
     const m = Array.from(d); sent.push(m);
     if (m[0] !== 0xF0) return;
@@ -58,6 +64,20 @@ FAKE = r"""
     if (c === 0x67) reply(feats());
     if (c === 0x13) for (let p = 0; p < NP; ++p) sendPat(p);
     if (c === 0x10 && id < NP) sendPat(id);
+    if (c === 0x12 && id < NP) {   // pattern write: steps + packed ratchet tail
+      const raw = unpack7(m.slice(6, -1)), len = raw[0];
+      st.pats[id] = raw.slice(1, 1 + len);
+      st.rats[id] = st.pats[id].map((_, i) => (raw[1 + len + (i >> 2)] >> ((i & 3) * 2)) & 3);
+      reply([0x14, 0]);
+    }
+    if (c === 0x69) {   // nudge: rotate the notes, ratchets move with their steps
+      const [p, dir, n] = m.slice(3, 6);
+      if (p >= NP || !n) { reply([0x14, 2]); return; }
+      const len = st.pats[p].length, k = len ? (dir ? n : -n) % len : 0;
+      const rot = a => a.map((_, i) => a[((i - k) % len + len) % len]);
+      if (len) { st.pats[p] = rot(st.pats[p]); st.rats[p] = rot(st.pats[p].map((_, i) => st.rats[p][i] || 0)); }
+      reply([0x14, 0]); if (len) setTimeout(() => sendPat(p), 20);   // playing: the 0x11 can trail the ack
+    }
     if (c === 0x2A && id < NP) {
       if (m.length >= 8) st.scales[id] = {mask: m[4] | (m[5] & 0x1F) << 7, on: m[6] ? 1 : 0};
       const sc = st.scales[id]; reply([0x2A, id, sc.mask & 0x7F, sc.mask >> 7, sc.on]);
@@ -226,6 +246,59 @@ with sync_playwright() as p:
     page.evaluate("window.__reply([0x14, 2])"); page.wait_for_timeout(100)
     check(page.is_visible("#errorToast"), "a rejected randomize toasts")
 
+    # ---- Nudge on the unit: 0x69 -> ack + 0x11; ratchets travel with their steps
+    orig = [(10 + i) | (2 << 6 if i == 2 else 0) | (1 << 6 if i == 5 else 0) for i in range(8)]
+    orats = [1, 0, 2, 0, 0, 0, 1, 0]
+    page.evaluate(f"window.__dev.pats[0] = {orig}; window.__dev.rats[0] = {orats}; window.__sendPat(0)"); page.wait_for_timeout(150)
+    local = lambda: page.evaluate("patterns[0].map(s => [(s.cv & 0x3F) | (s.type << 6), s.rat])")
+    as_pairs = lambda st, rt: [[a, b] for a, b in zip(st, rt)]
+    right = lambda a: a[-1:] + a[:-1]
+    left = lambda a: a[1:] + a[:1]
+    check(local() == as_pairs(orig, orats), "nudge setup: grid holds the unit's 8 steps")
+    k = mark(); page.click("#btnNudgeR"); page.wait_for_timeout(250)
+    check(sent_since(k) == [[0x69, 0, 1, 1]], f"Nudge right sends 69 00 01 01 (got {sent_since(k)})")
+    check(local() == as_pairs(right(orig), right(orats)), f"grid follows the 0x11 reply, step 1 = old step 8 ({local()})")
+    check(page.inner_text("#steps .step-card[data-i='3'] .step-name") != "" and "is-tie" in page.get_attribute("#steps .step-card[data-i='3']", "class"),
+          "the legato step moved from 3 to 4 on screen")
+    check("is-dirty" not in page.get_attribute(".pat-pill:nth-child(1)", "class"), "nudged pattern is not dirty (the unit holds it)")
+    raw = [8] + orig + [orats[0] | orats[1] << 2 | orats[2] << 4 | orats[3] << 6, orats[4] | orats[5] << 2 | orats[6] << 4 | orats[7] << 6]
+    x = 0
+    for v in raw: x ^= v
+    pk = []
+    for i in range(0, len(raw), 7):
+        ch = raw[i:i + 7]; pk += [sum(1 << j for j, v in enumerate(ch) if v & 0x80)] + [v & 0x7F for v in ch]
+    k = mark(); page.click("#btnUndo"); page.wait_for_timeout(300)
+    check(local() == as_pairs(orig, orats), "Undo restores the pre-nudge pattern")
+    check([0x12, 0, x & 0x7F, (x >> 7) & 1] + pk in sent_since(k), f"Undo writes the old pattern with 0x12 ({sent_since(k)})")
+    check(page.evaluate("window.__dev.pats[0]") == orig and page.evaluate("window.__dev.rats[0]") == orats, "the fake unit holds the old pattern again")
+
+    # Shift+Left / Shift+Right nudge; plain arrows still select
+    [page.keyboard.press("ArrowLeft") for _ in range(8)]; [page.keyboard.press("ArrowRight") for _ in range(3)]
+    check(page.evaluate("selStep") == 3, "arrows select step 4")
+    k = mark(); page.keyboard.press("Shift+ArrowLeft"); page.wait_for_timeout(250)
+    check(sent_since(k) == [[0x69, 0, 0, 1]], f"Shift+Left sends 69 00 00 01 (got {sent_since(k)})")
+    check(local() == as_pairs(left(orig), left(orats)), "Shift+Left: step 1 = old step 2")
+    check(page.evaluate("selStep") == 3, "Shift+Left does not move the selection")
+    k = mark(); page.keyboard.press("Shift+ArrowRight"); page.wait_for_timeout(250)
+    check(sent_since(k) == [[0x69, 0, 1, 1]] and local() == as_pairs(orig, orats), "Shift+Right nudges back")
+    page.keyboard.press("ArrowRight"); page.keyboard.press("ArrowRight"); page.keyboard.press("ArrowLeft")
+    check(page.evaluate("selStep") == 4 and "is-sel" in page.get_attribute("#steps .step-card[data-i='4']", "class"), "plain arrows still select steps")
+    page.keyboard.press("Shift+ArrowUp"); page.wait_for_timeout(200)
+    check(local()[4][0] == orig[4] + 12, "Shift+Up still moves the selected step an octave")
+    page.click("#btnUndo"); page.wait_for_timeout(250)
+
+    # Edit live off: nudge is a local edit (dirty, nothing sent) and Write pushes it
+    page.click("#btnLive")
+    k = mark(); page.click("#btnNudgeL"); page.wait_for_timeout(200)
+    check(sent_since(k) == [] and local() == as_pairs(left(orig), left(orats)), "live off: rotated locally, nothing sent")
+    check("is-dirty" in page.get_attribute(".pat-pill:nth-child(1)", "class"), "live off: pattern marked dirty")
+    k = mark(); page.click("#btnWrite"); page.wait_for_timeout(200)
+    check(any(m[0] == 0x12 for m in sent_since(k)) and page.evaluate("window.__dev.pats[0]") == left(orig)
+          and page.evaluate("window.__dev.rats[0]") == left(orats), "Write pushes the nudged pattern (ratchets included)")
+    page.click("#btnLive")
+    check("HOLD + UP / DOWN" in page.inner_text("#perfBody") and "nudges right / left" in page.inner_text("#perfBody"), "panel gestures mention HOLD + UP / DOWN nudge")
+    check(page.get_attribute("#btnNudgeR", "title").startswith("Moves the notes, not the timing; on the unit it lands between notes"), "nudge tooltip")
+
     # Replies captured from the real unit on 2026-09-28 (read-only session): its
     # 0x11 for pattern 1 (8 steps + ratchet tail), 0x2A (all notes, off), 10-field 0x66.
     page.evaluate("window.__reply([0x11, 0, 39, 0, 68, 8, 18, 37, 27, 22, 20, 30, 0, 17, 15, 0, 1])"); page.wait_for_timeout(100)
@@ -255,6 +328,25 @@ with sync_playwright() as p:
     check("Keys 15" in mm and "Key 19" in mm and "Keys 20" in mm, "menu legend lists keys 15-31")
     check(page.locator("#mmKbd .mm-key").count() == 31, "menu keyboard shows 31 keys")
     check(not errs, "no page errors " + "; ".join(errs))
+
+    # ---- Nudge offline (never connected): local rotation, ratchets included
+    page = b.new_context().new_page(); page.add_init_script(FAKE)
+    page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(PAGE)
+    page.evaluate("patterns[0] = [0,1,2,3,4].map(i => ({cv: 20 + i, type: i === 3 ? 2 : 0, rat: [2,0,1,0,0][i]})); renderSteps()")
+    rows = lambda: page.evaluate("patterns[0].map(s => [s.cv, s.type, s.rat])")
+    o = rows()
+    page.click("#btnNudgeR")
+    check(rows() == o[-1:] + o[:-1], f"offline nudge right rotates steps and ratchets ({rows()})")
+    check("is-dirty" in page.get_attribute(".pat-pill:nth-child(1)", "class"), "offline nudge marks the pattern dirty")
+    check(page.inner_text("#steps .step-card[data-i='0'] .step-name") == "C4" and "is-on" in page.get_attribute("#steps .step-card[data-i='1'] [data-a='r2']", "class"),
+          "offline grid shows the rotation (note and 3x ratchet)")
+    page.keyboard.press("Shift+ArrowLeft"); page.keyboard.press("Shift+ArrowLeft")
+    check(rows() == o[1:] + o[:1], "offline Shift+Left twice")
+    page.click("#btnUndo"); page.click("#btnUndo")
+    check(rows() == o[-1:] + o[:-1], "offline Undo steps back through the nudges")
+    check(page.evaluate("window.__sent.length") == 0, "offline: nothing sent")
+    check(not errs, "no page errors (offline) " + "; ".join(errs))
     b.close()
 
 print(f"\n{'FAILED ' + str(len(fails)) if fails else 'all passed'}")

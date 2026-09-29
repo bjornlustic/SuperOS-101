@@ -380,10 +380,12 @@
         <input type="number" class="seq-pat-len" id="inLen" min="0" max="128" value="0" />
         <button class="len-adj-btn" id="btnLenUp" title="One step longer">+</button>
       </div>
+      <button class="btn" id="btnNudgeL" title="Moves the notes, not the timing; on the unit it lands between notes (Shift+&#8592;)">&#9664; Nudge</button>
+      <button class="btn" id="btnNudgeR" title="Moves the notes, not the timing; on the unit it lands between notes (Shift+&#8594;)">Nudge &#9654;</button>
       <button class="btn" id="btnUndo" title="Undo the last edit on this pattern (Ctrl/Cmd-Z)">Undo</button>
       <button class="btn" id="btnClear">Clear</button>
     <div class="seq-hint"><b>N</b> note &#183; <b>L</b> legato (glides on AUTO) &#183; <b>R</b> rest &#183; vertical drag = pitch &#183;
-      <b>1&#215; 2&#215; 3&#215;</b> ratchet &#183; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> octave), <kbd>N</kbd> <kbd>L</kbd> <kbd>R</kbd> &#183;
+      <b>1&#215; 2&#215; 3&#215;</b> ratchet &#183; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> octave), <kbd>Shift</kbd><kbd>&#8592;</kbd><kbd>&#8594;</kbd> nudge, <kbd>N</kbd> <kbd>L</kbd> <kbd>R</kbd> &#183;
       <span style="color:var(--red)">red note</span> = outside the scale (the unit plays the note shown after it) &#183; red dot = playing step</div>
     </div>
     <div class="seq-grid-wrap"><div class="seq-grid" id="steps"></div><div class="seq-empty" id="seqEmpty" style="display:none">Empty pattern. Set a length with STEPS, randomize it, or record on the unit (LOAD, keys, LOAD).</div></div>
@@ -485,7 +487,7 @@
           <label>Panel gestures (PLAY held)</label>
           <div class="config-note"><b>PLAY + U&amp;D</b> randomize (rhythm + pitch) &#183; <b>PLAY + UP</b> new pitches &#183; <b>PLAY + DOWN</b> mutate &#183;
             <b>PLAY + KEY TRANSPOSE + key</b> = scale root (the same key again = next scale) &#183; <b>PLAY + KEY TRANSPOSE</b> tap = scale on / off.
-            Randomized notes land in the pattern's scale.</div>
+            Randomized notes land in the pattern's scale. While playing, <b>HOLD + UP / DOWN</b> nudges right / left.</div>
         </div>
       </div>
     </div>
@@ -780,7 +782,7 @@ function handleSysex(b) {
       dirty[p] = false;
       if (p === curPat) lastSent = {pat: p, len, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
       if (selStep >= patterns[p].length) selStep = patterns[p].length - 1;
-      log((randomized ? 'randomized' : readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)', readingAll ? '' : 'log-ok');
+      log((randomized ? pendingWhat : readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)', readingAll ? '' : 'log-ok');
       renderAll();
       break;
     }
@@ -1098,7 +1100,7 @@ const RAND_OPS = [['Full', 'New rhythm and pitches (panel: PLAY held + U&D)'], [
                   ['Rhythm', 'New rhythm, pitches kept'], ['Mutate', '2 to 4 small edits (panel: PLAY held + DOWN)'],
                   ['Octaves', 'Move notes between octaves'], ['Legato', 'New legato placement']];
 const RAND_WEIGHTS = 0x7F;
-let randPending = -1;
+let randPending = -1, pendingWhat = 'randomized';   // the unit's 0x11 answer to 0x68 / 0x69 replaces unsent edits
 RAND_OPS.forEach(([name, title], op) => {
   const b = document.createElement('button');
   b.className = 'btn'; b.textContent = name; b.title = title + '. Written notes land in the pattern\'s scale.';
@@ -1115,7 +1117,7 @@ function randomize(op) {
   if (deviceMode !== 'superos') return;
   const p = curPat, dens = +$('selDensity').value, seed = Math.max(0, Math.min(16383, +$('inSeed').value | 0));
   pushHistory(p);
-  randPending = p;
+  randPending = p; pendingWhat = 'randomized';
   clearTimeout(liveTimer); liveTimer = null;   // unsent edits would land after the new pattern
   if (devPat !== p) { selectDevicePattern(p); devPat = p; renderPills(); }
   if (sendSysex([0x68, p, op, dens, seed & 0x7F, seed >> 7]))
@@ -1428,6 +1430,27 @@ function setLength(n) {
 $('btnLenDn').onclick = () => setLength(patterns[curPat].length - 1);
 $('btnLenUp').onclick = () => setLength(patterns[curPat].length + 1);
 $('inLen').onchange = () => setLength(+$('inLen').value);
+// Nudge: rotate the notes (ratchets move with their steps) one step; right =
+// step i takes the old step i-1. Connected with Edit live on, the unit does it
+// (0x69: it lands at the next half-step while playing, then answers 0x11);
+// otherwise locally, pushed like any other edit. Undo restores either way.
+const rotateSteps = (pat, n) => pat.map((_, i) => pat[((i - n) % pat.length + pat.length) % pat.length]);
+function nudge(n) {
+  const p = curPat;
+  if (patterns[p].length < 2) return;
+  pushHistory(p);
+  if (verified && liveEnabled && deviceMode === 'superos') {
+    clearTimeout(liveTimer); liveTimer = null;
+    if (dirty[p]) writePattern(p);   // the unit rotates what the editor shows
+    randPending = p; pendingWhat = 'nudged';
+    if (sendSysex([0x69, p, n > 0 ? 1 : 0, 1])) log('nudge pattern ' + (p + 1) + ' ' + (n > 0 ? 'right' : 'left'), 'log-syx');
+    return;
+  }
+  patterns[p] = rotateSteps(patterns[p], n);
+  afterEdit(); renderSteps();
+}
+$('btnNudgeL').onclick = () => nudge(-1);
+$('btnNudgeR').onclick = () => nudge(1);
 $('btnClear').onclick = () => {
   if (!patterns[curPat].length || confirm('Clear pattern ' + (curPat + 1) + '?')) {
     pushHistory(curPat); patterns[curPat] = []; selStep = -1; afterEdit(); renderSteps();
@@ -1446,6 +1469,7 @@ document.addEventListener('keydown', ev => {
   if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { undo(); ev.preventDefault(); return; }
   const pat = patterns[curPat], s = pat[selStep];
   const k = ev.key;
+  if (ev.shiftKey && (k === 'ArrowLeft' || k === 'ArrowRight')) { nudge(k === 'ArrowLeft' ? -1 : 1); ev.preventDefault(); return; }
   if (k === 'ArrowLeft')  { if (pat.length) { selStep = Math.max(0, selStep - 1); selectCard(); } ev.preventDefault(); return; }
   if (k === 'ArrowRight') { if (pat.length) { selStep = Math.min(pat.length - 1, selStep + 1); selectCard(); } ev.preventDefault(); return; }
   if (!s) return;
