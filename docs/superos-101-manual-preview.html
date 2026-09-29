@@ -680,6 +680,7 @@ body{margin:0;background:#fff;}
       <li><a class="docs-toc-link" href="#seq-record"><span class="man-toc-num">1</span>Recording a Sequence<span class="man-toc-leader"></span></a></li>
       <li><a class="docs-toc-link" href="#seq-play"><span class="man-toc-num">2</span>Playing a Sequence<span class="man-toc-leader"></span></a></li>
       <li><a class="docs-toc-link" href="#seq-storage"><span class="man-toc-num">3</span>Patterns and Songs<span class="man-toc-leader"></span></a></li>
+      <li><a class="docs-toc-link" href="#randomize-scale"><span class="man-toc-num">4</span>Randomize and Scale<span class="man-toc-leader"></span></a></li>
     </ol>
 
     <span class="man-toc-part">MIDI</span>
@@ -917,6 +918,17 @@ body{margin:0;background:#fff;}
     <p class="docs-body">
       While playing, hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press <kbd class="docs-key">UP</kbd> to play the next step now, or <kbd class="docs-key">DOWN</kbd> to play the previous one. This moves the sequence against the clock, to line it up with other gear or for variation.
     </p>
+    <h3 class="man-sub">Nudge</h3>
+    <p class="docs-body">
+      While playing, hold the <kbd class="docs-key">HOLD</kbd> button and press <kbd class="docs-key">UP</kbd> to move every note one step right (later), or <kbd class="docs-key">DOWN</kbd> to move them one step left (earlier). Ratchets move with their notes and the pattern wraps around. Unlike Shift, the timing does not move: the playhead and the clock stay where they are and only the notes change places.
+    </p>
+    <p class="docs-body">
+      The move lands at the next half-step, after the sounding note has started and before the next note is chosen, so nothing is cut, doubled or retriggered and you never hear it happen. The web editor has the same as &#9664; Nudge / Nudge &#9654; (Shift + arrow keys), with Undo.
+    </p>
+    <h3 class="man-sub">Resync</h3>
+    <p class="docs-body">
+      The editor&rsquo;s <strong>Resync</strong> button puts the sequence back on the one: on the host&rsquo;s beat under MIDI clock, otherwise where it would be counting from PLAY. It also undoes a Shift. Changing direction, loop length, pattern or clock division never moves the sequence off the beat in the first place: its position is always worked out from the steps played since the start. Ping-pong plays its end steps twice, so a round trip stays on the bar.
+    </p>
     <div class="man-note">
       <strong>Note</strong>
       The TRANSPOSE switch and the keyboard transpose (see Key Transpose) both apply to the sequence as it plays.
@@ -944,6 +956,20 @@ body{margin:0;background:#fff;}
     </table>
     <p class="docs-body">
       Patterns survive power-off with no battery. Slot selection is ignored while recording, so finish with <kbd class="docs-key">LOAD</kbd> first. Firmware updates never touch the pattern memory.
+    </p>
+  </section>
+
+  <section id="randomize-scale" class="docs-section">
+    <div class="docs-sec-head">
+      <span class="docs-sec-num">4</span>
+      <h2 class="docs-sec-title">Randomize and Scale</h2>
+    </div>
+    <p class="docs-body">
+      Hold <kbd class="docs-key">PLAY</kbd> and press <kbd class="docs-key">UP&amp;DOWN</kbd> for a new random pattern (rhythm and pitch), <kbd class="docs-key">UP</kbd> for new pitches on the same rhythm, or <kbd class="docs-key">DOWN</kbd> to mutate it (two to four small changes). It works stopped or playing and never starts play. The editor adds rhythm-only, octave and legato randomizers, a density setting and a repeatable seed.
+    </p>
+    <h3 class="man-sub">Scale</h3>
+    <p class="docs-body">
+      Each pattern can have a scale (the 35 scales of the superOS-303). Hold <kbd class="docs-key">PLAY</kbd> and <kbd class="docs-key">KEY TRANSPOSE</kbd> and press a key: that note becomes the root, in Major; the same key again steps to the next scale. Hold <kbd class="docs-key">PLAY</kbd> and tap <kbd class="docs-key">KEY TRANSPOSE</kbd> alone to turn the scale on or off. The scale never changes the stored notes: the output snaps each note to the nearest note of the scale (the lower one on a tie), before any transpose. Randomized notes are written in the scale.
     </p>
   </section>
 
@@ -1140,6 +1166,9 @@ body{margin:0;background:#fff;}
         <tr><td>Playing: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> / <kbd class="docs-key">UP&amp;DOWN</kbd> / <kbd class="docs-key">DOWN</kbd>+<kbd class="docs-key">UP&amp;DOWN</kbd></td><td>Forward / backward / ping-pong / random</td></tr>
         <tr><td>Playing: <kbd class="docs-key">HOLD</kbd> + key n</td><td>Loop the first n steps (same key = full)</td></tr>
         <tr><td>Playing: <kbd class="docs-key">KEY TRANSPOSE</kbd> + <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Shift: next / previous step now</td></tr>
+        <tr><td>Playing: <kbd class="docs-key">HOLD</kbd> + <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Nudge the notes a step right / left</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd> + <kbd class="docs-key">UP&amp;DOWN</kbd> / <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Random pattern / new pitches / mutate</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd> + <kbd class="docs-key">KEY TRANSPOSE</kbd> + key / <kbd class="docs-key">KEY TRANSPOSE</kbd> tap</td><td>Scale root (again = next scale) / scale on-off</td></tr>
         <tr><td><kbd class="docs-key">PLAY</kbd> + key 1&#8230;16</td><td>Select pattern (stopped: start; playing: at the end of the pass)</td></tr>
         <tr><td><kbd class="docs-key">PLAY</kbd> + several keys</td><td>Song</td></tr>
         <tr><td>Playing: key 1&#8230;16</td><td>Switch pattern now</td></tr>
@@ -1186,7 +1215,7 @@ body{margin:0;background:#fff;}
       </li>
       <li>
         <span class="man-spec-name">Sequencer</span>
-        16 patterns of up to 128 steps of note / rest / legato with 1x/2x/3x ratchets; forward, backward, ping-pong, random; songs of up to 16 patterns; step and real-time recording; saved automatically to permanent on-chip memory (no battery).
+        16 patterns of up to 128 steps of note / rest / legato with 1x/2x/3x ratchets; forward, backward, ping-pong, random; nudge; randomize and 35 scales; songs of up to 16 patterns; step and real-time recording; saved automatically to permanent on-chip memory (no battery).
       </li>
       <li>
         <span class="man-spec-name">MIDI clock sync</span>
