@@ -203,7 +203,8 @@ CHAPTERS = [
            "From stop, the pattern starts when you release PLAY.",
            "While playing, it follows at the end of the current pass."],
           note="MIDI program change 0 to 7 does the same. Hold PLAY and press nothing to toggle play "
-               "as usual.",
+               "as usual. With PLAY held, UP / DOWN / U&D randomize and KEY TRANSPOSE sets the scale "
+               "(Randomize and Scale).",
           expect=["on=PLAY"], also=[(PLAYING + ["d:PLAY", "t:key2", "u:PLAY"], ["on=PLAY"])],
           g="PLAY + key 1-8|pattern (stopped: starts; playing: at loop end)"),
         F("Song", "Sequencer", "Stopped or playing",
@@ -233,11 +234,14 @@ CHAPTERS = [
            C("DOWN|UD", "t", "DOWN + U&D: RANDOM", box=True)],
           PLAYING + ["t:DOWN"],
           "PLAY stays lit: the arpeggio LEDs do not show the direction.",
-          ["While playing, press UP (forward), DOWN (backward), U&D (ping-pong), or DOWN and U&D "
-           "together (random).",
+          ["While playing, with PLAY not held, press UP (forward), DOWN (backward), U&D (ping-pong), "
+           "or DOWN and U&D together (random).",
+           "Ping-pong repeats its end steps (1 to n, then n to 1), so a round trip is 2n steps and "
+           "stays on the bar.",
            "The direction is kept across power-off."],
-          note="Config menu keys 15-18 set it too.",
-          expect=["on=PLAY"],
+          note="Config menu keys 15-18 set it too. With PLAY held these buttons randomize the pattern "
+               "instead (Randomize and Scale).",
+          expect=["on=PLAY"], also=[(PLAYING + ["t:UD"], ["on=PLAY"])],
           g="Playing: UP / DOWN / U&D / DOWN + U&D|forward / backward / ping-pong / random"),
         F("Shift", "Sequencer play", "Playing",
           [C("KT", "t", "1. HOLD KEY TRANSPOSE", hold=True),
@@ -260,6 +264,44 @@ CHAPTERS = [
           note="Nothing is erased. The HOLD pedal does not do this; it keeps its hold (or transpose) job.",
           expect=["on=PLAY", "on=HOLD"],
           g="Playing: HOLD button + key n|loop the first n steps; again = full"),
+    ]),
+    ("Randomize and Scale", [
+        F("Randomize", "Sequencer", "Stopped or playing",
+          [C("PLAY", "t", "1. HOLD PLAY", hold=True),
+           C("UD", "t", "U&D: NEW PATTERN"),
+           C("UP", "t", "UP: NEW PITCHES"),
+           C("DOWN", "t", "DOWN: MUTATE")],
+          PLAYING + ["d:PLAY", "t:UD", "u:PLAY"],
+          "PLAY stays lit: a new pattern while playing. No LED shows a randomize.",
+          ["Hold PLAY and press U&D: a new pattern, rhythm and pitch.",
+           "PLAY held + UP: new pitches, the rhythm stays. PLAY held + DOWN: mutate, 2 to 4 small edits.",
+           "It works stopped or playing and never starts play. Written notes land in the pattern's "
+           "scale when one is on."],
+          note="Under PLAY held these buttons no longer switch the arpeggio or the direction. The current "
+               "pattern is changed in place and stored like any edit.",
+          expect=["on=PLAY"],
+          also=[(REC + ["d:PLAY", "t:UD", "u:PLAY"], []), (REC + ["d:PLAY", "t:UP", "u:PLAY"], []),
+                (REC + ["d:PLAY", "t:DOWN", "u:PLAY"], []),
+                (PLAYING + ["d:PLAY", "t:UP", "t:DOWN", "u:PLAY"], ["on=PLAY"])],
+          g="PLAY + U&D / UP / DOWN|new pattern / new pitches / mutate"),
+        F("Scale", "Sequencer", "Stopped or playing",
+          [C("PLAY", "t", "1. HOLD PLAY", hold=True),
+           C("KT", "t", "2. HOLD; TAP ALONE: SCALE ON / OFF", hold=True),
+           C("key1|key12", "b", "3. ANY KEY = ROOT; SAME KEY AGAIN: NEXT SCALE", box=True)],
+          PLAYING + ["d:PLAY", "d:KT", "t:key8", "t:key8", "u:KT", "u:PLAY"],
+          "PLAY stays lit: C root, second scale. No LED shows the scale.",
+          ["Hold PLAY and KEY TRANSPOSE and press a key: that note is the root, with Major. Key 8 = C.",
+           "Press the same key again to step through the 35 scales (the SuperOS-303's list, Major first).",
+           "Hold PLAY and tap KEY TRANSPOSE alone: scale on / off."],
+          note="The scale belongs to the pattern and is stored with it. It is non-destructive: the "
+               "output snaps to the nearest scale note (the lower one on a tie) before any transpose, "
+               "and the steps themselves are unchanged. Under PLAY held, KEY TRANSPOSE neither "
+               "transposes nor counts toward the transpose-mode double tap.",
+          expect=["on=PLAY"],
+          also=[(PLAYING + ["d:PLAY", "t:KT", "u:PLAY"], ["on=PLAY"]),
+                (PLAYING + ["d:PLAY", "t:KT", "t:KT", "u:PLAY"], ["on=PLAY"]),
+                (REC + ["d:PLAY", "d:KT", "t:key8", "u:KT", "u:PLAY"], [])],
+          g="PLAY + KEY TRANSPOSE + key / tap|scale root (again = next scale) / scale on-off"),
     ]),
     ("Transpose and Tune", [
         F("Key Transpose", "Any mode but LOAD", "Any time",
@@ -378,7 +420,8 @@ CHAPTERS = [
            C("key19", "b", "19: PEDAL HOLD / TRANSP.")],
           MENU + ["t:key17"],
           "Key 17: ping-pong.",
-          ["Keys 15-18 set the sequencer direction: forward, backward, ping-pong, random (the same "
+          ["Keys 15-18 set the sequencer direction: forward, backward, ping-pong (the end steps "
+           "repeat), random (the same "
            "setting as the buttons while playing).",
            "Key 19 switches the pedal jack between HOLD and KEY TRANSPOSE."],
           expect=MENU_ON,
