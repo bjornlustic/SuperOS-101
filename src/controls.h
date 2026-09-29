@@ -51,6 +51,13 @@ enum Button : uint8_t {
   BTN_UP = 4, BTN_HOLD = 5, BTN_KEYTRANS = 7,
 };
 
+// What the HOLD pedal jack (T0) does: 0 = HOLD (stock), 1 = acts as the
+// KEY TRANSPOSE button (hold it and press a key to transpose; double-tap
+// latches; in LOAD it enters a rest). SuperOS only; EEPROM, config menu key
+// 19, SysEx 0x65 id 1.
+enum PedalMode : uint8_t { PEDAL_HOLD = 0, PEDAL_TRANSPOSE = 1 };
+inline uint8_t& PedalRoute() { static uint8_t m = PEDAL_HOLD; return m; }
+
 struct Buttons {
   uint8_t now  = 0;   // 1 = currently pressed
   uint8_t prev = 0;
@@ -59,7 +66,13 @@ struct Buttons {
   void Scan() {
     prev = now;
     now  = hw::ScanRead(COL_BUTTONS);                 // 1 = pressed
-    hold = (now & (1u << BTN_HOLD)) || hw::HoldRequested();
+    const bool pedal = hw::HoldRequested();
+    if (PedalRoute() == PEDAL_TRANSPOSE) {
+      if (pedal) now |= (uint8_t)(1u << BTN_KEYTRANS);
+      hold = (now & (1u << BTN_HOLD)) != 0;
+    } else {
+      hold = (now & (1u << BTN_HOLD)) || pedal;
+    }
   }
   bool down(Button b)    const { return (now  >> b) & 1; }              // held
   bool pressed(Button b) const { return ((now & ~prev) >> b) & 1; }     // rising edge

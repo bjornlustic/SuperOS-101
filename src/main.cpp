@@ -107,6 +107,15 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
+// 0x66 FEATURES: [dir, pedal, transpose+64, latched, loopLen, rtRec, tune, queued(0x7F none)]
+static void SendFeatures() {
+  engine::Sequencer& sq = g_engine.seq();
+  uint8_t b[9] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+                  (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
+                  sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
+                  (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F)};
+  midi::SendSysex(b, sizeof(b));
+}
 static void SendAck(uint8_t code) { uint8_t b[2] = {0x14, code}; midi::SendSysex(b, 2); }
 // 0x24: CV DAC config (cvdac.h Pack order) + live codes for the editor's meters.
 static void SendCvConfig() {
@@ -208,6 +217,30 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
                       if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
       else SendAck(1);
       break;
+    // 0x65 SET FEATURE [id, value] -> 0x66. ids: 0 seq direction (0 FWD,
+    // 1 BWD, 2 PING-PONG, 3 RANDOM), 1 pedal route (0 HOLD, 1 KEY TRANSPOSE),
+    // 2 transpose (value = semitones + 64, latched), 3 transpose latch 0/1,
+    // 4 loop length (0 = full pattern), 5 real-time record 0/1 (while
+    // playing), 6 tune mode 0/1 (from keyboard mode). 0x67 = read only.
+    // Out-of-range values leave the setting alone; the 0x66 reply shows the
+    // applied state either way.
+    case 0x65:
+      if (len >= 3) {
+        uint8_t v = body[2];
+        switch (body[1]) {
+          case 0: g_engine.seq().setDirection(v); break;
+          case 1: if (v <= controls::PEDAL_TRANSPOSE) { controls::PedalRoute() = v; engine::FeatDirty() = true; } break;
+          case 2: if (v >= 64 - 36 && v <= 64 + 36) g_engine.setTranspose((int8_t)(v - 64), true); break;
+          case 3: g_engine.setTranspose(v ? g_engine.transpose() : 0, v != 0); break;
+          case 4: if (v <= engine::MAX_STEPS) g_engine.seq().setLoopLength(v); break;
+          case 5: g_engine.setRtRec(v != 0); break;
+          case 6: g_engine.setTune(v != 0); break;
+          default: break;
+        }
+      }
+      SendFeatures();
+      break;
+    case 0x67: SendFeatures(); break;
     case 0x20: SendConfig(); break;
     case 0x23: SendCvConfig(); break;
     case 0x25: {   // set CV DAC config; the editor gets the applied values back
@@ -267,6 +300,7 @@ void superos_setup() {
   g_lastClock = false; g_rstUntilMs = 0; g_clkResync = false; g_portaUntilMs = 0;
   g_lastEditMs = 0; g_lastRawFallMs = 0; g_rstSinceFall = false; g_rndHeld = 0;
   g_engine.begin();
+  engine::LoadFeatures();
   midiclk::DropTicks();   // no edge counted under the other firmware fires here
   // Prime the button edge detector with the current state so a button that
   // is still held from a firmware switch / power-on does not register as a
@@ -328,9 +362,14 @@ void superos_loop() {
   // HOLD (held through legato recording) and KEY-TRANSPOSE (the rest button).
   uint32_t panelKeys = ReadKeyboard();
   {
-    uint8_t fn = (uint8_t)((g_buttons.now | g_buttons.prev) &
-                           (uint8_t)~((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS)));
-    if (fn) g_btnQuietMs = nowMs + 30;
+    // PLAY is exempt while HELD (not at its edges): PLAY + key is the
+    // pattern-select gesture, and the measured bleed is a transient at the
+    // press (an orphan note-off at the LOAD press), which the edge window
+    // still covers. Guarding the whole hold made PLAY + key select nothing.
+    const uint8_t exempt = (uint8_t)((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
+    uint8_t fnEdge = (uint8_t)((g_buttons.now ^ g_buttons.prev) & ~exempt);
+    uint8_t fnHeld = (uint8_t)(g_buttons.now & ~exempt & ~(1u << controls::BTN_PLAY));
+    if (fnEdge || fnHeld) g_btnQuietMs = nowMs + 30;
     if ((int32_t)(g_btnQuietMs - nowMs) > 0) panelKeys &= g_prevPanelKeys;
     g_prevPanelKeys = panelKeys;
   }
@@ -423,9 +462,8 @@ void superos_loop() {
   // persist at stop; flushAll on LOAD exit is unchanged.
   {
     engine::Mode m = g_engine.mode();
-    bool clocked = (m == engine::MODE_SEQ_PLAY || m == engine::MODE_SEQ_LOAD ||
-                    m == engine::MODE_ARP_UP || m == engine::MODE_ARP_DOWN ||
-                    m == engine::MODE_ARP_UPDOWN);
+    bool clocked = (m == engine::MODE_SEQ_PLAY || m == engine::MODE_SEQ_LOAD || engine::IsArp(m));
+    if (engine::FeatDirty() && !clocked) engine::SaveFeatures();
     if (g_engine.seq().dirty() && !clocked && millis() - g_lastEditMs > 500) {
       g_engine.seq().flushOne();
       g_lastEditMs = millis();
@@ -472,6 +510,7 @@ void superos_loop() {
   // and pulses it low; holding it low freezes the LFO).
   uint8_t p2 = (uint8_t)(P2_IDLE | g_engine.ledSelect());
   if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
+  if (g_engine.ktLed()) p2 |= (uint8_t)(1u << P2_LED_KTRANS); // 1 -> KEY-TRANSPOSE lit
   if (out.gate)        p2 &= (uint8_t)~(1u << P2_GATE);      // bit=0 -> gate ON
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
     p2 &= (uint8_t)~(1u << P2_CLOCK_RST);                    // pulse LOW

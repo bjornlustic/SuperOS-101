@@ -118,8 +118,8 @@ static const uint8_t CFG_LEN = 12;
 // than in combined.h, because CFG_LEN is what moves. See the EEPROM map there.
 static_assert(EE_A_CV_MAGIC == EE_CV_FIRST,
               "the CV magic moved out of the slot the map reserves");
-static_assert(EE_A_CV_BASE + CFG_LEN <= EE_FREE_FIRST,
-              "CFG_LEN grew and the CV block now runs into the free arena");
+static_assert(EE_A_CV_BASE + CFG_LEN <= EE_A_FEAT_MAGIC,
+              "CFG_LEN grew and the CV block now runs into the feature block");
 
 struct State {
   Settings s;

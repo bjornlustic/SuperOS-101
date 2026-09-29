@@ -35,6 +35,7 @@ namespace emu101 { bool available(); const uint8_t* ram(); uint8_t romP2(); }
 #include "usbmidi_codec.h"
 #include "flash_persist.h"
 #include "cvdac.h"
+#include "engine.h"      // performance settings (DirSetting) read back directly
 #include "pins.h"        // P2_GATE et al: the probe's P2 image is decoded by bit name
 #include "sysex.h"       // the 0x3E bench-window clock helpers, pinned below
 static const uint8_t SIM_FW_EMU = 1;
@@ -1265,6 +1266,192 @@ static int SelfTest() {
     sxP(0);
     for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);
     midiclk::SetSync(false); RunLoops(2);
+  }
+
+  // Performance features, end to end through the panel / SysEx and the real
+  // engine: direction modes, loop length, queued pattern switch, transpose
+  // hold + latch, pedal route, random arp, tune mode, real-time record.
+  puts("performance features:");
+  {
+    auto sx = [&](std::initializer_list<uint8_t> b) {
+      g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+      for (uint8_t v : b) g_midiQ.push_back(v);
+      g_midiQ.push_back(0xF7); RunLoops(3);
+    };
+    auto push = [&](uint8_t pat, std::vector<uint8_t> steps) {   // 0x12, no ratchet tail
+      std::vector<uint8_t> raw = {(uint8_t)steps.size()};
+      raw.insert(raw.end(), steps.begin(), steps.end());
+      uint16_t x = 0; for (uint8_t v : raw) x ^= v;
+      std::vector<uint8_t> b2 = {0x12, pat, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)};
+      for (size_t i = 0; i < raw.size(); i += 7) {
+        uint8_t msb = 0; size_t nn = std::min<size_t>(7, raw.size() - i);
+        for (size_t k = 0; k < nn; ++k) if (raw[i + k] & 0x80) msb |= 1 << k;
+        b2.push_back(msb); for (size_t k = 0; k < nn; ++k) b2.push_back(raw[i + k] & 0x7F);
+      }
+      g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+      for (uint8_t v : b2) g_midiQ.push_back(v);
+      g_midiQ.push_back(0xF7); RunLoops(3);
+    };
+    // Human-plausible 35 ms settle after every button edge: the scan-bleed
+    // guard ignores new keys for 30 ms around function-button edges.
+    auto btn = [&](int bit, bool down) { if (down) sim::g_buttons |= (uint8_t)(1u << bit); else sim::g_buttons &= (uint8_t)~(1u << bit); RunLoops(3); WaitVirtMs(35); };
+    auto tap = [&](int bit) { btn(bit, true); btn(bit, false); };
+    auto key = [&](int k, bool down) { if (down) sim::g_keys |= 1UL << k; else sim::g_keys &= ~(1UL << k); RunLoops(3); };
+    auto play = [&]() { tap(1); SettleClockReset(); };
+    auto run = [&](int n) {            // n clock steps; CV per step, "-" for a gate-off step
+      std::string out;
+      for (int i = 0; i < n; ++i) {
+        ClockTick();
+        out += (GateOn() ? std::to_string(sim::g_sh[0]) : std::string("-")) + " ";
+      }
+      return out;
+    };
+    auto first = [&]() { return (GateOn() ? std::to_string(sim::g_sh[0]) : std::string("-")) + " "; };
+    const int B_LOAD = 0, B_PLAY = 1, B_DOWN = 2, B_UD = 3, B_UP = 4, B_HOLD = 5, B_KT = 7;
+    midiclk::SetSync(false); RunLoops(2);
+    WaitVirtMs(40);
+    push(7, {10, 11, 12, 13});
+    push(4, {30, 31});
+    sx({0x1D, 7});
+
+    // Directions (SysEx 0x65 id 0), panel PLAY start = step 1 at the press.
+    const char* want[4] = {"10 11 12 13 10 11 12 13 10 ", "13 12 11 10 13 12 11 10 13 ",
+                           "10 11 12 13 12 11 10 11 12 ", ""};
+    const char* nm[4] = {"FWD", "BWD", "PING-PONG", "RANDOM"};
+    for (uint8_t d = 0; d < 3; ++d) {
+      sx({0x65, 0, d});
+      play(); std::string got = first() + run(8); tap(B_PLAY); WaitVirtMs(40);
+      printf("  (%s: %s)\n", nm[d], got.c_str());
+      CHECK(got == want[d], (std::string("direction ") + nm[d] + " plays the pattern in that order").c_str());
+    }
+    {
+      sx({0x65, 0, 3});
+      play(); std::string got = first() + run(31); tap(B_PLAY); WaitVirtMs(40);
+      int seen[4] = {0, 0, 0, 0}; bool inSet = true; int n = 0;
+      for (size_t i = 0; i < got.size();) {
+        size_t j = got.find(' ', i); int v = atoi(got.substr(i, j - i).c_str()); i = j + 1; ++n;
+        if (v >= 10 && v <= 13) seen[v - 10]++; else inSet = false;
+      }
+      printf("  (RANDOM 32 steps: %d/%d/%d/%d)\n", seen[0], seen[1], seen[2], seen[3]);
+      CHECK(inSet && n == 32 && seen[0] && seen[1] && seen[2] && seen[3],
+            "direction RANDOM plays only the pattern's steps, and all of them");
+    }
+    // Panel gesture: PLAY held + DOWN = BWD, + UP = FWD, + U&D = PING-PONG,
+    // U&D again = RANDOM; the PLAY release does not toggle play.
+    btn(B_PLAY, true); tap(B_DOWN); btn(B_PLAY, false);
+    CHECK(engine::DirSetting() == engine::DIR_BWD && (sim_portf & 7) == 0, "PLAY+DOWN sets BWD without starting play");
+    btn(B_PLAY, true); tap(B_UD); tap(B_UD); btn(B_PLAY, false);
+    CHECK(engine::DirSetting() == engine::DIR_RANDOM, "PLAY+U&D twice = RANDOM");
+    btn(B_PLAY, true); tap(B_UP); btn(B_PLAY, false);
+    CHECK(engine::DirSetting() == engine::DIR_FWD, "PLAY+UP = FWD");
+    WaitVirtMs(40);
+
+    // Real-time loop length: HOLD + key 1 while playing = first 2 steps.
+    play();
+    btn(B_HOLD, true); key(1, true); key(1, false); btn(B_HOLD, false);
+    std::string ll = run(5);
+    CHECK(ll == "11 10 11 10 11 ", "HOLD + key 2 while playing loops the first 2 steps");
+    btn(B_HOLD, true); key(1, true); key(1, false); btn(B_HOLD, false);
+    ll = run(4);
+    CHECK(ll == "12 13 10 11 ", "the same key again restores the full pattern");
+
+    // Queued pattern switch: PLAY + key 5 mid-pattern waits for the loop end.
+    run(1);                                                  // at step 12 (3rd)
+    btn(B_PLAY, true); key(4, true); key(4, false); btn(B_PLAY, false);
+    std::string qs = run(5);
+    printf("  (queued switch: %s)\n", qs.c_str());
+    CHECK(qs == "13 30 31 30 31 ", "pattern select while playing lands at the loop end");
+    CHECK(GateOn() && (sim_portf & 7) == 2, "and play continues (PLAY LED)");
+
+    // KEY TRANSPOSE: hold + key = transpose from key 7 (C4); release = 0.
+    tap(B_PLAY); WaitVirtMs(40); sx({0x1D, 7}); play();      // 10 sounding
+    btn(B_KT, true); key(9, true);
+    CHECK(sim::g_sh[0] == 12, "KEY TRANSPOSE + key (C4 + 2) transposes the sounding step by +2");
+    key(9, false);
+    CHECK(run(1) == "13 ", "transpose applies to the following steps while held");
+    btn(B_KT, false);
+    CHECK(run(1) == "12 ", "releasing KEY TRANSPOSE (not latched) drops the transpose");
+    CHECK(!(sim_portf & 0x40), "KEY-TRANSPOSE LED off with no transpose");
+    // Double tap latches.
+    tap(B_KT); tap(B_KT);
+    btn(B_KT, true); key(12, true); key(12, false); btn(B_KT, false);
+    CHECK(run(1) == "18 ", "latched: KT double-tap, KT + key (C4 + 5) = +5 that stays after release");
+    CHECK(sim_portf & 0x40, "KEY-TRANSPOSE LED lit while latched");
+    WaitVirtMs(500);
+    tap(B_KT); tap(B_KT);
+    CHECK(run(1) == "10 " && !(sim_portf & 0x40), "double-tap again unlatches, transpose 0, LED off");
+    WaitVirtMs(500);
+
+    // Pedal route: pedal = KEY TRANSPOSE; HOLD no longer latches from it.
+    sx({0x65, 1, 1});
+    sim::g_pedalHold = true; RunLoops(3); key(4, true);
+    CHECK(sim::g_sh[0] == 7 && (sim_portf & 0x20), "pedal routed to KEY TRANSPOSE: pedal + key transposes, HOLD LED stays off");
+    key(4, false); sim::g_pedalHold = false; RunLoops(3);
+    CHECK(run(1) == "11 ", "pedal released: transpose back to 0");
+    sx({0x65, 1, 0});
+    tap(B_PLAY); WaitVirtMs(40);
+
+    // Random arp: U&D, U&D again = RANDOM (U&D LED blinks), U&D = off.
+    tap(B_UD); tap(B_UD);
+    sim::g_keys = (1UL << 0) | (1UL << 4) | (1UL << 7); RunLoops(3);
+    SettleClockReset();                                      // arp start pulses CLOCK RESET
+    std::string ar; bool blinkOn = false, blinkOff = false;
+    for (int i = 0; i < 24; ++i) {
+      ClockTick(); ar += std::to_string(sim::g_sh[0]) + " ";
+      WaitVirtMs(70); uint8_t l = sim_portf & 7; blinkOn |= (l == 4); blinkOff |= (l == 0);
+    }
+    bool okSet = true, noRep = true; std::vector<int> vs;
+    for (size_t i = 0; i < ar.size();) { size_t j = ar.find(' ', i); vs.push_back(atoi(ar.substr(i, j - i).c_str())); i = j + 1; }
+    int dist[64] = {0};
+    for (size_t i = 0; i < vs.size(); ++i) {
+      if (vs[i] != 17 && vs[i] != 21 && vs[i] != 24) okSet = false;
+      if (i && vs[i] == vs[i - 1]) noRep = false; dist[vs[i]]++;
+    }
+    printf("  (random arp: %s)\n", ar.c_str());
+    CHECK(okSet && noRep && dist[17] && dist[21] && dist[24], "random arp: held keys only, all of them, no immediate repeats");
+    CHECK(blinkOn && blinkOff, "random arp: U&D LED blinks");
+    sim::g_keys = 0; RunLoops(3); tap(B_UD);
+    CHECK((sim_portf & 7) == 0, "U&D a third time: arp off");
+
+    // Tune mode: KEY TRANSPOSE + LOAD from keyboard mode holds A (440 Hz at 8').
+    g_midiOut.clear();
+    btn(B_KT, true); tap(B_LOAD); btn(B_KT, false); WaitVirtMs(20);
+    bool note69 = false;
+    for (size_t i = 0; i + 1 < g_midiOut.size(); ++i) if ((g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 1] == 69) note69 = true;
+    CHECK(GateOn() && sim::g_sh[0] == 33, "tune: gate held on A (CV 33 = MIDI 69 at 8')");
+    CHECK(note69, "tune: MIDI OUT plays A 440 (note 69) too");
+    tap(B_UP);
+    CHECK(!GateOn() && (sim_portf & 7) == 0, "tune: any function button leaves it (and does nothing else)");
+    WaitVirtMs(40);
+
+    // Real-time record into an empty pattern (becomes 16 rest steps).
+    push(3, {});
+    sx({0x1D, 3});
+    play();
+    btn(B_PLAY, true); tap(B_LOAD); btn(B_PLAY, false);      // RT record on
+    // The empty pattern became 16 rests and rewound: the next clock plays
+    // step 0, so after two clocks step 1 is sounding, first half.
+    run(2);
+    key(3, true);
+    CHECK(GateOn() && sim::g_sh[0] == 20, "RT record: a key in the first half sounds and lands on this step");
+    key(3, false); run(3);                                   // step 4
+    sim::g_clock = true; RunLoops(2);                        // step 5's half-step passed
+    key(7, true);                                            // -> step 5
+    sim::g_clock = false; RunLoops(2);                       // step 5 plays it
+    CHECK(GateOn() && sim::g_sh[0] == 24, "RT record: a late key lands on (and plays at) the next step");
+    sim::g_clock = true; RunLoops(2);                        // still held at 5's half: tie into 6
+    key(7, false);
+    sim::g_clock = false; RunLoops(2);
+    btn(B_PLAY, true); tap(B_LOAD); btn(B_PLAY, false);      // RT record off
+    tap(B_PLAY); WaitVirtMs(40);
+    play();
+    std::string rt = first() + run(9);
+    // legato 5 -> 6: the gate must not drop between them
+    printf("  (RT recorded pattern: %s)\n", rt.c_str());
+    CHECK(rt == "- 20 - - - 24 24 - - - ", "RT record: playback has the notes where they landed, the held note tied");
+    tap(B_PLAY); WaitVirtMs(40);
+    sx({0x1D, 0});
+    sx({0x65, 0, 0});
   }
 
   // AUTO LFO division (lfoDiv 127): the division follows the measured

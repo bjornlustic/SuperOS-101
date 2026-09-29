@@ -17,6 +17,9 @@
 //                    1/16 1/16d 1/16t 1/32 (lowest key = 1/4)
 //   key 11 / 12   -> accent model MC-202 / TB-303 (cvdac.h)
 //   key 13        -> toggle MIDI filter cutoff (CC) on/off
+//   key 14        -> toggle LFO hard-sync
+//   keys 15-18    -> sequencer direction FWD / BWD / PING-PONG / RANDOM
+//   key 19        -> pedal jack route: HOLD <-> KEY TRANSPOSE
 //   KEY-TRANSPOSE -> exit, resume the running firmware
 #pragma once
 #include <Arduino.h>
@@ -27,6 +30,7 @@
 #include "emu101.h"
 #include "midiclock.h"
 #include "cvdac.h"
+#include "engine.h"
 
 namespace menu {
 
@@ -106,6 +110,14 @@ inline void Poll() {
   // free-runs for modulation while the sequencer still steps from the clock;
   // ON = CLOCK RESET locks it to the clock at its own division, editor 0x22).
   if (keyRise & (1UL << 13)) midiclk::SetLfoSync(!midiclk::LfoSyncOn());
+  // Keys 15-18: sequencer direction FWD / BWD / PING-PONG / RANDOM; key 19
+  // toggles the pedal route HOLD <-> KEY TRANSPOSE (SuperOS; engine.h).
+  for (uint8_t k = 0; k < engine::DIR_COUNT; ++k)
+    if (keyRise & (1UL << (14 + k))) { engine::DirSetting() = k; engine::SaveFeatures(); }
+  if (keyRise & (1UL << 18)) {
+    controls::PedalRoute() = controls::PedalRoute() == controls::PEDAL_HOLD ? controls::PEDAL_TRANSPOSE : controls::PEDAL_HOLD;
+    engine::SaveFeatures();
+  }
 
   if (rise & (1u << controls::BTN_LOAD)) {
     if (emu101::available()) SwitchTo(FW_EMU);   // no ROM embedded -> ignore
