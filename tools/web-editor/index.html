@@ -101,6 +101,9 @@
               gap:0; border-top:var(--rule-sm); border-left:var(--rule-sm); }
   .seq-grid.cols-16 { grid-template-columns:repeat(16, minmax(clamp(42px,5.5vw,62px),1fr)); }
   @media (max-width:640px) { .seq-grid, .seq-grid.cols-16 { grid-template-columns:repeat(4, minmax(0,1fr)); } }
+  .seq-panel.is-preview .seq-toolbar, .seq-panel.is-preview .seq-grid { pointer-events:none; }
+  .seq-panel.is-preview { border-color:var(--red); }
+  .seq-panel.is-preview #seqTitle { color:var(--red); }
   .seq-empty { padding:18px 14px; font-size:11px; color:var(--gray-4); }
 
   /* ── Step card ── */
@@ -295,6 +298,8 @@
       <button class="btn" id="btnSave">Save file</button>
       <button class="btn" id="btnLoad">Load file</button>
       <input type="file" id="fileJson" accept=".json" style="display:none" />
+      <button class="btn" id="btnImport" title="Turn a standard MIDI file into a pattern (or drop a .mid anywhere on the page)">Import MIDI</button>
+      <input type="file" id="fileMid" accept=".mid,.midi,audio/midi" style="display:none" />
     </div>
   </div>
 
@@ -334,8 +339,39 @@
     </div>
   </div>
 
+  <!-- MIDI file import: preview in the step grid, then Write through the normal write/Undo path -->
+  <div class="config-panel" id="impPanel" style="display:none">
+    <div class="config-bar is-open" style="cursor:default">
+      <span class="config-bar-label">Import MIDI &#183; <span id="impFile"></span></span>
+      <span class="config-bar-status" id="impStatus"></span>
+    </div>
+    <div class="config-body is-open">
+      <div class="config-inner">
+        <div class="config-field"><label>Track / channel</label><select id="impSrc"></select></div>
+        <div class="config-field"><label>Grid</label><select id="impGrid">
+          <option value="4">1/16</option><option value="2">1/8</option><option value="8">1/32</option><option value="1.5">1/8T</option><option value="6">1/16T</option></select></div>
+        <div class="config-field"><label>Start at (bar / step)</label>
+          <div class="seq-toolbar-steps" style="gap:6px"><input type="number" id="impBar" min="1" value="1" style="width:64px" title="Bar (1 = the start of the file)" />
+          <input type="number" id="impStep" min="1" value="1" style="width:64px" title="Grid step inside that bar" /></div></div>
+        <div class="config-field"><label>Length (steps)</label><input type="number" id="impLen" min="1" max="128" placeholder="Auto" style="width:84px" title="Blank = Auto: to the end of the last note, whole bars, up to 128" /></div>
+        <div class="config-field"><label>Chords / overlaps</label><select id="impMono" title="Notes starting on the same step: which one the mono voice keeps">
+          <option value="high">Highest</option><option value="low">Lowest</option><option value="last">Last</option></select></div>
+        <div class="config-field"><label>Octave shift</label><select id="impOct">
+          <option value="auto">Auto-fit</option><option value="-2">&#8722;2</option><option value="-1">&#8722;1</option><option value="0">0</option><option value="1">+1</option><option value="2">+2</option></select></div>
+        <div class="config-field"><label>Into pattern</label><select id="impPat"></select></div>
+        <div class="config-field"><label>Longer than the length</label>
+          <select id="impSplit" title="Split fills the following patterns with the rest of the file"><option value="0">Cut</option><option value="1">Split across patterns</option></select></div>
+      </div>
+      <div class="config-inner" style="padding-top:0; align-items:center">
+        <span class="config-note" id="impSummary" style="max-width:none; flex:1 1 400px"></span>
+        <button class="btn btn-primary" id="impWrite">Write</button>
+        <button class="btn" id="impCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sequencer -->
-  <div class="seq-panel">
+  <div class="seq-panel" id="seqPanel">
     <div class="seq-toolbar">
       <span class="seq-toolbar-lbl" id="seqTitle">Pattern 1</span>
       <div class="seq-toolbar-steps">
@@ -627,7 +663,7 @@ let probeStartMs = 0;
 function probe() {
   clearInterval(probeTimer);
   probeStartMs = Date.now();
-  setStatus('Verifying — waiting for the synth to answer...', false);
+  setStatus('Verifying: waiting for the synth to answer...', false);
   const once = () => {
     if (!midiOut || !midiIn) return;
     sendSysex([0x20]);
@@ -638,7 +674,7 @@ function probe() {
       updateLinkUi();
       log('link lost: the synth stopped answering (unplugged? reflashed? if Chrome was open across a reflash, quit Chrome fully and reopen)', 'log-err');
     } else if (!verified && quiet > 5000 && Date.now() - probeStartMs > 5000) {
-      setStatus('No reply from the synth on these ports — check the port pickers and that it is on; after a firmware update quit Chrome fully', false);
+      setStatus('No reply from the synth on these ports: check the port pickers and that it is on; after a firmware update quit Chrome fully', false);
     }
   };
   once(); probeTimer = setInterval(once, 2000);
@@ -789,7 +825,7 @@ let pendingWrite = -1, readingAll = false, unitPlaying = false, playheadTimer = 
 // ---------------------------------------------------------------------------
 // Device writes: full pattern (0x12) or live deltas (0x18 length + 0x16 steps)
 // ---------------------------------------------------------------------------
-let lastSent = null;   // {pat, len, steps:[{cv,type}]} — device-side mirror for diffing
+let lastSent = null;   // {pat, len, steps:[{cv,type}]}: device-side mirror for diffing
 let liveTimer = null;
 
 function readAll() { readingAll = true; sendSysex([0x13]); log('reading all patterns...'); setTimeout(() => readingAll = false, 3000); }
@@ -912,7 +948,7 @@ $('btnFwSwitch').onclick = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Config: channel / sync / divide — applied to the unit on change (SysEx 0x22)
+// Config: channel / sync / divide: applied to the unit on change (SysEx 0x22)
 // ---------------------------------------------------------------------------
 function sendConfig() {
   if (!sendSysex([0x22, cfg.chan, cfg.sync ? 1 : 0, cfg.div, cfg.lfoSync ? 1 : 0, cfg.lfoDiv])) return;
@@ -1273,8 +1309,10 @@ function stepNameHtml(s) {
 function stepStateClass(t) { return t === 1 ? ' is-rest' : t === 2 ? ' is-tie' : ' is-note'; }
 function renderSteps() {
   const el = $('steps');
-  const pat = patterns[curPat];
-  $('seqTitle').textContent = 'Pattern ' + (curPat + 1);
+  const preview = imp && imp.result && curPat === +$('impPat').value ? imp.result.chunks[0] : null;
+  const pat = preview || patterns[curPat];
+  $('seqTitle').textContent = preview ? 'Preview: pattern ' + (curPat + 1) + ' (not written yet)' : 'Pattern ' + (curPat + 1);
+  $('seqPanel').classList.toggle('is-preview', !!preview);
   $('inLen').value = pat.length;
   el.classList.toggle('cols-16', pat.length > 16);
   $('seqEmpty').style.display = pat.length ? 'none' : 'block';
@@ -1403,6 +1441,7 @@ function renderPlayhead() {
 function renderAll() { renderPills(); renderSteps(); renderConfig(); renderFeatures(); renderScale(); }
 
 document.addEventListener('keydown', ev => {
+  if (imp) return;   // the grid is a read-only preview while importing
   if (['SELECT','INPUT'].includes(document.activeElement.tagName)) return;
   if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { undo(); ev.preventDefault(); return; }
   const pat = patterns[curPat], s = pat[selStep];
@@ -1416,6 +1455,194 @@ document.addEventListener('keydown', ev => {
   if (k === 'n' || k === 'N') edit(() => s.type = 0);
   if (k === 'r' || k === 'R') edit(() => s.type = 1);
   if (k === 'l' || k === 'L' || k === 't' || k === 'T') edit(() => s.type = 2);
+});
+
+// ---------------------------------------------------------------------------
+// MIDI file import. parseSMF reads type 0/1 files (VLQ, running status,
+// meta/sysex, note-on velocity 0 = note-off); convertNotes quantizes one
+// track/channel onto the step grid as a mono line. The result previews in the
+// step grid and is written with the normal 0x12 push (history kept for Undo).
+// ---------------------------------------------------------------------------
+function parseSMF(bytes) {
+  const b = bytes; let pos = 0;
+  const u32 = () => { const v = (b[pos] << 24 | b[pos + 1] << 16 | b[pos + 2] << 8 | b[pos + 3]) >>> 0; pos += 4; return v; };
+  const u16 = () => { const v = b[pos] << 8 | b[pos + 1]; pos += 2; return v; };
+  const tag = () => String.fromCharCode(b[pos], b[pos + 1], b[pos + 2], b[pos + 3]);
+  const vlq = () => { let v = 0, c; do { if (pos >= b.length) throw new Error('truncated'); c = b[pos++]; v = v * 128 + (c & 0x7F); } while (c & 0x80); return v; };
+  if (tag() !== 'MThd') throw new Error('not a standard MIDI file');
+  pos += 4; const hlen = u32(), hend = pos + hlen;
+  const format = u16(), ntrks = u16(), div = u16();
+  if (div & 0x8000) throw new Error('SMPTE time division is not supported');
+  if (format > 1) throw new Error('MIDI file type ' + format + ' is not supported (type 0 and 1 are)');
+  pos = hend;
+  const tracks = []; let timeSig = null;
+  while (pos + 8 <= b.length && tracks.length < ntrks) {
+    const id = tag(); pos += 4; const len = u32(), end = Math.min(b.length, pos + len);
+    if (id !== 'MTrk') { pos = end; continue; }
+    const tr = {name: '', notes: []}, open = new Map();
+    let tick = 0, run = 0;
+    const off = (ch, n) => { const q = open.get(ch * 128 + n); if (q && q.length) q.shift().end = tick; };
+    while (pos < end) {
+      tick += vlq();
+      let st = b[pos];
+      if (st & 0x80) { pos++; if (st < 0xF0) run = st; }
+      else { if (!run) throw new Error('running status without a status byte'); st = run; }
+      if (st === 0xFF) {
+        const type = b[pos++], l = vlq(), data = b.subarray(pos, pos + l); pos += l; run = 0;
+        if (type === 0x03 && !tr.name) tr.name = String.fromCharCode(...data);
+        if (type === 0x58 && !timeSig && l >= 2) timeSig = [data[0], 1 << data[1]];
+        if (type === 0x2F) break;
+      } else if (st === 0xF0 || st === 0xF7) { const l = vlq(); pos += l; run = 0; }   // not pos += vlq(): that reads pos before vlq moves it
+      else {
+        const hi = st & 0xF0, ch = st & 0x0F, d1 = b[pos++];
+        const d2 = (hi === 0xC0 || hi === 0xD0) ? 0 : b[pos++];
+        if (hi === 0x90 && d2 > 0) {
+          const nt = {start: tick, end: -1, note: d1, ch, vel: d2};
+          tr.notes.push(nt);
+          const k = ch * 128 + d1; if (!open.has(k)) open.set(k, []); open.get(k).push(nt);
+        } else if (hi === 0x80 || hi === 0x90) off(ch, d1);
+      }
+    }
+    tr.notes.forEach(n => { if (n.end < 0) n.end = tick; });   // never released: ends with the track
+    tracks.push(tr); pos = end;
+  }
+  return {format, tpq: div, timeSig: timeSig || [4, 4], tracks};
+}
+// notes: [{start,end,note}] in ticks. opts: {tpq, perBeat (grid steps per quarter),
+// barTicks, offsetTicks, len (0 = auto), mono 'high'|'low'|'last', oct 'auto'|n, split}.
+function convertNotes(notes, o) {
+  const stepT = o.tpq / o.perBeat;
+  const q = t => Math.round((t - o.offsetTicks) / stepT);
+  // quantize starts; group by step; the mono rule picks one note per step
+  const byStep = new Map(); let before = 0;
+  notes.forEach((n, i) => {
+    const s = q(n.start); if (s < 0) { ++before; return; }
+    if (!byStep.has(s)) byStep.set(s, []);
+    byStep.get(s).push({...n, i, s, e: Math.max(s + 1, q(n.end))});
+  });
+  let dropped = 0; const line = [];
+  [...byStep.keys()].sort((a, c) => a - c).forEach(s => {
+    const g = byStep.get(s);
+    const pick = o.mono === 'low' ? g.reduce((a, c) => c.note < a.note ? c : a)
+               : o.mono === 'last' ? g.reduce((a, c) => (c.start > a.start || c.start === a.start && c.i > a.i) ? c : a)
+               : g.reduce((a, c) => c.note > a.note ? c : a);
+    dropped += g.length - 1; line.push(pick);
+  });
+  // octave: the fewest whole octaves that fit MIDI 36..99, else the fewest clamps
+  let shift = 0;
+  if (o.oct === 'auto') {
+    let best = null;
+    for (let k = -5; k <= 5; ++k) {
+      const out = line.filter(n => n.note + 12 * k < 36 || n.note + 12 * k > 99).length;
+      if (!best || out < best.out || out === best.out && Math.abs(k) < Math.abs(best.k)) best = {k, out};
+    }
+    shift = best ? best.k : 0;
+  } else shift = +o.oct;
+  let clamped = 0;
+  const cvOf = n => { const m = n.note + 12 * shift; if (m < 36 || m > 99) ++clamped; return clampCv(m - 36); };
+  // lay the line out: note steps, legato when the previous note still sounds, ties to its end
+  const lastEnd = line.length ? Math.max(...line.map(n => n.e)) : 0;
+  const barSteps = Math.max(1, Math.round(o.barTicks / stepT));
+  const total = Math.max(1, Math.ceil(lastEnd / barSteps) * barSteps);
+  const flat = Array.from({length: total}, () => ({cv: 0, type: 1, rat: 0}));
+  let notesN = 0;
+  line.forEach((n, k) => {
+    const prev = line[k - 1], next = line[k + 1], cv = cvOf(n);
+    flat[n.s] = {cv, type: prev && prev.e > n.s ? 2 : 0, rat: 0}; ++notesN;
+    const stop = Math.min(n.e, next ? next.s : n.e, total);
+    for (let t = n.s + 1; t < stop; ++t) flat[t] = {cv, type: 2, rat: 0};
+  });
+  const chunkLen = o.len > 0 ? Math.min(MAX_STEPS, o.len) : Math.min(MAX_STEPS, total);
+  const chunks = [];
+  for (let at = 0; at < total && (o.split || !chunks.length); at += chunkLen) {
+    const c = flat.slice(at, at + chunkLen);
+    while (o.len > 0 && c.length < chunkLen) c.push({cv: 0, type: 1, rat: 0});   // Auto: the last part keeps its own length
+    chunks.push(c);
+  }
+  const used = chunks.length * chunkLen;
+  const count = t => chunks.reduce((a, c) => a + c.filter(x => x.type === t).length, 0);
+  const notesIn = line.filter(n => n.s < used).length;
+  return {chunks, shift, clamped, dropped, before, total, notes: notesIn, cut: line.length - notesIn,
+          legatos: count(2), rests: count(1), noteSteps: count(0)};
+}
+
+let imp = null;   // {name, smf, sources:[{label, notes}], result}
+async function importMidiFile(f) {
+  try {
+    const smf = parseSMF(new Uint8Array(await f.arrayBuffer()));
+    const sources = [];
+    smf.tracks.forEach((t, ti) => {
+      for (let ch = 0; ch < 16; ++ch) {
+        const notes = t.notes.filter(n => n.ch === ch);
+        if (notes.length) sources.push({label: 'Track ' + (ti + 1) + (t.name ? ' "' + t.name + '"' : '') + ', ch ' + (ch + 1) + ': ' + notes.length + ' notes', notes});
+      }
+    });
+    if (!sources.length) throw new Error('no notes in the file');
+    imp = {name: f.name, smf, sources, result: null, prevPat: imp ? imp.prevPat : curPat};
+    $('impFile').textContent = f.name;
+    $('impSrc').innerHTML = ''; sources.forEach((sr, i) => { const o = document.createElement('option'); o.value = i; o.textContent = sr.label; $('impSrc').appendChild(o); });
+    $('impPat').innerHTML = '';
+    for (let p = 0; p < NUM_PATTERNS; ++p) { const o = document.createElement('option'); o.value = p; o.textContent = p + 1; $('impPat').appendChild(o); }
+    $('impPat').value = curPat;
+    $('impPanel').style.display = '';
+    log('import: ' + f.name + ' (type ' + smf.format + ', ' + smf.tpq + ' ticks/quarter, ' + smf.timeSig.join('/') + ', ' + sources.length + ' source' + (sources.length > 1 ? 's' : '') + ')', 'log-ok');
+    runImport();
+    $('impPanel').scrollIntoView({block: 'nearest'});
+  } catch (e) { log('import failed: ' + e.message, 'log-err'); toast('MIDI import: ' + e.message); }
+}
+function runImport() {
+  if (!imp) return;
+  const smf = imp.smf, perBeat = +$('impGrid').value, stepT = smf.tpq / perBeat;
+  const barTicks = smf.tpq * 4 * smf.timeSig[0] / smf.timeSig[1];
+  const bar = Math.max(1, +$('impBar').value | 0), step = Math.max(1, +$('impStep').value | 0);
+  const split = $('impSplit').value === '1';
+  const r = convertNotes(imp.sources[+$('impSrc').value].notes, {tpq: smf.tpq, perBeat, barTicks,
+    offsetTicks: (bar - 1) * barTicks + (step - 1) * stepT, len: Math.min(128, +$('impLen').value | 0),
+    mono: $('impMono').value, oct: $('impOct').value, split});
+  const target = +$('impPat').value;
+  r.chunks = r.chunks.slice(0, NUM_PATTERNS - target);
+  imp.result = r;
+  if (curPat !== target) { curPat = target; selStep = -1; lastSent = null; readScale(target); }
+  const pats = r.chunks.map((_, i) => target + i + 1);
+  const len = r.chunks[0].length;
+  $('impSummary').innerHTML = '<b>' + len + ' steps' + (pats.length > 1 ? ' &#215; ' + pats.length + ' patterns (' + pats.join(', ') + ')' : '') + '</b> &#183; ' +
+    r.notes + ' notes, ' + r.legatos + ' legato/tie steps, ' + r.rests + ' rests &#183; octave shift ' + (r.shift > 0 ? '+' : '') + r.shift +
+    (r.clamped ? ' &#183; <b>' + r.clamped + ' clamped</b> into range' : '') + (r.dropped ? ' &#183; ' + r.dropped + ' dropped by the mono rule' : '') +
+    (r.before ? ' &#183; ' + r.before + ' before the start' : '') +
+    (r.cut ? ' &#183; <b>' + r.cut + ' notes past the end not imported</b>' + (split ? ' (out of patterns)' : ' (choose Split across patterns)') : '') +
+    (pats.length > 1 ? ' &#183; to play them in order on the unit: hold PLAY and press keys ' + pats.join(', ') + ' in order' : '');
+  $('impStatus').textContent = 'preview in pattern ' + (target + 1);
+  renderAll();
+}
+function closeImport() { imp = null; $('impPanel').style.display = 'none'; renderAll(); }
+function cancelImport() { const p = imp ? imp.prevPat : curPat; closeImport(); if (curPat !== p) { curPat = p; selStep = -1; lastSent = null; readScale(p); renderAll(); } }
+async function writeImport() {
+  if (!imp || !imp.result) return;
+  const target = +$('impPat').value, chunks = imp.result.chunks, name = imp.name;
+  const live = verified && deviceMode === 'superos';
+  closeImport();
+  for (let i = 0; i < chunks.length; ++i) {
+    const p = target + i;
+    pushHistory(p);
+    patterns[p] = chunks[i].map(s => ({...s}));
+    if (live) { writePattern(p); dirty[p] = false; await new Promise(r => setTimeout(r, 140)); }
+    else dirty[p] = true;
+  }
+  curPat = target; selStep = -1;
+  if (live && devPat !== target) { selectDevicePattern(target); devPat = target; }
+  log('import: ' + name + ' -> pattern' + (chunks.length > 1 ? 's ' + (target + 1) + '..' + (target + chunks.length) : ' ' + (target + 1)) +
+      (live ? ' written (Undo reverts)' : ' in the editor only (not connected: Write pattern later)'), 'log-ok');
+  renderAll();
+}
+['impSrc', 'impGrid', 'impBar', 'impStep', 'impLen', 'impMono', 'impOct', 'impPat', 'impSplit'].forEach(id => $(id).onchange = runImport);
+$('impWrite').onclick = writeImport;
+$('impCancel').onclick = cancelImport;
+$('btnImport').onclick = () => $('fileMid').click();
+$('fileMid').onchange = ev => { const f = ev.target.files[0]; ev.target.value = ''; if (f) importMidiFile(f); };
+document.addEventListener('dragover', ev => { if ([...ev.dataTransfer.items].some(it => it.kind === 'file')) ev.preventDefault(); });
+document.addEventListener('drop', ev => {
+  const f = [...ev.dataTransfer.files].find(x => /\.midi?$/i.test(x.name));
+  if (f) { ev.preventDefault(); importMidiFile(f); }
 });
 
 // Save / load all patterns as JSON
