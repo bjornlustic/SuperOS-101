@@ -62,8 +62,8 @@
                     -webkit-overflow-scrolling:touch; min-width:0; }
   .bank-label { font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase; color:var(--gray-4); padding:0 12px;
                 display:flex; align-items:center; border-right:var(--rule-sm); white-space:nowrap; flex-shrink:0; }
-  .pat-pills { display:flex; gap:0; flex-shrink:0; }
-  .pat-pill { width:40px; height:38px; border-right:var(--rule-sm); background:var(--white); color:var(--gray-3); font-family:var(--mono);
+  .pat-pills { display:grid; grid-template-columns:repeat(8, 40px); gap:0; flex-shrink:0; }
+  .pat-pill { width:40px; height:28px; border-right:var(--rule-sm); background:var(--white); color:var(--gray-3); font-family:var(--mono);
               font-size:11px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center;
               transition:all .08s; position:relative; user-select:none; }
   .pat-pill:hover:not(.is-active) { background:var(--gray-1); color:var(--black); }
@@ -74,9 +74,11 @@
   .pat-pill.is-playing.is-active { animation:pill-blink-inv 0.5s steps(1) infinite; }
   @keyframes pill-blink { 0%,100%{background:var(--white)} 50%{background:var(--gray-2)} }
   @keyframes pill-blink-inv { 0%,100%{background:var(--black)} 50%{background:var(--gray-4)} }
+  .pat-pill:nth-child(-n+8) { border-bottom:var(--rule-sm); }
+  @media (max-width:480px) { .pat-pills { grid-template-columns:repeat(8, 34px); } .pat-pill { width:34px; } }
   .bank-group-bar .spacer { flex:1; }
   .bar-actions { display:flex; align-items:center; gap:6px; padding:0 12px; flex:0 0 auto; }
-  .edit-live-btn { flex-shrink:0; height:38px; padding:0 14px; background:var(--white); border:none; border-left:var(--rule-sm); border-right:var(--rule-sm);
+  .edit-live-btn { flex-shrink:0; align-self:stretch; min-height:38px; padding:0 14px; background:var(--white); border:none; border-left:var(--rule-sm); border-right:var(--rule-sm);
                    color:var(--gray-4); font-family:var(--font); font-size:9px; font-weight:900; letter-spacing:0.18em; text-transform:uppercase;
                    cursor:pointer; transition:background .08s, color .08s; }
   .edit-live-btn:hover { background:var(--gray-1); color:var(--black); }
@@ -92,12 +94,13 @@
                  font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:0; }
   .len-adj-btn:hover { background:var(--gray-1); }
   .len-adj-btn:active { background:var(--black); color:var(--white); }
-  .seq-hint { font-size:11px; font-weight:500; color:var(--gray-3); letter-spacing:0.02em; flex:1 1 260px; min-width:0; }
+  .seq-hint { font-size:10px; font-weight:500; color:var(--gray-3); letter-spacing:0.02em; flex:1 1 100%; min-width:0; line-height:1.6; }
   .seq-hint b { color:var(--black); font-weight:700; }
   .seq-grid-wrap { padding:12px; overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; min-width:0; }
   .seq-grid { display:grid; width:100%; min-width:0; grid-template-columns:repeat(8, minmax(clamp(48px,10vw,78px),1fr));
               gap:0; border-top:var(--rule-sm); border-left:var(--rule-sm); }
   .seq-grid.cols-16 { grid-template-columns:repeat(16, minmax(clamp(42px,5.5vw,62px),1fr)); }
+  @media (max-width:640px) { .seq-grid, .seq-grid.cols-16 { grid-template-columns:repeat(4, minmax(0,1fr)); } }
   .seq-empty { padding:18px 14px; font-size:11px; color:var(--gray-4); }
 
   /* ── Step card ── */
@@ -111,9 +114,6 @@
   .step-card.is-rest { opacity:0.52; }
   .step-card.is-rest:hover { opacity:0.8; }
   .seq-grid > .step-card:nth-child(4n) { border-right:var(--rule); }
-  .step-card.add-card { align-items:center; justify-content:center; color:var(--gray-3); font-size:24px; font-weight:300;
-                        cursor:pointer; min-height:140px; }
-  .step-card.add-card:hover { background:var(--gray-1); color:var(--black); }
 
   .step-play-dot { position:absolute; top:3px; right:3px; width:7px; height:7px; border-radius:50%; background:var(--red); display:none; }
   .step-card.is-playing-step .step-play-dot { display:block; animation:dot-blink .25s steps(1) 2; }
@@ -124,7 +124,7 @@
   .is-tie .step-num { color:var(--gray-4); }
 
   .step-time { display:flex; gap:0; }
-  .t-btn { flex:1; height:18px; border:var(--rule-sm); margin-right:-1px; font-size:8px; font-weight:900; letter-spacing:0.08em;
+  .t-btn { flex:1; height:22px; border:var(--rule-sm); margin-right:-1px; font-size:8px; font-weight:900; letter-spacing:0.08em;
            cursor:pointer; background:var(--white); color:var(--gray-3); font-family:var(--font); text-transform:uppercase;
            border-radius:0; transition:all .08s; padding:0; }
   .t-btn:last-child { margin-right:0; }
@@ -141,8 +141,8 @@
   .step-name.is-muted { font-size:15px; font-weight:700; color:var(--gray-3); }
   .is-note .step-name .tie-mark, .step-name .tie-mark { font-weight:400; opacity:0.5; }
 
-  .pitch-knob-wrap { display:flex; flex-direction:row; align-items:stretch; gap:6px; min-height:72px; user-select:none; touch-action:none; }
-  .pitch-knob-track { flex:1; position:relative; height:72px; border:var(--rule-sm); background:var(--gray-1); cursor:ns-resize; }
+  .pitch-knob-wrap { display:flex; flex-direction:row; align-items:stretch; gap:4px; min-height:60px; user-select:none; touch-action:none; }
+  .pitch-knob-track { flex:1; position:relative; height:60px; border:var(--rule-sm); background:var(--gray-1); cursor:ns-resize; }
   .is-note .pitch-knob-track { border-color:rgba(255,255,255,0.35); background:rgba(255,255,255,0.08); }
   .is-tie .pitch-knob-track { border-color:var(--gray-3); }
   .pitch-knob-fill { position:absolute; left:0; right:0; bottom:0; background:var(--gray-3); pointer-events:none; }
@@ -151,7 +151,7 @@
   .is-note .pitch-knob-thumb { background:var(--white); border-color:var(--white); }
 
   .step-oct-row { display:flex; gap:0; margin-top:2px; }
-  .f-btn-o { flex:1; min-width:0; height:20px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
+  .f-btn-o { flex:1; min-width:0; height:22px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
              font-size:7px; font-weight:900; letter-spacing:0; line-height:1.05; cursor:pointer; font-family:var(--font);
              border-radius:0; transition:all .08s; padding:1px 2px; }
   .f-btn-o:last-child { margin-right:0; }
@@ -160,19 +160,8 @@
   .is-note .f-btn-o:hover { background:rgba(255,255,255,0.15); color:var(--white); }
   .is-tie .f-btn-o { border-color:var(--gray-3); color:var(--gray-4); }
 
-  .step-edit-row { display:flex; gap:0; margin-top:2px; }
-  .e-btn { flex:1; min-width:0; height:16px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
-           font-size:8px; font-weight:900; cursor:pointer; font-family:var(--font); border-radius:0; transition:all .08s; padding:0; }
-  .e-btn:last-child { margin-right:0; }
-  .e-btn:hover { background:var(--gray-2); color:var(--black); }
-  .e-btn.e-del:hover { background:var(--red); border-color:var(--red); color:var(--white); }
-  .is-note .e-btn { border-color:rgba(255,255,255,0.25); color:rgba(255,255,255,0.45); }
-  .is-note .e-btn:hover { background:rgba(255,255,255,0.15); color:var(--white); }
-  .is-note .e-btn.e-del:hover { background:var(--red); border-color:var(--red); color:var(--white); }
-  .is-tie .e-btn { border-color:var(--gray-3); color:var(--gray-4); }
-
   .step-ratchet { display:flex; gap:0; margin-top:2px; }
-  .r-btn { flex:1; min-width:0; height:18px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
+  .r-btn { flex:1; min-width:0; height:22px; border:var(--rule-sm); margin-right:-1px; background:transparent; color:var(--gray-3);
            font-size:7px; font-weight:900; letter-spacing:0; cursor:pointer; font-family:var(--font); border-radius:0; transition:all .08s; padding:0; }
   .r-btn:last-child { margin-right:0; }
   .r-btn:hover { background:var(--gray-2); color:var(--black); }
@@ -181,8 +170,11 @@
   .is-note .r-btn:hover { background:rgba(255,255,255,0.15); color:var(--white); }
   .is-note .r-btn.is-on { background:var(--white); border-color:var(--white); color:var(--black); }
   /* Rest cards hide the pitch machinery in CSS, not JS; ratchets need a plain note */
-  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row { display:none !important; }
-  .is-rest .step-ratchet, .is-tie .step-ratchet { display:none !important; }
+  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row, .is-rest .step-ratchet, .is-tie .step-ratchet { visibility:hidden; }
+  /* Scale on and the note is outside it: the unit plays the snapped note */
+  .step-card.is-offscale .step-name { color:var(--red); }
+  .step-card.is-note.is-offscale .step-name { color:#ff8a8a; }
+  .step-name .snap { font-size:9px; font-weight:700; letter-spacing:0; margin-left:3px; opacity:0.8; }
   .step-card.is-sel { outline:3px solid var(--black); outline-offset:-3px; z-index:1; }
   .step-card.is-note.is-sel { outline-color:var(--red); }
 
@@ -201,6 +193,14 @@
   .config-field { display:flex; flex-direction:column; gap:6px; }
   .config-field > label { font-size:9px; font-weight:900; letter-spacing:0.14em; text-transform:uppercase; color:var(--gray-4); }
   input[type="range"] { accent-color:var(--black); width:160px; cursor:pointer; }
+  .scale-select { height:30px; min-width:170px; }
+  .scale-root-btn, .scale-note-btn { height:30px; min-width:30px; padding:0 6px; background:var(--white); border:var(--rule-sm); color:var(--black); font-family:var(--font);
+    font-size:9px; font-weight:900; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; border-radius:0; transition:background .08s, color .08s; white-space:nowrap; }
+  .scale-root-btn:hover, .scale-note-btn:hover { background:var(--gray-2); }
+  .scale-root-btn.is-black, .scale-note-btn.is-black { background:var(--gray-2); }
+  .scale-root-btn.is-black:hover, .scale-note-btn.is-black:hover { background:var(--gray-3); }
+  .scale-root-btn.active, .scale-note-btn.active { background:var(--black); color:var(--white); border-color:var(--black); }
+  .scale-root-btn:disabled, .scale-note-btn:disabled { opacity:0.25; cursor:default; }
   .config-note { font-size:10px; color:var(--gray-4); max-width:420px; line-height:1.5; }
 
   /* Clock divide selector */
@@ -288,13 +288,49 @@
     <div class="spacer"></div>
     <div class="bar-actions">
       <button class="btn" id="btnPlay" disabled>&#9654; Play</button>
-      <button class="btn" id="btnResync" disabled title="Re-read everything from the synth: config, clock settings and all 8 patterns. Local unsent edits are discarded; the synth is the source of truth.">&#8634; Resync</button>
-      <button class="btn" id="btnPull" disabled title="Pull all 8 patterns from the synth into the editor (discards local unsent edits)">&#8595; Pull all</button>
-      <button class="btn" id="btnPushAll" disabled title="Push all 8 patterns and the clock config from the editor to the synth">&#8593; Push all</button>
+      <button class="btn" id="btnResync" disabled title="Put the sequence back on the one (the host's beat under MIDI clock, the start of play otherwise)">&#8634; Resync</button>
+      <button class="btn" id="btnPull" disabled title="Re-read everything from the synth: config, performance settings, scales and all 16 patterns. Local unsent edits are discarded; the synth is the source of truth.">&#8595; Pull all</button>
+      <button class="btn" id="btnPushAll" disabled title="Push all 16 patterns and the clock config from the editor to the synth">&#8593; Push all</button>
       <button class="btn btn-primary" id="btnWrite" disabled>&#8593; Write pattern</button>
       <button class="btn" id="btnSave">Save file</button>
       <button class="btn" id="btnLoad">Load file</button>
       <input type="file" id="fileJson" accept=".json" style="display:none" />
+    </div>
+  </div>
+
+  <!-- Randomize (on the unit: 0x68 -> 0x14 ack + 0x11 pattern) -->
+  <div class="strip" id="randStrip">
+    <div class="group">
+      <span class="lbl">Randomize</span>
+      <div class="group-inner" id="randBtns"></div>
+    </div>
+    <div class="group">
+      <span class="lbl">Density</span>
+      <div class="group-inner"><select id="selDensity" title="Share of note steps for Full / Rhythm. Panel weights = what PLAY + U&amp;D on the unit uses."></select></div>
+    </div>
+    <div class="group">
+      <span class="lbl">Seed</span>
+      <div class="group-inner"><input type="number" id="inSeed" min="0" max="16383" placeholder="random" style="width:84px" title="Blank or 0 = a new result every time; 1..16383 repeats the same result" /></div>
+    </div>
+  </div>
+
+  <!-- Scale (per pattern, 0x2A) -->
+  <div class="strip" id="scaleStrip">
+    <div class="group">
+      <span class="lbl">Scale</span>
+      <div class="group-inner"><button type="button" class="btn" id="btnScaleOn" title="Non-destructive: steps keep their pitch and the unit snaps what it plays to the scale (nearest note, lower on a tie). Panel: PLAY + KEY TRANSPOSE tap.">Off</button></div>
+    </div>
+    <div class="group">
+      <span class="lbl">Root</span>
+      <div class="group-inner" id="scaleRootBtns" style="gap:3px" title="Panel: PLAY + KEY TRANSPOSE + a key = that root (Major); the same key again = next scale"></div>
+    </div>
+    <div class="group">
+      <span class="lbl">Type</span>
+      <div class="group-inner"><select id="scaleSelect" class="scale-select"></select></div>
+    </div>
+    <div class="group group--grow">
+      <span class="lbl">Notes</span>
+      <div class="group-inner" id="scaleNoteBtns" style="gap:3px"></div>
     </div>
   </div>
 
@@ -310,12 +346,11 @@
       </div>
       <button class="btn" id="btnUndo" title="Undo the last edit on this pattern (Ctrl/Cmd-Z)">Undo</button>
       <button class="btn" id="btnClear">Clear</button>
-      <span class="seq-hint"><b>Drag a fader</b> to set the pitch. <b>N</b> note &#183; <b>L</b> legato (held into, glides on AUTO) &#183; <b>R</b> rest.
-        <b>1&#215;/2&#215;/3&#215;</b> ratchet: the note repeats that many times inside the step (on the unit: while recording, UP/DOWN cycles the last step's ratchet).
-        <b>+</b> inserts after, <b>&#215;</b> deletes. Keys: <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd>=octave), <kbd>N</kbd><kbd>R</kbd><kbd>L</kbd>, <kbd>Enter</kbd> append, <kbd>Del</kbd>.
-        Red dot = the unit's playhead.</span>
+    <div class="seq-hint"><b>N</b> note &#183; <b>L</b> legato (glides on AUTO) &#183; <b>R</b> rest &#183; vertical drag = pitch &#183;
+      <b>1&#215; 2&#215; 3&#215;</b> ratchet &#183; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> octave), <kbd>N</kbd> <kbd>L</kbd> <kbd>R</kbd> &#183;
+      <span style="color:var(--red)">red note</span> = outside the scale (the unit plays the note shown after it) &#183; red dot = playing step</div>
     </div>
-    <div class="seq-grid-wrap"><div class="seq-grid" id="steps"></div><div class="seq-empty" id="seqEmpty" style="display:none">Empty pattern. Click + to add steps, set a length, or record on the unit (LOAD, keys, LOAD).</div></div>
+    <div class="seq-grid-wrap"><div class="seq-grid" id="steps"></div><div class="seq-empty" id="seqEmpty" style="display:none">Empty pattern. Set a length with STEPS, randomize it, or record on the unit (LOAD, keys, LOAD).</div></div>
   </div>
 
   <!-- Config -->
@@ -362,7 +397,7 @@
         <div class="config-field" data-f="0">
           <label>Sequencer direction</label>
           <div class="div-grid" id="dirGrid"></div>
-          <div class="config-note">Panel: while playing, <b>UP</b> / <b>DOWN</b> / <b>U&amp;D</b>, <b>DOWN + U&amp;D</b> = random. Menu keys 15&#8211;18.</div>
+          <div class="config-note">Panel: while playing, <b>UP</b> / <b>DOWN</b> / <b>U&amp;D</b>, <b>DOWN + U&amp;D</b> = random. Menu keys 15&#8211;18. Ping-pong repeats its end steps, so a round trip stays on the bar.</div>
         </div>
         <div class="config-field" data-f="9">
           <label>Arp octave range</label>
@@ -380,7 +415,7 @@
         </div>
         <div class="config-field" data-f="3">
           <label>Transpose mode</label>
-          <button class="btn" id="btnTrMode" title="ON: while the sequencer plays (or a HOLD-latched arp runs) plain key presses transpose. Panel: double-tap KEY TRANSPOSE. Turning it off also clears the transpose.">Off</button>
+          <button class="btn" id="btnTrMode" title="ON: while the sequencer plays (or a HOLD-latched arp runs) plain key presses transpose. Panel: double-tap KEY TRANSPOSE.">Off</button>
         </div>
         <div class="config-field" data-f="4">
           <label>Loop length</label>
@@ -409,6 +444,12 @@
         <div class="config-field" data-f="7">
           <label>Queued pattern</label>
           <span class="status is-ok" id="queued" style="padding-left:0">&#8212;</span>
+        </div>
+        <div class="config-field" data-f="0">
+          <label>Panel gestures (PLAY held)</label>
+          <div class="config-note"><b>PLAY + U&amp;D</b> randomize (rhythm + pitch) &#183; <b>PLAY + UP</b> new pitches &#183; <b>PLAY + DOWN</b> mutate &#183;
+            <b>PLAY + KEY TRANSPOSE + key</b> = scale root (the same key again = next scale) &#183; <b>PLAY + KEY TRANSPOSE</b> tap = scale on / off.
+            Randomized notes land in the pattern's scale.</div>
         </div>
       </div>
     </div>
@@ -465,10 +506,10 @@
 <script>
 'use strict';
 // ---------------------------------------------------------------------------
-// Data model: 8 patterns, each an array of steps {cv:0..63, type:0 note/1 rest/2 legato}
+// Data model: 16 patterns, each an array of steps {cv:0..63, type:0 note/1 rest/2 legato}
 // mirrors the firmware's one-byte-per-step model (cv | type<<6).
 // ---------------------------------------------------------------------------
-const NUM_PATTERNS = 8, MAX_STEPS = 128, MIDI_CV_OFFSET = 36;
+const NUM_PATTERNS = 16, MAX_STEPS = 128, MIDI_CV_OFFSET = 36;
 // Full 6-bit DAC range. The SH-101's own keyboard with octave transpose covers CV 5..60.
 const CV_MIN = 0, CV_MAX = 63;
 const clampCv = cv => Math.min(CV_MAX, Math.max(CV_MIN, cv));
@@ -605,6 +646,7 @@ function probe() {
 function updateLinkUi() {
   const ed = verified && deviceMode === 'superos';
   ['btnResync','btnPull','btnPushAll','btnWrite'].forEach(id => $(id).disabled = !ed);
+  document.querySelectorAll('#randStrip button, #randStrip input, #randStrip select, #scaleStrip button, #scaleStrip select').forEach(el => el.disabled = !ed);
   $('btnPlay').disabled = !verified;
   ['btnFwSwitch','btnUpdate'].forEach(id => $(id).disabled = !verified);
   $('btnMidi').classList.toggle('is-connected', verified);
@@ -673,7 +715,7 @@ function handleSysex(b) {
       cfg = nc; devPat = b[5];
       onDeviceReply(b[1] === 1 ? 'emu' : 'superos');   // fw byte: both firmwares answer 0x20
       if (changed) {
-        if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; }   // follow PLAY+key on the unit
+        if (curPat !== devPat && !dirty[curPat]) { curPat = devPat; selStep = -1; lastSent = null; readScale(curPat); }   // follow PLAY+key on the unit
         log('config: ch ' + (cfg.chan + 1) + ', sync ' + (cfg.sync ? 'on' : 'off') + ', div ' + DIVS[cfg.div] + ', pattern ' + (devPat + 1) +
             ', LFO ' + (cfg.lfoSync ? lfoDivName(cfg.lfoDiv) : 'free') + ', v' + cfg.version, 'log-ok');
         renderAll();
@@ -692,7 +734,9 @@ function handleSysex(b) {
       if ((x & 0x7F) !== b[2] || ((x >> 7) & 1) !== b[3]) { log('pattern ' + (p + 1) + ': checksum mismatch', 'log-err'); break; }
       const len = raw[0]; if (len > MAX_STEPS || raw.length < len + 1) { log('pattern ' + (p + 1) + ': bad length', 'log-err'); break; }
       const wasDirty = dirty[p];
-      if (wasDirty && !readingAll) { log('pattern ' + (p + 1) + ' changed on the unit; keeping your unsent edits (Resync or Pull all to discard them)'); break; }
+      const randomized = p === randPending;
+      if (randomized) { randPending = -1; if (p === curPat) { clearTimeout(liveTimer); liveTimer = null; } }
+      if (wasDirty && !readingAll && !randomized) { log('pattern ' + (p + 1) + ' changed on the unit; keeping your unsent edits (Resync or Pull all to discard them)'); break; }
       const ratTail = raw.slice(1 + len);   // packed ratchet bytes (absent from pre-ratchet firmware)
       patterns[p] = raw.slice(1, 1 + len).map((s, i) => ({cv: s & 0x3F, type: Math.min(2, s >> 6),
         rat: ratTail.length > (i >> 2) ? (ratTail[i >> 2] >> ((i & 3) * 2)) & 3 : 0}));
@@ -700,12 +744,13 @@ function handleSysex(b) {
       dirty[p] = false;
       if (p === curPat) lastSent = {pat: p, len, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
       if (selStep >= patterns[p].length) selStep = patterns[p].length - 1;
-      log((readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)', readingAll ? '' : 'log-ok');
+      log((randomized ? 'randomized' : readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)', readingAll ? '' : 'log-ok');
       renderAll();
       break;
     }
     case 0x14: {
       const codes = ['written', 'REJECTED: bad checksum', 'REJECTED: bad pattern/length/step'];
+      if (b[1]) randPending = -1;
       if (b[1]) { log('101: ' + (codes[b[1]] || ('ack ' + b[1])), 'log-err'); toast('Unit rejected the edit (' + (codes[b[1]] || b[1]) + ')'); }
       if (b[1] === 0 && pendingWrite >= 0) { dirty[pendingWrite] = false; pendingWrite = -1; renderPills(); }
       break;
@@ -723,6 +768,16 @@ function handleSysex(b) {
       const changed = JSON.stringify(nf) !== JSON.stringify(feat);
       feat = nf;
       if (changed) { log('performance: ' + featSummary(), 'log-ok'); renderFeatures(); }
+      break;
+    }
+    case 0x2A: {   // scale [pat, mask lo7, mask hi5, on]: a reply, or the panel changed it
+      const p = b[1]; if (p >= NUM_PATTERNS || b.length < 5) break;
+      const sc = {mask: (b[2] | (b[3] & 0x1F) << 7) & 0xFFF, on: b[4] ? 1 : 0};
+      if (JSON.stringify(sc) !== JSON.stringify(scales[p])) {
+        scales[p] = sc;
+        if (!readingAll) log('pattern ' + (p + 1) + ' scale: ' + scaleLabel(sc), 'log-ok');
+        if (p === curPat) { renderScale(); renderSteps(); }
+      }
       break;
     }
     case 0x24: break;   // CV DAC config reply (no UI here yet; requested by Resync)
@@ -800,19 +855,23 @@ function afterEdit() {
 }
 
 // Pull: the synth is the source of truth; local unsent edits are discarded.
-function pullAll() { dirty.fill(false); lastSent = null; readAll(); }
-// Resync: config + clock + CV config + every pattern, fresh from the synth.
-function resync() {
-  log('resync: reading config + all patterns from the synth...', 'log-ok');
+function pullAll() { dirty.fill(false); lastSent = null; readAll(); for (let p = 0; p < NUM_PATTERNS; ++p) readScale(p); }
+// Reload: config + clock + CV config + performance + every pattern and scale, fresh from the synth.
+function reloadAll() {
+  log('pull all: reading config, performance, scales and all patterns from the synth...', 'log-ok');
   sendSysex([0x20]); sendSysex([0x23]); requestFeatures(true);
   pullAll();
 }
-// Push: everything the editor holds goes to the synth (all 8 patterns + config).
+// Resync: the sequence back on the one (0x65 id 9; the unit answers 0x66).
+function resync() {
+  if (sendSysex([0x65, 9, 0])) log('resync: sequence back on the one', 'log-syx');
+}
+// Push: everything the editor holds goes to the synth (all 16 patterns + config).
 let pushing = false;
 async function pushAll() {
   if (pushing) return; pushing = true;
   try {
-    log('push: writing all 8 patterns + config to the synth...', 'log-ok');
+    log('push: writing all ' + NUM_PATTERNS + ' patterns + config to the synth...', 'log-ok');
     for (let p = 0; p < NUM_PATTERNS; ++p) {
       writePattern(p);
       await new Promise(r => setTimeout(r, 140));   // one 0x12 + its flash-side ack per beat
@@ -822,7 +881,7 @@ async function pushAll() {
   } finally { pushing = false; }
 }
 $('btnResync').onclick = resync;
-$('btnPull').onclick = pullAll;
+$('btnPull').onclick = reloadAll;
 $('btnPushAll').onclick = pushAll;
 $('btnWrite').onclick = () => { writePattern(curPat); if (devPat !== curPat) { selectDevicePattern(curPat); devPat = curPat; renderPills(); } };
 $('btnLive').onclick = () => {
@@ -994,6 +1053,111 @@ $('rngDelay').onchange = () => setDelay(+$('rngDelay').value);
 $('inDelay').onchange = () => setDelay(+$('inDelay').value);
 document.addEventListener('visibilitychange', () => requestFeatures());
 
+// ---------------------------------------------------------------------------
+// Randomize on the unit: 0x68 [pat, op, density, seed lo7, seed hi7]. The unit
+// acks (0x14) and sends the new pattern (0x11), which replaces the grid even
+// over unsent local edits; Undo brings the previous notes back (and live-sends them).
+// ---------------------------------------------------------------------------
+const RAND_OPS = [['Full', 'New rhythm and pitches (panel: PLAY held + U&D)'], ['Pitches', 'New pitches, same rhythm (panel: PLAY held + UP)'],
+                  ['Rhythm', 'New rhythm, pitches kept'], ['Mutate', '2 to 4 small edits (panel: PLAY held + DOWN)'],
+                  ['Octaves', 'Move notes between octaves'], ['Legato', 'New legato placement']];
+const RAND_WEIGHTS = 0x7F;
+let randPending = -1;
+RAND_OPS.forEach(([name, title], op) => {
+  const b = document.createElement('button');
+  b.className = 'btn'; b.textContent = name; b.title = title + '. Written notes land in the pattern\'s scale.';
+  b.onclick = () => randomize(op);
+  $('randBtns').appendChild(b);
+});
+(function fillDensity() {
+  const o = document.createElement('option'); o.value = RAND_WEIGHTS; o.textContent = 'Panel weights'; $('selDensity').appendChild(o);
+  for (let pc = 10; pc <= 100; pc += 10) {
+    const x = document.createElement('option'); x.value = Math.round(pc * 126 / 100); x.textContent = pc + '% notes'; $('selDensity').appendChild(x);
+  }
+})();
+function randomize(op) {
+  if (deviceMode !== 'superos') return;
+  const p = curPat, dens = +$('selDensity').value, seed = Math.max(0, Math.min(16383, +$('inSeed').value | 0));
+  pushHistory(p);
+  randPending = p;
+  clearTimeout(liveTimer); liveTimer = null;   // unsent edits would land after the new pattern
+  if (devPat !== p) { selectDevicePattern(p); devPat = p; renderPills(); }
+  if (sendSysex([0x68, p, op, dens, seed & 0x7F, seed >> 7]))
+    log('randomize pattern ' + (p + 1) + ': ' + RAND_OPS[op][0].toLowerCase() + ', ' + (dens === RAND_WEIGHTS ? 'panel weights' : Math.round(dens * 100 / 126) + '% notes') +
+        (seed ? ', seed ' + seed : ''), 'log-syx');
+}
+
+// ---------------------------------------------------------------------------
+// Scale, per pattern: 0x2A [pat] reads, [pat, mask lo7, mask hi5, on] sets;
+// both answered with 0x2A. Non-destructive: steps keep their pitch and the unit
+// snaps what it plays. Presets and order are the SuperOS-303's (bit 0 = C).
+// ---------------------------------------------------------------------------
+const SCALE_PRESETS = [['Major',0xAB5],['Minor',0x5AD],['Dorian',0x6AD],['Mixolydian',0x6B5],['Lydian',0xAD5],['Phrygian',0x5AB],
+  ['Locrian',0x56B],['Whole Tone',0x555],['Half-Whole Dim.',0x6DB],['Whole-Half Dim.',0xB6D],['Minor Blues',0x4E9],['Minor Pentatonic',0x4A9],
+  ['Major Pentatonic',0x295],['Harmonic Minor',0x9AD],['Harmonic Major',0x9B5],['Dorian #4',0x6CD],['Phrygian Dominant',0x5B3],
+  ['Melodic Minor',0xAAD],['Lydian Augmented',0xB55],['Lydian Dominant',0x6D5],['Super Locrian',0x55B],['8-Tone Spanish',0x57B],
+  ['Bhairav',0x9B3],['Hungarian Minor',0x9CD],['Hirajoshi',0x18D],['In-Sen',0x4A3],['Iwato',0x463],['Kumoi',0x28D],
+  ['Pelog Selisir',0x18B],['Pelog Tembung',0x1A3],['Messiaen 3',0xDDD],['Messiaen 4',0x9E7],['Messiaen 5',0x8E3],
+  ['Messiaen 6',0xD75],['Messiaen 7',0xBEF]];
+const BLACK_PC = [1, 3, 6, 8, 10];
+const scales = new Array(NUM_PATTERNS).fill(null);   // {mask, on} as the unit last reported
+let scaleRoot = 0, scaleIdx = 0;                      // last root/preset picked (kept while the mask is custom)
+const rotateMask = (m, r) => ((m << r) | (m >> (12 - r))) & 0xFFF;
+// Modes share masks (D Major = C# Locrian): the last root/preset picked wins,
+// then the preset order (so Major beats its modes).
+function matchScale(mask) {
+  if (rotateMask(SCALE_PRESETS[scaleIdx][1], scaleRoot) === mask) return {root: scaleRoot, idx: scaleIdx};
+  for (let i = 0; i < SCALE_PRESETS.length; ++i) for (let r = 0; r < 12; ++r)
+    if (rotateMask(SCALE_PRESETS[i][1], r) === mask) return {root: r, idx: i};
+  return null;
+}
+function scaleLabel(sc) {
+  const m = matchScale(sc.mask);
+  return (sc.on ? 'on, ' : 'off, ') + (m ? NAMES[m.root] + ' ' + SCALE_PRESETS[m.idx][0] : sc.mask === 0xFFF ? 'all notes' : 'custom');
+}
+function readScale(p) { if (midiOut && deviceMode === 'superos') sendSysex([0x2A, p]); }
+function sendScale(mask, on) {
+  const p = curPat;
+  if (!sendSysex([0x2A, p, mask & 0x7F, (mask >> 7) & 0x1F, on ? 1 : 0])) return;
+  scales[p] = {mask, on: on ? 1 : 0};   // optimistic; the 0x2A reply is the truth
+  log('pattern ' + (p + 1) + ' scale -> unit: ' + scaleLabel(scales[p]), 'log-syx');
+  renderScale(); renderSteps();
+}
+function renderScale() {
+  const sc = scales[curPat] || {mask: 0xFFF, on: 0};
+  const m = matchScale(sc.mask);
+  if (m) { scaleRoot = m.root; scaleIdx = m.idx; }
+  $('btnScaleOn').textContent = sc.on ? 'On' : 'Off';
+  $('btnScaleOn').classList.toggle('is-on', !!sc.on);
+  $('scaleSelect').value = m ? m.idx : '';
+  document.querySelectorAll('#scaleRootBtns .scale-root-btn').forEach(b => b.classList.toggle('active', !!m && +b.dataset.pc === scaleRoot));
+  document.querySelectorAll('#scaleNoteBtns .scale-note-btn').forEach(b => {
+    const on = !!(sc.mask & (1 << +b.dataset.pc));
+    b.classList.toggle('active', on);
+    b.title = NAMES[+b.dataset.pc] + (on ? ' in the scale (click to remove)' : ' (click to add)');
+  });
+}
+(function buildScaleStrip() {
+  const custom = document.createElement('option'); custom.value = ''; custom.textContent = 'Custom'; $('scaleSelect').appendChild(custom);
+  SCALE_PRESETS.forEach(([name], i) => { const o = document.createElement('option'); o.value = i; o.textContent = name; $('scaleSelect').appendChild(o); });
+  NAMES.forEach((n, pc) => {
+    const r = document.createElement('button');
+    r.type = 'button'; r.className = 'scale-root-btn' + (BLACK_PC.includes(pc) ? ' is-black' : ''); r.dataset.pc = pc; r.textContent = n;
+    r.title = 'Root ' + n + ' (turns the scale on)';
+    r.onclick = () => { scaleRoot = pc; sendScale(rotateMask(SCALE_PRESETS[scaleIdx][1], pc), 1); };
+    $('scaleRootBtns').appendChild(r);
+    const t = document.createElement('button');
+    t.type = 'button'; t.className = 'scale-note-btn' + (BLACK_PC.includes(pc) ? ' is-black' : ''); t.dataset.pc = pc; t.textContent = n;
+    t.onclick = () => { const sc = scales[curPat] || {mask: 0xFFF, on: 0}; sendScale(sc.mask ^ (1 << pc), sc.on); };
+    $('scaleNoteBtns').appendChild(t);
+  });
+})();
+$('scaleSelect').onchange = () => {
+  if ($('scaleSelect').value === '') { renderScale(); return; }
+  scaleIdx = +$('scaleSelect').value; sendScale(rotateMask(SCALE_PRESETS[scaleIdx][1], scaleRoot), 1);
+};
+$('btnScaleOn').onclick = () => { const sc = scales[curPat] || {mask: 0xFFF, on: 0}; sendScale(sc.mask, !sc.on); };
+
 // Collapsible panels
 [['perfBar','perfBody'],['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
   $(bar).onclick = () => { $(bar).classList.toggle('is-open'); $(body).classList.toggle('is-open'); };
@@ -1065,7 +1229,7 @@ $('fileSyx').onchange = async ev => {
 const history = Array.from({length: NUM_PATTERNS}, () => []);
 function pushHistory(p) {
   const h = history[p];
-  h.push(patterns[p].map(s => ({cv: s.cv, type: s.type})));
+  h.push(patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat || 0})));
   if (h.length > 100) h.shift();
 }
 function undo() {
@@ -1082,11 +1246,30 @@ function renderPills() {
     const d = document.createElement('div');
     d.className = 'pat-pill' + (p === curPat ? ' is-active' : '') + (dirty[p] ? ' is-dirty' : '') + ((playing || unitPlaying) && p === devPat ? ' is-playing' : '');
     d.textContent = p + 1; d.title = 'Pattern ' + (p + 1) + (p === devPat ? ' (selected on the unit)' : '');
-    d.onclick = () => { curPat = p; selStep = -1; lastSent = null; selectDevicePattern(p); devPat = p; renderAll(); };
+    d.onclick = () => { curPat = p; selStep = -1; lastSent = null; selectDevicePattern(p); devPat = p; readScale(p); renderAll(); };
     el.appendChild(d);
   }
 }
 
+// What the unit plays for a step under the pattern's scale (firmware: nearest
+// scale note, lower on a tie; rests and scale-off play as written).
+function snapCv(s) {
+  const sc = scales[curPat];
+  if (!sc || !sc.on || !(sc.mask & 0xFFF) || s.type === 1) return s.cv;
+  if (sc.mask & (1 << (s.cv % 12))) return s.cv;
+  for (let d = 1; d <= 12; ++d) {   // engine.h Sequencer::quantize, bounds included
+    const lo = s.cv - d, hi = s.cv + d;
+    if (lo >= 0 && sc.mask & (1 << (lo % 12))) return lo;
+    if (hi <= CV_MAX && sc.mask & (1 << (hi % 12))) return hi;
+  }
+  return s.cv;
+}
+function stepNameHtml(s) {
+  if (s.type === 1) return '&#8212;';
+  const snap = snapCv(s);
+  return (s.type === 2 ? '<span class="tie-mark">&#8767;</span>' : '') + noteName(s.cv) +
+         (snap !== s.cv ? '<span class="snap" title="Outside the scale: the unit plays ' + noteName(snap) + '">&#8594;' + noteName(snap) + '</span>' : '');
+}
 function stepStateClass(t) { return t === 1 ? ' is-rest' : t === 2 ? ' is-tie' : ' is-note'; }
 function renderSteps() {
   const el = $('steps');
@@ -1099,9 +1282,10 @@ function renderSteps() {
   const frag = document.createDocumentFragment();
   pat.forEach((s, i) => {
     const d = document.createElement('div');
-    d.className = 'step-card' + stepStateClass(s.type) + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-playing-step' : '');
+    d.className = 'step-card' + stepStateClass(s.type) + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-playing-step' : '') +
+                  (snapCv(s) !== s.cv ? ' is-offscale' : '');
     d.dataset.i = i;
-    const name = s.type === 1 ? '&#8212;' : (s.type === 2 ? '<span class="tie-mark">&#8767;</span>' : '') + noteName(s.cv);
+    const name = stepNameHtml(s);
     d.innerHTML =
       '<span class="step-play-dot"></span>' +
       '<span class="step-num">' + String(i + 1).padStart(2, '0') + '</span>' +
@@ -1119,18 +1303,12 @@ function renderSteps() {
         '<button class="r-btn' + (!s.rat ? ' is-on' : '') + '" data-a="r0" title="Single hit">1&#215;</button>' +
         '<button class="r-btn' + (s.rat === 1 ? ' is-on' : '') + '" data-a="r1" title="Ratchet: two hits in this step">2&#215;</button>' +
         '<button class="r-btn' + (s.rat === 2 ? ' is-on' : '') + '" data-a="r2" title="Ratchet: three hits in this step">3&#215;</button>' +
-      '</div>' +
-      '<div class="step-edit-row"><button class="e-btn" data-a="insa" title="Insert a step after this one">+</button><button class="e-btn e-del" data-a="del" title="Delete this step">&#215;</button></div>';
+      '</div>';
     frag.appendChild(d);
     const wrap = d.querySelector('.pitch-knob-wrap');
     layoutPitchKnob(wrap, s);
     bindPitchKnob(wrap, d.querySelector('.pitch-knob-track'), i, d.querySelector('.step-name'));
   });
-  if (pat.length < MAX_STEPS) {
-    const a = document.createElement('div'); a.className = 'step-card add-card'; a.textContent = '+'; a.title = 'Append a step';
-    a.onclick = () => appendStep();
-    frag.appendChild(a);
-  }
   el.appendChild(frag);
 }
 
@@ -1154,7 +1332,8 @@ function bindPitchKnob(wrap, track, stepIdx, nameEl) {
     if (cv === s.cv) return;
     s.cv = cv; edited = true;
     layoutPitchKnob(wrap, s);
-    nameEl.innerHTML = (s.type === 2 ? '<span class="tie-mark">&#8767;</span>' : '') + noteName(s.cv);
+    nameEl.innerHTML = stepNameHtml(s);
+    wrap.parentNode.classList.toggle('is-offscale', snapCv(s) !== s.cv);
   };
   track.addEventListener('pointerdown', ev => {
     track.setPointerCapture(ev.pointerId);
@@ -1192,8 +1371,6 @@ $('steps').addEventListener('click', ev => {
     case 'r0': s.rat = 0; break;
     case 'r1': s.rat = 1; break;
     case 'r2': s.rat = 2; break;
-    case 'insa': if (patterns[curPat].length < MAX_STEPS) { patterns[curPat].splice(i + 1, 0, {cv: s.cv, type: 0, rat: 0}); selStep = i + 1; } break;
-    case 'del': patterns[curPat].splice(i, 1); if (selStep >= patterns[curPat].length) selStep = patterns[curPat].length - 1; break;
     default: history[curPat].pop(); return;
   }
   afterEdit(); renderSteps();
@@ -1218,25 +1395,18 @@ $('btnClear').onclick = () => {
     pushHistory(curPat); patterns[curPat] = []; selStep = -1; afterEdit(); renderSteps();
   }
 };
-function appendStep() {
-  const pat = patterns[curPat]; if (pat.length >= MAX_STEPS) return;
-  pushHistory(curPat);
-  const last = pat.length ? pat[pat.length - 1] : null;
-  pat.push({cv: last ? last.cv : 17, type: 0, rat: 0}); selStep = pat.length - 1; afterEdit(); renderSteps();
-}
 function renderPlayhead() {
   const show = unitPlaying && devPat === curPat;
   document.querySelectorAll('#steps .step-card').forEach(d =>
     d.classList.toggle('is-playing-step', show && +d.dataset.i === playPos));
 }
-function renderAll() { renderPills(); renderSteps(); renderConfig(); renderFeatures(); }
+function renderAll() { renderPills(); renderSteps(); renderConfig(); renderFeatures(); renderScale(); }
 
 document.addEventListener('keydown', ev => {
   if (['SELECT','INPUT'].includes(document.activeElement.tagName)) return;
   if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { undo(); ev.preventDefault(); return; }
   const pat = patterns[curPat], s = pat[selStep];
   const k = ev.key;
-  if (k === 'Enter') { appendStep(); ev.preventDefault(); return; }
   if (k === 'ArrowLeft')  { if (pat.length) { selStep = Math.max(0, selStep - 1); selectCard(); } ev.preventDefault(); return; }
   if (k === 'ArrowRight') { if (pat.length) { selStep = Math.min(pat.length - 1, selStep + 1); selectCard(); } ev.preventDefault(); return; }
   if (!s) return;
@@ -1246,7 +1416,6 @@ document.addEventListener('keydown', ev => {
   if (k === 'n' || k === 'N') edit(() => s.type = 0);
   if (k === 'r' || k === 'R') edit(() => s.type = 1);
   if (k === 'l' || k === 'L' || k === 't' || k === 'T') edit(() => s.type = 2);
-  if (k === 'Delete' || k === 'Backspace') { edit(() => { pat.splice(selStep, 1); if (selStep >= pat.length) selStep = pat.length - 1; }); ev.preventDefault(); }
 });
 
 // Save / load all patterns as JSON
@@ -1285,6 +1454,7 @@ $('fileJson').onchange = async ev => {
 })();
 
 renderAll();
+updateLinkUi();
 if (location.protocol === 'file:') $('httpBanner').classList.add('visible');
 log('SuperOS-101 editor ready. Connect MIDI, pick the unit on both ports. Edit live is ON: notes you change land on the unit immediately.');
 // Auto-connect when the MIDI permission is already granted (no prompt fires):
