@@ -1295,6 +1295,106 @@ static int SelfTest() {
             "sync delay 20 ms: every step (downbeat included) lands 20 ms later, count unchanged");
       midiclk::SetSyncDelay(0);
     }
+    // (5) Never off the one: a division change, a direction change and
+    // back, and Resync after a shift all keep the pattern on the host grid;
+    // ratchets land on their clock ticks.
+    {
+      const uint32_t T = 19380;                   // 129 BPM tick
+      auto startAt = [&]() { sxP(0); waitUs(450000); MidiByte(0xFA); waitUs(1000); };
+      auto ticksTo = [&](int from, int to, std::vector<uint32_t>& rises, std::vector<uint8_t>* cvs = nullptr) {
+        uint32_t t0 = micros() - (uint32_t)from * T; bool prev = GateOn();
+        for (int t = from; t < to; ++t) {
+          while ((int32_t)(t0 + (uint32_t)t * T - micros()) > 0) {
+            RunLoops(1); bool g = GateOn();
+            if (g && !prev) { rises.push_back(micros() - t0); if (cvs) cvs->push_back(sim::g_sh[0]); }
+            prev = g;
+          }
+          g_midiQ.push_back(0xF8);
+        }
+      };
+      auto sx65 = [&](uint8_t id, uint8_t v) {
+        for (uint8_t b : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x65, id, v, (uint8_t)0xF7}) g_midiQ.push_back(b);
+      };
+      // Division change 1/16 -> 1/8 at tick 40 (mid-step): every onset stays
+      // on a multiple of the NEW division counted from Start, and the
+      // pattern position follows the divisions since Start.
+      midiclk::SetDiv(6);
+      startAt();
+      std::vector<uint32_t> r; std::vector<uint8_t> cv;
+      ticksTo(0, 40, r, &cv);
+      midiclk::SetDiv(3);
+      size_t before = r.size();
+      ticksTo(40, 96, r, &cv);
+      MidiByte(0xFC); RunLoops(2);
+      int32_t worst = 0; bool onGrid = true;
+      for (size_t i = before; i < r.size(); ++i) {
+        int32_t k = (int32_t)((r[i] + 6 * T) / (12 * T)); int32_t d = (int32_t)r[i] - k * 12 * (int32_t)T;
+        if (d < 0) d = -d; if (d > worst) worst = d; if (d > 1500) onGrid = false;
+      }
+      // pattern 6 = 17 21 24 29: the 1/8 boundary at tick 48 is division 4 of
+      // 1/8 since Start -> step index 4 % 4 = 0 -> 17; tick 60 -> 21.
+      printf("  (division change 1/16 -> 1/8 mid-step: %zu onsets after, worst %.2f ms off the 1/8 grid; cv after: %u %u)\n",
+             r.size() - before, worst / 1000.0, before < cv.size() ? cv[before] : 0, before + 1 < cv.size() ? cv[before + 1] : 0);
+      CHECK(onGrid && r.size() - before == 4,   /* 1/8 boundaries at ticks 48 60 72 84 */ "division change mid-play: onsets stay on the host grid (1/8 from Start)");
+      CHECK(before + 1 < cv.size() && cv[before] == 17 && cv[before + 1] == 21, "division change: pattern position follows the divisions since Start");
+      midiclk::SetDiv(6);
+      // Direction FWD -> BWD -> FWD mid-pattern: back on FWD, the step is the
+      // one FWD would be on had it never changed (on the one every 4 steps).
+      startAt(); r.clear(); cv.clear();
+      ticksTo(0, 6 * 5 + 2, r, &cv);            // steps 0..5 played
+      sx65(0, 1);                                // BWD
+      ticksTo(32, 6 * 7 + 2, r, &cv);            // steps 6, 7 under BWD
+      sx65(0, 0);                                // FWD again
+      ticksTo(44, 6 * 10 + 2, r, &cv);           // steps 8, 9, 10
+      MidiByte(0xFC); RunLoops(2);
+      std::string seqs; for (uint8_t c : cv) seqs += std::to_string(c) + " ";
+      printf("  (FWD, BWD at step 6, FWD at step 8: %s)\n", seqs.c_str());
+      CHECK(seqs == "17 21 24 29 17 21 21 17 17 21 24 ", "direction changes re-derive the position: FWD resumes on the one");
+      // Shift, then Resync: shifted, the tick-18 step is one ahead (index 4 =
+      // 17); after Resync it is back on the grid (index 3 = 29).
+      auto shiftRun = [&](bool resync) {
+        startAt(); std::vector<uint32_t> rr; std::vector<uint8_t> cc;
+        ticksTo(0, 14, rr, &cc);                   // edges at ticks 0, 6, 12 played
+        sim::g_buttons = 1u << 7; RunLoops(3); WaitVirtMs(2);
+        sim::g_buttons |= 1u << 4; RunLoops(3);  // KT + UP: shift +1
+        sim::g_buttons = 0; RunLoops(3);
+        if (resync) { sx65(9, 0); RunLoops(3); }
+        size_t n0 = cc.size();
+        ticksTo(14, 20, rr, &cc);                  // the tick-18 edge
+        MidiByte(0xFC); RunLoops(2);
+        return cc.size() > n0 ? (int)cc.back() : -1;
+      };
+      int noRs = shiftRun(false), rs = shiftRun(true);
+      printf("  (tick-18 step after a shift: %d without Resync, %d with)\n", noRs, rs);
+      CHECK(noRs == 17 && rs == 29, "shift moves the pattern one step; Resync puts it back on the host grid");
+      // Ratchet 3x on a 1/16 step under MIDI clock: hits on ticks 0, 2, 4.
+      {
+        std::vector<uint8_t> raw = {4, 17, 21, 24, 29, 0x02};   // step 0 ratchet 3x
+        uint16_t x = 0; for (uint8_t v : raw) x ^= v;
+        std::vector<uint8_t> b2 = {0xF0, 0x7D, 0x12, 5, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)};
+        for (size_t i = 0; i < raw.size(); i += 7) {
+          uint8_t msb = 0; size_t nn = std::min<size_t>(7, raw.size() - i);
+          for (size_t k = 0; k < nn; ++k) if (raw[i + k] & 0x80) msb |= 1 << k;
+          b2.push_back(msb); for (size_t k = 0; k < nn; ++k) b2.push_back(raw[i + k] & 0x7F);
+        }
+        b2.push_back(0xF7);
+        for (uint8_t v : b2) g_midiQ.push_back(v); RunLoops(3);
+        for (uint8_t v : {0xF0, 0x7D, 0x1D, 5, 0xF7}) g_midiQ.push_back(v); RunLoops(3);
+        startAt(); r.clear();
+        ticksTo(0, 6 * 4 + 6, r);                // pass 1, then pass 2's step 0 (ticks 24..29)
+        printf("  (ratchet rises:"); for (uint32_t x2 : r) printf(" %.1f", x2 / 1000.0); printf(")\n");
+        MidiByte(0xFC); RunLoops(2);
+        // pass 2 step 0 = tick 24: hits at ticks 24, 26, 28
+        std::vector<int32_t> offs;
+        for (uint32_t x2 : r) { int32_t k = (int32_t)((x2 + T / 2) / T); if (k >= 24 && k <= 28) offs.push_back((int32_t)x2 - k * (int32_t)T); }
+        printf("  (3x ratchet onsets vs ticks 24/26/28:");
+        for (int32_t o2 : offs) printf(" %+.2f", o2 / 1000.0); printf(" ms)\n");
+        bool ok = offs.size() == 3;
+        for (int32_t o2 : offs) if (o2 < -1500 || o2 > 1500) ok = false;
+        CHECK(ok, "ratchet 3x under MIDI clock: each hit on its clock tick (+/-1.5 ms)");
+        for (uint8_t v : {0xF0, 0x7D, 0x1D, 6, 0xF7}) g_midiQ.push_back(v); RunLoops(3);
+      }
+    }
     sxP(0);
     for (uint8_t v : {0xF0, 0x7D, 0x1D, 0, 0xF7}) g_midiQ.push_back(v); RunLoops(2);
     midiclk::SetSync(false); RunLoops(2);
@@ -1348,7 +1448,7 @@ static int SelfTest() {
 
     // Directions (SysEx 0x65 id 0), panel PLAY start = step 1 at the press.
     const char* want[4] = {"10 11 12 13 10 11 12 13 10 ", "13 12 11 10 13 12 11 10 13 ",
-                           "10 11 12 13 12 11 10 11 12 ", ""};
+                           "10 11 12 13 13 12 11 10 10 "   /* ping-pong repeats its ends: a round trip is 2n steps, bar-aligned */, ""};
     const char* nm[4] = {"FWD", "BWD", "PING-PONG", "RANDOM"};
     for (uint8_t d = 0; d < 3; ++d) {
       sx({0x65, 0, d});

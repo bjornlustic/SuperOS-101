@@ -76,7 +76,14 @@ struct State {
   // Clock edges pending for the engine, set when a SMOOTHED tick crosses a
   // boundary (Service), consumed once each by the main loop.
   bool edge = false, half = false, lfoEdge = false;
+  bool tickEv = false;      // a tick fired this pass (ratchets); lastTick = its index in the division
+  uint8_t lastTick = 0;
   uint8_t pending = 0;      // ticks uclk released, not yet into the divider
+  // Ticks fired since Start (or since the stream / a local PLAY anchored it).
+  // Every division phase is DERIVED from it (tick = abs % division), so
+  // changing the clock division or the LFO division mid-play never moves the
+  // grid: the next boundary is still on the host's beat.
+  uint32_t abs = 0;
   // Sync delay: every released tick waits delayMs before it reaches the
   // divider, so the whole slaved machine (steps, the downbeat after Start,
   // LFO resets, the 80C49's T1) plays later by a fixed amount. Trims the 101
@@ -126,17 +133,19 @@ inline uint8_t LfoDivIdx() { return S().lfoDiv; }
 inline uint8_t LfoDivEff() { return S().lfoDiv == LFO_DIV_AUTO ? S().autoIdx : S().lfoDiv; }
 inline void SetSync(bool on) {
   S().sync = on; S().running = true; S().hostStopped = false; S().anchored = false;
-  S().tick = 0; S().lfoTick = 0; DropTicks(); Save();
+  S().tick = 0; S().lfoTick = 0; S().abs = 0; DropTicks(); Save();
 }
 inline void SetDiv(uint8_t i) {
-  if (i < DIV_COUNT) { S().divIdx = i; S().tick = 0; DropTicks(); Save(); }
+  // The grid stays put: the division's phase comes from the absolute tick
+  // count, so the next boundary lands on the host's beat (no reset, no drop).
+  if (i < DIV_COUNT && i != S().divIdx) { S().divIdx = i; S().tick = (uint8_t)(S().abs % DIV_TICKS[i]); Save(); }
 }
 inline uint8_t SyncDelayMs() { return S().delayMs; }
 inline void SetSyncDelay(uint8_t ms) { if (ms <= SYNC_DELAY_MAX && ms != S().delayMs) { S().delayMs = ms; S().dqN = 0; Save(); } }
-inline void SetLfoSync(bool on) { S().lfoSync = on; S().lfoTick = 0; Save(); }
+inline void SetLfoSync(bool on) { S().lfoSync = on; Save(); }
 inline void SetLfoDiv(uint8_t i) {
   if (i < LFO_DIV_COUNT || i == LFO_DIV_AUTO) {
-    S().lfoDiv = i; S().lfoTick = 0;
+    S().lfoDiv = i; S().lfoTick = (uint8_t)(S().abs % LfoTicks(LfoDivEff()));
     if (i == LFO_DIV_AUTO) { S().autoVote = 0; S().lfoPerMs = 0; }
     Save();
   }
@@ -162,7 +171,7 @@ inline void UserPlay(uint32_t nowMs) {
   S().hostStopped = false;
   if (!TickAlive(nowMs)) S().anchored = false;
   else S().running = true;   // ticks are live: lock to them, even after an 0xFC
-  if (Driving(nowMs) && !S().anchored) { S().tick = 0; S().lfoTick = 0; DropTicks(); }
+  if (Driving(nowMs) && !S().anchored) { S().tick = 0; S().lfoTick = 0; S().abs = 0; DropTicks(); }
 }
 
 // --- realtime bytes (from midi::Handlers.realtime) --------------------------
@@ -187,7 +196,7 @@ inline void OnRealtime(uint8_t b) {
           // earlier 0xFC). The new stream's first tick IS a boundary: an
           // armed PLAY starts right here, on arrival.
           s.anchored = false; s.running = true; s.hostStopped = false;
-          s.tick = 0; s.lfoTick = 0;
+          s.tick = 0; s.lfoTick = 0; s.abs = 0;
           DropTicks();
         } else if (d <= 60) s.tickMs = (uint8_t)(((uint16_t)s.tickMs * 3 + d + 2) / 4);
       }
@@ -197,7 +206,7 @@ inline void OnRealtime(uint8_t b) {
     }
     case 0xFA:
       s.running = true; s.hostStopped = false; s.anchored = true;
-      s.tick = 0; s.lfoTick = 0; s.started = true;
+      s.tick = 0; s.lfoTick = 0; s.abs = 0; s.started = true;
       DropTicks();
       break;
     case 0xFB: s.running = true; s.hostStopped = false; DropTicks(); break;
@@ -232,11 +241,15 @@ inline void Service() {
   }
   const uint8_t ticksN = DIV_TICKS[s.divIdx];
   const uint8_t lfoN   = LfoTicks(LfoDivEff());
+  s.tick    = (uint8_t)(s.abs % ticksN);
+  s.lfoTick = (uint8_t)(s.abs % lfoN);
   if (s.tick == 0) s.edge = true;
   if (s.tick == ticksN / 2) s.half = true;
   if (s.lfoTick == 0) s.lfoEdge = true;
-  if (++s.tick >= ticksN) s.tick = 0;
-  if (++s.lfoTick >= lfoN) s.lfoTick = 0;
+  s.lastTick = s.tick; s.tickEv = true;
+  ++s.abs;
+  s.tick    = (uint8_t)(s.abs % ticksN);
+  s.lfoTick = (uint8_t)(s.abs % lfoN);
 }
 
 inline bool Take(bool& f)    { bool v = f; f = false; return v; }
@@ -246,6 +259,16 @@ inline bool ConsumeHalfEdge(){ return Take(S().half); }
 inline bool ConsumeStart()   { return Take(S().started); }
 inline bool ConsumeStop()    { return Take(S().stopped); }
 inline bool Running()        { return S().running; }
+// Divisions whose boundary has fired since Start: the sequencer's step count
+// on the host's grid (Resync, division changes).
+inline uint16_t DivisionsSinceStart() {
+  const uint32_t a = S().abs; const uint8_t n = DIV_TICKS[S().divIdx];
+  return a ? (uint16_t)((a - 1) / n + 1) : 0;
+}
+inline uint8_t DivTicks() { return DIV_TICKS[S().divIdx]; }
+// One division in microseconds at the smoothed tempo (ratchet spacing).
+inline uint32_t DivPeriodUs() { return (uint32_t)DIV_TICKS[S().divIdx] * uclk::S().perUs; }
+inline bool ConsumeTick(uint8_t& idx) { if (!S().tickEv) return false; S().tickEv = false; idx = S().lastTick; return true; }
 
 // --- AUTO LFO division (lfoDiv == LFO_DIV_AUTO) -----------------------------
 // The main loop feeds clean free-running T1 fall-to-fall intervals here (an
@@ -268,7 +291,7 @@ inline void LfoPeriodSample(uint16_t ms, uint32_t nowMs) {
   }
   if (best == s.autoIdx) { s.autoVote = 0; return; }
   if (s.autoWant == best && ++s.autoVote >= 2) {
-    s.autoIdx = best; s.autoVote = 0; s.lfoTick = 0;
+    s.autoIdx = best; s.autoVote = 0; s.lfoTick = (uint8_t)(s.abs % LfoTicks(best));
   } else if (s.autoWant != best) { s.autoWant = best; s.autoVote = 1; }
 }
 // AUTO needs to hear the slider: when hard-sync has starved the measurement

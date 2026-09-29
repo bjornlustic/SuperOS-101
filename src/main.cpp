@@ -225,7 +225,8 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     // 4 loop length (0 = full pattern), 5 real-time record 0/1 (while
     // playing), 6 tune mode 0/1 (from keyboard mode), 7 sync delay in ms
     // (0..60: the slaved machine plays that much later), 8 arp octave range
-    // 1..3. 0x67 = read only.
+    // 1..3, 9 resync: the sequence back on the one (value ignored). 0x67 =
+    // read only.
     // Out-of-range values leave the setting alone; the 0x66 reply shows the
     // applied state either way.
     case 0x65:
@@ -241,6 +242,7 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           case 6: g_engine.setTune(v != 0); break;
           case 7: midiclk::SetSyncDelay(v); break;
           case 8: if (v >= 1 && v <= 3) { engine::ArpRange() = v; engine::FeatDirty() = true; } break;
+          case 9: g_engine.resync(); break;   // back on the one (value ignored)
           default: break;
         }
       }
@@ -436,6 +438,10 @@ void superos_loop() {
   hw::DacWrite(random, ROUTE_RANDOM);
 
   // 9-12. LOAD/PLAY/ARP/keyboard -> note CV, then CV OUTPUT -> CV-OUT sample/hold
+  {   // division changed (menu / 0x22) while playing: stay on the host's grid
+    static uint8_t s_div = 0xFF;
+    if (s_div != midiclk::DivIdx()) { if (s_div != 0xFF) g_engine.divisionChanged(); s_div = midiclk::DivIdx(); }
+  }
   engine::Output out = g_engine.update(keys, ExtCv(), g_buttons.hold, panel, g_buttons, clockEdge, halfEdge);
   hw::DacWrite(out.cv, ROUTE_CV_OUT);
   MidiOut(out.cv, out.gate);

@@ -183,7 +183,6 @@ class Sequencer {
   bool    selChanged_ = false;
   uint8_t edited_ = 0;                // bit p = edited on the panel since last consume
   // Playback shape (runtime; DirSetting() persists via the engine's settings):
-  int8_t  ppStep_ = 1;                // ping-pong travel direction
   bool    started_ = false;           // false: the next advance plays the FIRST step
   bool    halfSeen_ = false;          // the current step's half-step has passed
   uint8_t loopLen_ = 0;               // real-time loop length override, 0 = full pattern
@@ -193,45 +192,67 @@ class Sequencer {
   uint8_t chain_[16];
   uint8_t chainN_ = 0, chainPos_ = 0;
   uint8_t wcur_ = 0;                  // LOAD write cursor (stock: re-load from the playing position)
-  uint8_t cycle_ = 0;                 // steps played in the current loop pass
+  // Position is DERIVED, never walked: cycle_ is the index of the next step
+  // within the current loop pass, and steps_ counts every step played since
+  // play started. Direction, loop length, instant switches and division
+  // changes re-derive cycle_ from steps_ (realign), so the pattern stays on
+  // the one whatever is changed while it plays.
+  uint8_t cycle_ = 0;
+  uint16_t steps_ = 0;
   uint8_t rndNext_ = 0;               // RANDOM: the step the next advance plays (for look-ahead)
   uint8_t effLen() const {
     uint8_t len = len_[cur_];
     return (loopLen_ && loopLen_ < len) ? loopLen_ : len;
   }
+  // Ping-pong repeats its end steps (0..n-1, n-1..0): 2n steps, so a pattern
+  // that fits the bar still fits it after a full round trip.
   uint8_t cycleLen() const {
     uint8_t l = effLen();
-    return (DirSetting() == DIR_PINGPONG && l > 1) ? (uint8_t)(2 * l - 2) : l;
+    return (DirSetting() == DIR_PINGPONG && l > 1) ? (uint8_t)(2 * l) : l;
   }
-  uint8_t firstStep() const { uint8_t l = effLen(); return (DirSetting() == DIR_BWD && l) ? (uint8_t)(l - 1) : 0; }
-  // The step the next advance() will play, without moving.
-  uint8_t peekNext() const {
+  // The step played at index i of the loop pass.
+  uint8_t stepAt(uint8_t i) const {
     uint8_t l = effLen();
     if (!l) return 0;
-    if (!started_) return firstStep();
-    if (queued_ != 0xFF && cycle_ >= cycleLen()) return 0;   // switching: unknown pattern, treat as a fresh attack
     switch (DirSetting()) {
-      case DIR_BWD:      return pos_ == 0 || pos_ >= l ? (uint8_t)(l - 1) : (uint8_t)(pos_ - 1);
-      case DIR_PINGPONG: {
-        if (l == 1) return 0;
-        int16_t n = (int16_t)pos_ + ppStep_;
-        if (n >= l) n = l - 2; else if (n < 0) n = 1;
-        return (uint8_t)n;
-      }
+      case DIR_BWD:      return (uint8_t)(l - 1 - i % l);
+      case DIR_PINGPONG: return i < l ? i : (uint8_t)(2 * l - 1 - i);
       case DIR_RANDOM:   return rndNext_ < l ? rndNext_ : 0;
-      default:           return (uint8_t)(pos_ + 1 >= l ? 0 : pos_ + 1);
+      default:           return (uint8_t)(i % l);
     }
+  }
+  // The step the next advance() will play, without moving.
+  uint8_t peekNext() const {
+    uint8_t cl = cycleLen();
+    if (!cl) return 0;
+    if (started_ && queued_ != 0xFF && cycle_ == 0) return 0;   // switching: unknown pattern, treat as a fresh attack
+    return stepAt((uint8_t)(cycle_ % cl));
   }
  public:
   uint8_t direction() const { return DirSetting(); }
-  void setDirection(uint8_t d) { if (d < DIR_COUNT) { DirSetting() = d; FeatDirty() = true; ppStep_ = 1; rndNext_ = (uint8_t)(Rnd8() % (effLen() ? effLen() : 1)); } }
+  void setDirection(uint8_t d) {
+    if (d >= DIR_COUNT) return;
+    DirSetting() = d; FeatDirty() = true;
+    rndNext_ = (uint8_t)(Rnd8() % (effLen() ? effLen() : 1));
+    realign(steps_);
+  }
+  uint16_t stepsPlayed() const { return steps_; }
+  // Put the playhead where it would be had the current shape been playing
+  // since the start: the next step is index (steps % loop-pass length). Used
+  // for every live change and for Resync (steps from the clock since Start).
+  void realign(uint16_t steps) {
+    steps_ = steps;
+    uint8_t cl = cycleLen();
+    cycle_ = cl ? (uint8_t)(steps % cl) : 0;
+    if (steps) started_ = true;
+  }
   uint8_t loopLength() const { return loopLen_; }
   // Real-time loop length (panel HOLD + key while playing, SysEx 0x65 id 4):
   // plays only the first n steps without touching the pattern; 0 = full.
   void setLoopLength(uint8_t n) {
     loopLen_ = n;
     if (effLen() && pos_ >= effLen()) pos_ = (uint8_t)(effLen() - 1);
-    if (cycle_ >= cycleLen()) cycle_ = 0;
+    realign(steps_);
   }
   uint8_t queued() const { return queued_; }
   // Pattern change while playing: waits for the end of the current loop pass
@@ -259,20 +280,20 @@ class Sequencer {
     if (p == cur_) return;
     cur_ = p; loopLen_ = 0; selChanged_ = true;
     uint8_t l = effLen();
-    if (l) { pos_ = (uint8_t)(pos_ % l); if (cycle_ > cycleLen()) cycle_ = (uint8_t)(cycle_ % cycleLen()); }
+    if (l) pos_ = (uint8_t)(pos_ % l);
+    realign(steps_);
   }
   // Shift (SH-1oh1 3.3.2, KEY TRANSPOSE + UP / DOWN while playing): play the
   // next step now, or the previous one, moving the pattern against the clock.
   bool nudge(int8_t d) {
     uint8_t l = effLen();
     if (!l || !started_) return false;
-    if (d < 0) {                       // back two in the travel direction, then advance one
-      int8_t back = (DirSetting() == DIR_BWD) ? 2 : -2;
-      pos_ = (uint8_t)(((int16_t)pos_ + back + 2 * l) % l);
-      if (DirSetting() == DIR_PINGPONG) ppStep_ = 1;
+    if (d < 0) {                       // back two in the pass, then advance one
+      uint8_t cl = cycleLen();
+      cycle_ = (uint8_t)((cycle_ + 2 * cl - 2) % cl);
+      steps_ = steps_ >= 2 ? (uint16_t)(steps_ - 2) : 0;
     }
-    if (cycle_) --cycle_;               // a nudge does not count toward the loop end
-    return advance();
+    return advance();                  // a shift moves the phase on purpose
   }
   bool halfSeen() const { return halfSeen_; }
   uint8_t nextIndex() const { return peekNext(); }
@@ -291,7 +312,7 @@ class Sequencer {
   void resetRuntime() {
     dirty_ = 0; cur_ = 0; pos_ = 0; curCv_ = CV_BASE; curGate_ = false;
     stepChanged_ = false; selChanged_ = false; edited_ = 0;
-    ppStep_ = 1; started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0;
+    started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0; steps_ = 0;
     chainN_ = 0; chainPos_ = 0; wcur_ = 0;
   }
   Sequencer() { memset(len_, 0, sizeof(len_)); }
@@ -346,7 +367,7 @@ class Sequencer {
     pos_ = len ? (uint8_t)(len - 1) : 0;
     if (len) curCv_ = StepCv(step_[cur_][len - 1]);
     curGate_ = false;
-    started_ = false; halfSeen_ = false; cycle_ = 0; ppStep_ = 1;
+    started_ = false; halfSeen_ = false; cycle_ = 0; steps_ = 0;
   }
   void record(uint8_t cv, StepType t) {
     if (wcur_ < MAX_STEPS) {
@@ -457,20 +478,17 @@ class Sequencer {
   bool advance() {
     // Loop pass complete with a pattern switch waiting: switch now, and the
     // new pattern starts at its first step.
-    if (started_ && queued_ != 0xFF && cycle_ >= cycleLen()) {
+    if (started_ && queued_ != 0xFF && cycle_ == 0) {
       if (queued_ != cur_) { cur_ = queued_; loopLen_ = 0; selChanged_ = true; }
-      started_ = false; cycle_ = 0; ppStep_ = 1;
       if (chainN_ > 1) { chainPos_ = (uint8_t)((chainPos_ + 1) % chainN_); queued_ = chain_[chainPos_]; }
       else queued_ = 0xFF;
     }
     uint8_t len = effLen();
     if (len == 0) { curGate_ = false; return false; }
-    uint8_t nx = peekNext();
-    if (!started_ || cycle_ >= cycleLen()) cycle_ = 0;
-    if (DirSetting() == DIR_PINGPONG && started_ && len > 1) {
-      if ((int16_t)pos_ + ppStep_ >= len || (int16_t)pos_ + ppStep_ < 0) ppStep_ = (int8_t)-ppStep_;
-    }
-    pos_ = nx; started_ = true; halfSeen_ = false; ++cycle_;
+    const uint8_t cl = cycleLen();
+    if (cycle_ >= cl) cycle_ = (uint8_t)(cycle_ % cl);
+    pos_ = stepAt(cycle_); started_ = true; halfSeen_ = false;
+    cycle_ = (uint8_t)((cycle_ + 1) % cl); ++steps_;
     if (DirSetting() == DIR_RANDOM) rndNext_ = (uint8_t)(Rnd8() % len);
     stepChanged_ = true;
     uint8_t s = step_[cur_][pos_];
@@ -570,13 +588,18 @@ class NoteEngine {
   bool     playStart_ = false;     // pulse CLOCK RESET once when play begins
   bool     playNow_   = false;     // panel/editor play: step 1 sounds at the press (0xFA leaves this clear)
   int16_t  prevExtCv_ = -1;
-  // Ratchet playback: the step's extra hits are scheduled inside the measured
-  // clock period (works for the LFO and the divided MIDI clock alike; the
-  // first step after play start has no period yet and plays single).
-  uint32_t lastEdgeMs_ = 0;
-  uint16_t periodMs_   = 0;
-  uint32_t stepStartMs_ = 0;
+  // Ratchet playback: the step's extra hits split its clock period evenly.
+  // Under MIDI clock the period is the smoothed tempo (one division of the
+  // uClock timebase) and, when the division divides evenly (1/16 = 6 ticks:
+  // 2x on tick 3, 3x on ticks 2 and 4), each hit fires ON its clock tick, so
+  // ratchets sit on the host's grid at any BPM. On the LFO / EXT CLK the
+  // period is the measured edge spacing (the first step after play start has
+  // no period yet and plays single).
+  uint32_t lastEdgeUs_ = 0;
+  uint32_t periodUs_   = 0;
+  uint32_t stepStartUs_ = 0;
   uint8_t  subTotal_ = 1, subLeft_ = 0;
+  bool     subOnTicks_ = false;
 
   uint8_t noteCv(int8_t key, const controls::Panel& p) const {
     int v = key + (int)p.octaveOffset + CV_BASE;
@@ -710,7 +733,7 @@ class NoteEngine {
     transpose_ = 0; ktLatched_ = false; ktLastPressMs_ = 0; ktKeys_ = 0;
     tune_ = false; rtRec_ = false; rtKey_ = -1; nudge_ = 0; songN_ = 0;
     playHeldUsed_ = false; playStart_ = false; playNow_ = false; prevExtCv_ = -1;
-    lastEdgeMs_ = 0; periodMs_ = 0; stepStartMs_ = 0; subTotal_ = 1; subLeft_ = 0;
+    lastEdgeUs_ = 0; periodUs_ = 0; stepStartUs_ = 0; subTotal_ = 1; subLeft_ = 0; subOnTicks_ = false;
   }
   // MIDI Start: align the sequence and arpeggiator to the incoming downbeat.
   void restart() { seq_.rewind(); arp_.reset(); playStart_ = true; }
@@ -741,6 +764,16 @@ class NoteEngine {
   bool   tuning() const { return tune_; }
   void   setTune(bool on) { tune_ = on && mode_ == MODE_KEYBOARD; }
   bool   rtRecording() const { return rtRec_; }
+  // Resync (editor button, SysEx 0x65 id 9): put the sequence back on the
+  // one. Under MIDI clock that is the host's grid since its Start; otherwise
+  // the steps counted since PLAY. Also undoes a shift.
+  void   resync() {
+    if (mode_ != MODE_SEQ_PLAY) return;
+    seq_.realign(midiclk::Driving(millis()) ? midiclk::DivisionsSinceStart() : seq_.stepsPlayed());
+  }
+  // The clock division changed mid-play: the grid did not move (midiclock.h),
+  // so re-derive the pattern position from the divisions since Start.
+  void   divisionChanged() { if (mode_ == MODE_SEQ_PLAY && midiclk::Driving(millis())) seq_.realign(midiclk::DivisionsSinceStart()); }
   void   setRtRec(bool on) {
     if (mode_ != MODE_SEQ_PLAY) return;
     if (on && !rtRec_ && seq_.length() == 0) { seq_.setLength(seq_.current(), 16); seq_.rewind(); }
@@ -848,10 +881,10 @@ class NoteEngine {
         o.gate = (mask != 0) && arp_.gate;
         break;
 
-      case MODE_SEQ_PLAY:
+      case MODE_SEQ_PLAY: {
         if (playStart_) {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
-          subTotal_ = 1; subLeft_ = 0; lastEdgeMs_ = 0;   // no stale ratchet state into a new run
+          subTotal_ = 1; subLeft_ = 0; lastEdgeUs_ = 0;   // no stale ratchet state into a new run
           // Panel/editor PLAY (playNow_), internal clock only: step 1 sounds
           // NOW, the LFO hard-reset gives step 2 one period later. With sync
           // ON the press only ARMS: step 1 lands on the next division edge
@@ -875,19 +908,24 @@ class NoteEngine {
           lastCv_ = seq_.cv(); subTotal_ = 1; subLeft_ = 0;
           nudge_ = 0;
         }
+        uint8_t tickIdx = 0;
+        const bool tickNow = midiclk::ConsumeTick(tickIdx);    // consumed every pass: never stale
+        const bool clocked = midiclk::Driving(millis());
         if (clockEdge) {
-          uint32_t now = millis();
-          if (lastEdgeMs_) { uint32_t d = now - lastEdgeMs_; if (d > 0 && d < 4000) periodMs_ = (uint16_t)d; }
-          lastEdgeMs_ = now;
+          const uint32_t now = micros();
+          if (clocked) periodUs_ = midiclk::DivPeriodUs();
+          else if (lastEdgeUs_) { uint32_t d = now - lastEdgeUs_; if (d > 0 && d < 4000000UL) periodUs_ = d; }
+          lastEdgeUs_ = now;
           bool fresh = seq_.advance();
           if (fresh) o.portaOff = true;
           lastCv_ = seq_.cv();
           // Ratchet: a NOTE step (fresh) with ratchet r plays r extra evenly
-          // spaced hits inside this period; needs a measured period first.
-          uint8_t r = (fresh && periodMs_) ? seq_.ratchetCur() : 0;
+          // spaced hits inside this period; needs a period first.
+          uint8_t r = (fresh && periodUs_) ? seq_.ratchetCur() : 0;
           subTotal_ = (uint8_t)(r + 1);
           subLeft_  = r;
-          stepStartMs_ = now;
+          subOnTicks_ = clocked && (midiclk::DivTicks() % subTotal_) == 0;
+          stepStartUs_ = now;
         }
         if (halfEdge && rtRec_ && rtKey_ >= 0) {
           // The recorded key is still held at the half-step: tie it into the
@@ -917,16 +955,23 @@ class NoteEngine {
         }
         o.cv = seq_.gate() ? seq_.cv() : lastCv_;
         o.gate = seq_.gate();
-        if (subLeft_ && periodMs_ && seq_.gate()) {
-          uint32_t now = millis();
-          uint8_t  done = (uint8_t)(subTotal_ - subLeft_);
-          uint32_t at = stepStartMs_ + (uint32_t)periodMs_ * done / subTotal_;
-          uint16_t gap = (uint16_t)(periodMs_ / (subTotal_ * 4));
-          if (gap < 2) gap = 2; else if (gap > 12) gap = 12;
-          if ((int32_t)(now - at) >= 0) { --subLeft_; o.portaOff = true; }  // sub-hit: fresh attack
-          else if ((int32_t)(now - (at - gap)) >= 0) o.gate = false;       // gate gap before it
+        if (subLeft_ && periodUs_ && seq_.gate()) {
+          const uint32_t now = micros();
+          const uint8_t  done = (uint8_t)(subTotal_ - subLeft_);
+          const uint32_t at = stepStartUs_ + periodUs_ * done / subTotal_;
+          uint32_t gap = periodUs_ / (subTotal_ * 4u);
+          if (gap < 2000) gap = 2000; else if (gap > 12000) gap = 12000;
+          // On the clock: the hit IS the tick at done/subTotal of the division
+          // (with a late-tick backstop); otherwise the time.
+          const bool hit = subOnTicks_
+              ? ((tickNow && tickIdx == (uint8_t)(midiclk::DivTicks() * done / subTotal_)) ||
+                 (int32_t)(now - (at + gap)) >= 0)
+              : (int32_t)(now - at) >= 0;
+          if (hit) { --subLeft_; o.portaOff = true; }                        // sub-hit: fresh attack
+          else if ((int32_t)(now - (at - gap)) >= 0) o.gate = false;          // gate gap before it
         }
         break;
+      }
 
       case MODE_SEQ_LOAD: {
         // record: KEY-TRANSPOSE = rest, HOLD-held = legato, else the note.
