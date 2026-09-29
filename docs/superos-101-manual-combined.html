@@ -286,17 +286,17 @@
       <h2 class="docs-sec-title">Patterns and Songs</h2>
     </div>
     <p class="docs-body">
-      There are eight pattern slots, and saving is automatic. The eight lowest keys (F3 to C4) are patterns 1 to 8.
+      There are sixteen pattern slots of up to 128 steps each, and saving is automatic. The sixteen lowest keys (F3 to G#4) are patterns 1 to 16.
     </p>
     <table class="docs-table man-t-combo">
       <thead><tr><th>To</th><th>Do</th></tr></thead>
       <tbody>
-        <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press a key 1&#8230;8</td><td><strong>Stopped:</strong> selects that pattern and starts it when you release PLAY. <strong>Playing:</strong> the new pattern follows at the end of the current pass, so the change lands on the bar.</td></tr>
+        <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press a key 1&#8230;16</td><td><strong>Stopped:</strong> selects that pattern and starts it when you release PLAY. <strong>Playing:</strong> the new pattern follows at the end of the current pass, so the change lands on the bar.</td></tr>
         <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press several keys in order</td><td>A <strong>song</strong>: the patterns play one after another in that order (up to 16 entries, repeats allowed), looping.</td></tr>
-        <tr><td>Key 1&#8230;8 alone while playing</td><td>Switches to that pattern <strong>now</strong>, keeping the position (in sync when the pattern lengths are multiples of each other).</td></tr>
-        <tr><td>MIDI Program Change 0&#8230;7</td><td>Selects pattern 1&#8230;8 (at the end of the pass while playing).</td></tr>
+        <tr><td>Key 1&#8230;16 alone while playing</td><td>Switches to that pattern <strong>now</strong>, keeping the position (in sync when the pattern lengths are multiples of each other).</td></tr>
+        <tr><td>MIDI Program Change 0&#8230;15</td><td>Selects pattern 1&#8230;16 (at the end of the pass while playing).</td></tr>
         <tr><td>Save</td><td>Nothing to press: about half a second after an edit (or when playback stops), the pattern is written to permanent memory.</td></tr>
-        <tr><td>Back up / edit on a computer</td><td>The web editor (USB-C or DIN MIDI) reads and writes all eight slots, ratchets included, and saves them as a file.</td></tr>
+        <tr><td>Back up / edit on a computer</td><td>The web editor (USB-C or DIN MIDI) reads and writes all sixteen slots, ratchets included, and saves them as a file.</td></tr>
       </tbody>
     </table>
     <p class="docs-body">
@@ -428,7 +428,7 @@
       region (the 100 sequencer steps) is mirrored to the CPU's permanent memory: about a second
       after you finish recording it is saved, and it is restored before the original program
       starts, so the sequence survives power-off with no battery, exactly as a healthy stock unit
-      would keep it. superOS-101's own eight patterns are separate and unaffected.
+      would keep it. superOS-101's own sixteen patterns are separate and unaffected.
     </p>
     <h3 class="man-sub">The Mask ROM</h3>
     <p class="docs-body">
@@ -459,7 +459,7 @@
     </p>
     <ul class="docs-list">
       <li>Keyboard, HOLD, key transpose (with transpose mode), tune, arpeggiator with random mode and octave range.</li>
-      <li>Sequencer: 8 patterns, ratchets, directions, live loop length, shift, songs, real-time recording, correcting and adding.</li>
+      <li>Sequencer: 16 patterns, ratchets, directions, live loop length, shift, songs, real-time recording, correcting and adding.</li>
       <li>MIDI notes in/out, MIDI clock slave with uClock smoothing and sync delay, SysEx editor and updater.</li>
       <li>80C49 mode (the original ROM), with MIDI and clock sync.</li>
     </ul>
@@ -497,9 +497,9 @@
         <tr><td>Playing: <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd> / <kbd class="docs-key">UP&amp;DOWN</kbd> / <kbd class="docs-key">DOWN</kbd>+<kbd class="docs-key">UP&amp;DOWN</kbd></td><td>Forward / backward / ping-pong / random</td></tr>
         <tr><td>Playing: <kbd class="docs-key">HOLD</kbd> + key n</td><td>Loop the first n steps (same key = full)</td></tr>
         <tr><td>Playing: <kbd class="docs-key">KEY TRANSPOSE</kbd> + <kbd class="docs-key">UP</kbd> / <kbd class="docs-key">DOWN</kbd></td><td>Shift: next / previous step now</td></tr>
-        <tr><td><kbd class="docs-key">PLAY</kbd> + key 1&#8230;8</td><td>Select pattern (stopped: start; playing: at the end of the pass)</td></tr>
+        <tr><td><kbd class="docs-key">PLAY</kbd> + key 1&#8230;16</td><td>Select pattern (stopped: start; playing: at the end of the pass)</td></tr>
         <tr><td><kbd class="docs-key">PLAY</kbd> + several keys</td><td>Song</td></tr>
-        <tr><td>Playing: key 1&#8230;8</td><td>Switch pattern now</td></tr>
+        <tr><td>Playing: key 1&#8230;16</td><td>Switch pattern now</td></tr>
         <tr><td>Playing: <kbd class="docs-key">PLAY</kbd> + <kbd class="docs-key">LOAD</kbd></td><td>Real-time record on / off</td></tr>
       </tbody>
     </table>
@@ -543,7 +543,7 @@
       </li>
       <li>
         <span class="man-spec-name">Sequencer</span>
-        8 patterns of up to 128 steps of note / rest / legato with 1x/2x/3x ratchets; forward, backward, ping-pong, random; songs of up to 16 patterns; step and real-time recording; saved automatically to permanent on-chip memory (no battery).
+        16 patterns of up to 128 steps of note / rest / legato with 1x/2x/3x ratchets; forward, backward, ping-pong, random; songs of up to 16 patterns; step and real-time recording; saved automatically to permanent on-chip memory (no battery).
       </li>
       <li>
         <span class="man-spec-name">MIDI clock sync</span>

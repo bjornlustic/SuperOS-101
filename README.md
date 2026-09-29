@@ -19,7 +19,7 @@ mode** that runs the original Roland mask ROM (see below), selected per boot fro
 config menu. The SuperOS side: faithful DAC/mux protocol and scan invariants,
 **panel decode** (RANGE/OCTAVE/ADSR, ported from the disassembly), a **mono
 keyboard** (lowest/last-note priority), **HOLD**, an **arpeggiator** (up/down/up&down)
-with the mode shown on the function LEDs, **8 patterns of up to 128 steps** stored
+with the mode shown on the function LEDs, **16 patterns of up to 128 steps** stored
 in a flash arena ("emulated EEPROM", same scheme as SuperOS-303), **MIDI in/out on
 DIN and USB-C** (notes, program change, SysEx editor protocol) and **MIDI clock sync**
 (`src/midiclock.h`): the arp/sequencer clock, LFO hard-sync via CLOCK RESET, and a
@@ -39,7 +39,7 @@ KEY-TRANSPOSE shift value and exact portamento timing. The CPU board lives in
   every fresh note and leaves it alone on legato notes (keyboard legato, legato steps),
   so only those glide. ON / OFF ignore the line.
 - **PLAY**: sequencer play/stop (PLAY LED). **PLAY held + one of the 8 lowest keys**
-  selects pattern 1..8 (also MIDI Program Change 0..7 or the editor). While playing,
+  selects pattern 1..16 (also MIDI Program Change 0..15 or the editor). While playing,
   the switch waits for the end of the loop pass.
 - **HOLD + KEY-TRANSPOSE 2 s**: config menu (below).
 
@@ -72,9 +72,9 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
 - **Arp octave range**: in arp mode, **KEY TRANSPOSE + UP / DOWN** = one octave more / less
   (1 to 3). UP climbs octave by octave, DOWN starts at the top, U&D bounces across the whole
   span, random picks an octave too. Persists. (Our addition; the SH-1oh1 has no range.)
-- **Patterns (SH-1oh1)**: **PLAY held + key 1-8**: from stop, starts that pattern on
+- **Patterns (SH-1oh1)**: **PLAY held + key 1-16**: from stop, starts that pattern on
   release; while playing, it follows at the end of the current pass. **PLAY held + several
-  keys** in order = a song (up to 16, looping). A **key 1-8 alone while playing** switches
+  keys** in order = a song (up to 16, looping). A **key 1-16 alone while playing** switches
   now, keeping the position.
 - **Loop length, live**: while playing, **HOLD button + key n** loops the first n steps
   (lowest key = 1 step); the same key again = full pattern. Non-destructive.

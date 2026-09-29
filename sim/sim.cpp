@@ -1606,6 +1606,24 @@ static int SelfTest() {
       WaitVirtMs(40);
     }
 
+    // 16 patterns: PLAY + key 16 selects pattern 16; it records, saves to
+    // flash and reloads with its full 128 steps.
+    {
+      btn(B_PLAY, true); key(15, true); key(15, false); btn(B_PLAY, false); SettleClockReset();
+      tap(B_PLAY); WaitVirtMs(40);                               // it started on release; stop
+      g_midiOut.clear(); sx({0x20});
+      int cur = -1;
+      for (size_t i = 0; i + 7 < g_midiOut.size(); ++i) if (g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x21) cur = g_midiOut[i + 7];
+      CHECK(cur == 15, "PLAY + key 16 selects pattern 16 (0x21 current = 15)");
+      sx({0x18, 15, 127});                                         // grow to 127 steps (SysEx max)
+      sx({0x16, 15, 0, 126, 72});                                  // last step = C5
+      for (int i = 0; i < 700; ++i) { delayMicroseconds(1000); RunLoops(1); }   // deferred flush
+      uint8_t fb[200]; uint8_t fn = persist::Store().read(persist::FB_PATTERN_BASE + 15, fb, sizeof(fb));
+      CHECK(fn == 1 + 127 + 32 + 2 && fb[0] == 127 && fb[127] == (72 - 36),
+            "pattern 16 saved to flash: 127 steps + ratchets + scale (164 bytes)");
+      sx({0x1D, 7});
+    }
+
     // Scale + randomizers (SuperOS-303 style).
     {
       auto readScale = [&](uint8_t pat) {

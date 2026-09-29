@@ -14,9 +14,9 @@
 //                play as a mono override in keyboard mode
 //   - hold     : HOLD button / pedal latches the held keys (arp keeps running)
 //   - arp      : UP / DOWN / UP&DOWN over held keys, advanced by the clock
-//   - sequencer: 8 patterns x up to 128 steps (note / rest / legato), kept in RAM
+//   - sequencer: 16 patterns x up to 128 steps (note / rest / legato), kept in RAM
 //                and persisted in the flash arena (flash_persist.h); pattern
-//                select = PLAY held + one of the 8 lowest keys, or SysEx 0x1D
+//                select = PLAY held + one of the 16 lowest keys, or SysEx 0x1D
 #pragma once
 #include <Arduino.h>
 #include "controls.h"
@@ -175,7 +175,7 @@ class Arp {
   }
 };
 
-// --- sequencer: 8 patterns in RAM, flash-arena backed --------------------------
+// --- sequencer: 16 patterns in RAM, flash-arena backed --------------------------
 class Sequencer {
  public:
   static const uint8_t CHAIN_MAX = 16;
@@ -192,14 +192,14 @@ class Sequencer {
   static const uint8_t RAT_MAX = 2;
   static uint8_t RatBytes(uint8_t len) { return (uint8_t)((len + 3) >> 2); }
   uint8_t len_[NUM_PATTERNS];
-  uint8_t dirty_ = 0;                 // bit p = pattern p differs from flash
+  uint16_t dirty_ = 0;                // bit p = pattern p differs from flash
   uint8_t cur_ = 0;                   // selected pattern
   uint8_t pos_ = 0;
   uint8_t curCv_ = CV_BASE; bool curGate_ = false;
   bool    stepChanged_ = false;
   bool    selChanged_ = false;
-  uint8_t edited_ = 0;                // bit p = edited on the panel since last consume
-  uint8_t scaleChanged_ = 0;          // bit p = scale changed (mirror to the editor, 0x2A)
+  uint16_t edited_ = 0;               // bit p = edited on the panel since last consume
+  uint16_t scaleChanged_ = 0;         // bit p = scale changed (mirror to the editor, 0x2A)
   // Playback shape (runtime; DirSetting() persists via the engine's settings):
   bool    started_ = false;           // false: the next advance plays the FIRST step
   bool    halfSeen_ = false;          // the current step's half-step has passed
@@ -319,12 +319,12 @@ class Sequencer {
   void writeStep(uint8_t idx, uint8_t stepByte) {
     if (idx >= len_[cur_]) return;
     step_[cur_][idx] = stepByte; ratchetRaw(cur_, idx, 0);
-    dirty_ |= (uint8_t)(1u << cur_); stepChanged_ = true;
+    dirty_ |= (uint16_t)(1u << cur_); stepChanged_ = true;
   }
   // The step sounding now: its gate/CV change immediately (real-time record
   // on the current step).
   void soundNow(uint8_t cv, bool gate) { curCv_ = cv; curGate_ = gate; }
-  uint8_t consumeEdited() { uint8_t e = edited_; edited_ = 0; return e; }
+  uint16_t consumeEdited() { uint16_t e = edited_; edited_ = 0; return e; }
   // Runtime state back to boot values (in-process firmware switch); pattern
   // CONTENT is not touched here, loadAll() reloads it from flash right after.
   void resetRuntime() {
@@ -346,8 +346,8 @@ class Sequencer {
     queued_ = 0xFF; chainN_ = 0;
   }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
-  void markEdited() { edited_ |= (uint8_t)(1u << cur_); }
-  void clear() { len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); dirty_ |= (uint8_t)(1u << cur_); }
+  void markEdited() { edited_ |= (uint16_t)(1u << cur_); }
+  void clear() { len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); dirty_ |= (uint16_t)(1u << cur_); }
   // Stock "Correcting and Adding" (OM p.35): LOAD while playing keeps the
   // pattern and re-loads from the step after the one sounding; steps past
   // the corrected ones stay and play.
@@ -358,7 +358,7 @@ class Sequencer {
     if (!wcur_) return;
     if (wcur_ == len_[cur_]) --len_[cur_];
     --wcur_;
-    dirty_ |= (uint8_t)(1u << cur_);
+    dirty_ |= (uint16_t)(1u << cur_);
   }
   uint8_t ratchet(uint8_t p, uint8_t i) const {
     return (uint8_t)((rat_[p < NUM_PATTERNS ? p : 0][i >> 2] >> ((i & 3) * 2)) & 3);
@@ -372,7 +372,7 @@ class Sequencer {
   bool setRatchet(uint8_t p, uint8_t idx, uint8_t v) {
     if (p >= NUM_PATTERNS || idx >= len_[p] || v > RAT_MAX) return false;
     ratchetRaw(p, idx, v);
-    dirty_ |= (uint8_t)(1u << p);
+    dirty_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
     return true;
   }
@@ -392,7 +392,7 @@ class Sequencer {
       ratchetRaw(cur_, wcur_, 0);
       step_[cur_][wcur_++] = StepByte(cv, t);
       if (wcur_ > len_[cur_]) len_[cur_] = wcur_;
-      dirty_ |= (uint8_t)(1u << cur_);
+      dirty_ |= (uint16_t)(1u << cur_);
     }
   }
   // Panel LOAD mode: cycle the last recorded step's ratchet (UP button).
@@ -402,7 +402,7 @@ class Sequencer {
     uint8_t r = ratchet(cur_, i);
     r = (uint8_t)((r + (dir > 0 ? 1 : RAT_MAX)) % (RAT_MAX + 1));
     ratchetRaw(cur_, i, r);
-    dirty_ |= (uint8_t)(1u << cur_);
+    dirty_ |= (uint16_t)(1u << cur_);
   }
   // Replace pattern p wholesale (SysEx 0x12). Marks dirty; flush() persists.
   // rat: optional packed ratchet bytes after the steps (old hosts send none).
@@ -412,7 +412,7 @@ class Sequencer {
     memset(rat_[p], 0, sizeof(rat_[p]));
     if (rat && ratBytes) memcpy(rat_[p], rat, ratBytes > RatBytes(len) ? RatBytes(len) : ratBytes);
     len_[p] = len;
-    dirty_ |= (uint8_t)(1u << p);
+    dirty_ |= (uint16_t)(1u << p);
     if (p == cur_ && pos_ >= len) rewind();
     return true;
   }
@@ -435,14 +435,14 @@ class Sequencer {
       if (StepKind(s) == STEP_REST) return false;            // no gate on a rest
       s = StepByte(StepCv(s), value ? STEP_LEGATO : STEP_NOTE);
     } else return false;                                     // lanes 1/2 absent
-    step_[p][idx] = s; dirty_ |= (uint8_t)(1u << p);
+    step_[p][idx] = s; dirty_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
     return true;
   }
   bool setLength(uint8_t p, uint8_t len) {
     if (p >= NUM_PATTERNS || len < 1 || len > MAX_STEPS) return false;
     for (uint8_t i = len_[p]; i < len; ++i) step_[p][i] = StepByte(0, STEP_REST);
-    len_[p] = len; dirty_ |= (uint8_t)(1u << p);
+    len_[p] = len; dirty_ |= (uint16_t)(1u << p);
     if (p == cur_ && pos_ >= len) rewind();
     return true;
   }
@@ -486,7 +486,7 @@ class Sequencer {
         step_[p][i] = on ? StepByte(rnd() & CV_MAX, STEP_NOTE) : StepByte(0, STEP_REST);
       }
     }
-    dirty_ |= (uint8_t)(1u << p);
+    dirty_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
     return true;
   }
@@ -534,9 +534,9 @@ class Sequencer {
     if (p >= NUM_PATTERNS) return;
     mask &= 0xFFF; if (!mask) mask = 0xFFF;
     scale_[p] = (uint16_t)(mask | (on ? 0x8000 : 0));
-    dirty_ |= (uint8_t)(1u << p); scaleChanged_ |= (uint8_t)(1u << p);
+    dirty_ |= (uint16_t)(1u << p); scaleChanged_ |= (uint16_t)(1u << p);
   }
-  uint8_t consumeScaleChanged() { uint8_t c = scaleChanged_; scaleChanged_ = 0; return c; }
+  uint16_t consumeScaleChanged() { uint16_t c = scaleChanged_; scaleChanged_ = 0; return c; }
   // cv -> nearest allowed note (MIDI = cv + 36, so C is cv 0, 12, 24 ...).
   uint8_t quantize(uint8_t cv, uint8_t p = 0xFF) const {
     uint16_t sc = scale_[p < NUM_PATTERNS ? p : cur_];
@@ -619,7 +619,7 @@ class Sequencer {
         prev = StepKind(sb);
       }
     }
-    dirty_ |= (uint8_t)(1u << p); edited_ |= (uint8_t)(1u << p);
+    dirty_ |= (uint16_t)(1u << p); edited_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
     return true;
   }
@@ -659,7 +659,7 @@ class Sequencer {
     if (!dirty_) return false;
     for (uint8_t p = 0; p < NUM_PATTERNS; ++p) {
       if (!(dirty_ & (1u << p))) continue;
-      dirty_ &= (uint8_t)~(1u << p);
+      dirty_ &= (uint16_t)~(1u << p);
       if (!persist::Available()) return false;
       uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2];
       buf[0] = len_[p];
@@ -807,15 +807,15 @@ class NoteEngine {
         if (b.pressed(BTN_UD))   mode_ = (mode_ == MODE_ARP_UPDOWN) ? MODE_KEYBOARD : MODE_ARP_UPDOWN;
       }
     }
-    // PLAY held + keys 1-8 (SH-1oh1): one key selects a pattern, several in
+    // PLAY held + keys 1-16 (SH-1oh1): one key selects a pattern, several in
     // order make a song. On release: stopped -> play it from the start;
     // playing -> it follows at the end of the current loop pass. A plain
     // PLAY press/release toggles play.
     if (b.pressed(BTN_PLAY)) { playHeldUsed_ = false; songN_ = 0; }
     if (playHeld) {
-      uint32_t fresh = rawKeys & ~prevRaw_ & 0xFF;   // own edge memory: the held-PLAY keys never reach prevMask_
+      uint32_t fresh = rawKeys & ~prevRaw_ & 0xFFFF;   // keys 1-16; own edge memory: the held-PLAY keys never reach prevMask_
       if (!kt)
-        for (uint8_t k = 0; k < 8; ++k)
+        for (uint8_t k = 0; k < NUM_PATTERNS; ++k)
           if ((fresh & (1UL << k)) && songN_ < Sequencer::CHAIN_MAX) { songBuf_[songN_++] = k; playHeldUsed_ = true; }
       // PLAY held + U&D / UP / DOWN: randomize the pattern (rhythm + pitch) /
       // its pitches / mutate it (SuperOS-303 style, in the pattern's scale).
@@ -969,7 +969,7 @@ class NoteEngine {
     }
     if (prevTune_) { prevTune_ = false; prevMask_ = mask; }   // no key edge out of tune mode
     if (b.down(controls::BTN_PLAY) && mode_ != MODE_SEQ_LOAD) {
-      mask &= ~0xFFUL;                                  // select keys are not notes
+      mask &= ~0xFFFFUL;                                // pattern keys 1-16 are not notes
       if (b.down(controls::BTN_KEYTRANS)) mask = 0;     // scale-root keys are not notes either
     }
     // KEY TRANSPOSE held (any mode but LOAD / real-time record): a fresh key
@@ -987,10 +987,10 @@ class NoteEngine {
       ktKeys_ &= mask;
       mask &= ~ktKeys_;
     }
-    // Instant pattern switch (SH-1oh1 3.5.3): keys 1-8 while playing, with
+    // Instant pattern switch (SH-1oh1 3.5.3): keys 1-16 while playing, with
     // nothing held, switch now and keep the position.
     if (mode_ == MODE_SEQ_PLAY && !rtRec_ && !b.down(controls::BTN_HOLD) && !b.down(controls::BTN_PLAY)) {
-      uint32_t fresh = mask & ~prevMask_ & 0xFF;
+      uint32_t fresh = mask & ~prevMask_ & 0xFFFF;
       if (fresh) seq_.switchNow((uint8_t)lowestKey(fresh));
     }
     // HOLD button + key while playing: real-time loop length (key n = the

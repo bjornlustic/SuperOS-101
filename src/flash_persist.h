@@ -16,9 +16,9 @@
 
 namespace persist {
 
-static const uint8_t  NUM_PATTERNS    = 8;
+static const uint8_t  NUM_PATTERNS    = 16;   // keys 1-16; each up to 128 steps
 static const uint16_t FB_PATTERN_BASE = 0;
-static const uint16_t FB_SETTINGS     = 8;
+static const uint16_t FB_SETTINGS     = 16;   // reserved, unused (was 8 with 8 patterns; never written)
 static_assert(FB_SETTINGS + 1 <= FE_MAX_BLOCKS, "block map exceeds FE_MAX_BLOCKS");
 
 #ifdef __AVR__

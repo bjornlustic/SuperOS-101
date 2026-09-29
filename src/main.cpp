@@ -58,7 +58,7 @@ static int16_t ExtCv() {
   int16_t cv = (int16_t)g_extStack[g_extN - 1] - engine::MIDI_CV_OFFSET;
   return cv < 0 ? 0 : (cv > engine::CV_MAX ? engine::CV_MAX : cv);
 }
-static void MidiProgram(uint8_t pc) { g_engine.selectPattern(pc & 7); }
+static void MidiProgram(uint8_t pc) { if (pc < engine::NUM_PATTERNS) g_engine.selectPattern(pc); }
 static void MidiRealtime(uint8_t b) { midiclk::OnRealtime(b); }
 static void MidiCC(uint8_t num, uint8_t val) { cvdac::OnCc(num, val); }   // filter cutoff (CC 74 default)
 
@@ -488,10 +488,10 @@ void superos_loop() {
     if (g_engine.seq().consumeStepChanged()) SendStep();
     // Panel edits/selection mirror to the editor: pattern data after LOAD,
     // config (current pattern) after PLAY+key.
-    uint8_t ed = g_engine.seq().consumeEdited();
+    uint16_t ed = g_engine.seq().consumeEdited();
     for (uint8_t p = 0; ed && p < engine::NUM_PATTERNS; ++p) if (ed & (1u << p)) SendPattern(p);
     if (g_engine.seq().consumeSelChanged()) SendConfig();
-    uint8_t sc = g_engine.seq().consumeScaleChanged();
+    uint16_t sc = g_engine.seq().consumeScaleChanged();
     for (uint8_t p = 0; sc && p < engine::NUM_PATTERNS; ++p) if (sc & (1u << p)) SendScale(p);
   } else { g_engine.seq().consumeScaleChanged(); g_engine.seq().consumeStepChanged(); g_engine.seq().consumeEdited(); g_engine.seq().consumeSelChanged(); }
 
