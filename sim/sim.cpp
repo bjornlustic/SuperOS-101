@@ -294,6 +294,7 @@ static void Help() {
   puts("  pedal on|off                HOLD pedal (T0)");
   puts("  tick [n]                    n clock pulses (default 1), arp/seq advance");
   puts("  run [n]                     run n main-loop passes (default 1)");
+  puts("  wait <ms>                   run main-loop passes for ms of virtual time");
   puts("  mode emu|superos            write the firmware-select byte and reboot");
   puts("  midi start|stop|continue    MIDI realtime transport");
   puts("  midi clock [n]              n MIDI clock bytes (24 ppqn), one per loop pass");
@@ -353,6 +354,9 @@ static void Repl() {
     } else if (cmd == "run") {
       int n = 1; ss >> n;
       RunLoops(n);
+    } else if (cmd == "wait") {
+      int ms = 1; ss >> ms;
+      WaitVirtMs((uint16_t)(ms < 1 ? 1 : ms > 60000 ? 60000 : ms));
     } else if (cmd == "midi") {
       std::string sub, val; ss >> sub >> val;
       if (sub == "start")         { g_midiQ.push_back(0xFA); RunLoops(1); }
