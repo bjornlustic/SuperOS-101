@@ -253,6 +253,24 @@ CHAPTERS = [
            "UP plays the next step at once, DOWN the previous one: the pattern moves against the clock."],
           expect=["on=PLAY"],
           g="Playing: KEY TRANSPOSE + UP / DOWN|shift a step ahead / back"),
+        F("Nudge", "Sequencer play", "Playing",
+          [C("HOLD", "t", "1. HOLD THE BUTTON", hold=True),
+           C("UP", "t", "2. NOTES ONE STEP RIGHT"),
+           C("DOWN", "t", "NOTES ONE STEP LEFT")],
+          PLAYING + ["d:HOLD", "t:UP", "u:HOLD"],
+          "PLAY lit (HOLD lights only while held). The notes moved, the timing did not.",
+          ["While playing, hold the HOLD button.",
+           "UP moves every note one step right (later), DOWN one step left (earlier). Ratchets move "
+           "with their steps; the pattern wraps around.",
+           "The move lands at the next half-step: the sounding note has already started and the next "
+           "one is not chosen yet, so nothing is cut or doubled and the beat never moves."],
+          note="Unlike Shift, which moves the playhead against the clock, Nudge moves the notes inside "
+               "the pattern. The web editor has the same as \u25c0 Nudge / Nudge \u25b6 (Shift + arrow "
+               "keys), with Undo.",
+          expect=["on=PLAY"],
+          also=[(PLAYING + ["d:HOLD", "t:DOWN", "u:HOLD"], ["on=PLAY"]),
+                (PLAYING + ["d:HOLD", "t:UP"], ["on=PLAY", "on=HOLD"])],
+          g="Playing: HOLD button + UP / DOWN|nudge the notes a step right / left"),
         F("Loop Length, Live", "Sequencer play", "Playing",
           [C("HOLD", "t", "1. HOLD THE BUTTON", hold=True),
            C("key2", "b", "2. KEY N = FIRST N STEPS; AGAIN = FULL")],
