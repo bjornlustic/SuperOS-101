@@ -18,21 +18,22 @@ PAGE = (pathlib.Path(__file__).parent / "index.html").resolve().as_uri()
 FAKE = r"""
 (() => {
   const st = {fw: 0, dir: 0, pedal: 0, tr: 0, tmode: 0, loop: 0, rt: 0, tune: 0, queued: 0x7F,
-              delay: 0, arp: 1, clk: 0, thru: 0, playing: false, keyboard: true, featLen: 12};
+              delay: 0, arp: 1, clk: 0, thru: 0, nout: 0, playing: false, keyboard: true, featLen: 13};
   const sent = []; window.__sent = sent; window.__dev = st;
   const input = {id: 'in1', name: 'SuperOS-101', state: 'connected', onmidimessage: null};
   const reply = body => setTimeout(() => input.onmidimessage &&
     input.onmidimessage({data: new Uint8Array([0xF0, 0x7D, ...body, 0xF7])}), 5);
   window.__reply = reply;
-  const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp, st.clk, st.thru].slice(0, 1 + st.featLen);
+  const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp, st.clk, st.thru, st.nout].slice(0, 1 + st.featLen);
   const NP = 16;   // patterns on the unit (firmware e770f60)
   st.pats = Array.from({length: NP}, (_, p) => p === 0 ? Array.from({length: 16}, (_, i) => [12, 13, 14, 15][i % 4] | (i === 5 ? 1 << 6 : 0) | (i === 9 ? 2 << 6 : 0)) : []);
   st.rats = Array.from({length: NP}, () => []);   // ratchet per step, 0..2
   st.accs = Array.from({length: NP}, () => []);   // accent per step, 0/1
+  st.flts = Array.from({length: NP}, () => []);   // filter CV per step, 0..127
   // CV DAC config as src/cvdac.h Pack(): center, cc, flags, mode, vcf, vca, decay, velThr, res, build, hw, park
   st.cv = {center: 2300, cc: 74, flags: 7, mode: 0, vcf: 64, vca: 64, decay: 30, thr: 100, res: 64, build: 64, hw: 1, park: 700};
   const cvReply = () => { const c = st.cv; reply([0x24, c.center & 0x7F, c.center >> 7, c.cc, c.flags, c.mode, c.vcf, c.vca, c.decay, c.thr, c.res, c.build, c.hw,
-    c.center & 0x7F, c.center >> 7, c.park & 0x7F, c.park >> 7, c.park & 0x7F, c.park >> 7]); };
+    c.center & 0x7F, c.center >> 7, c.park & 0x7F, c.park >> 7, c.park & 0x7F, c.park >> 7, c.sus || 0]); };
   st.scales = Array.from({length: NP}, () => ({mask: 0xFFF, on: 0}));
   st.rnd = [];
   const pack7 = src => { const out = []; for (let i = 0; i < src.length; i += 7) { const ch = src.slice(i, i + 7); let msb = 0;
@@ -44,6 +45,7 @@ FAKE = r"""
     const raw = [steps.length, ...steps, ...tail, ...acc];
     let x = 0; raw.forEach(v => x ^= v);
     reply([0x11, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
+    reply([0x2C, p, ...steps.map((_, i) => st.flts[p][i] || 0)]);   // the filter lane follows every 0x11
   };
   window.__sendPat = sendPat;
   const unpack7 = src => { const out = []; let i = 0;
@@ -52,7 +54,8 @@ FAKE = r"""
     const m = Array.from(d); sent.push(m);
     if (m[0] !== 0xF0) return;
     const c = m[2], id = m[3], v = m[4];
-    if (c === 0x20) reply([0x21, st.fw, 0, 0, 6, 0, 1, 1, 0, ...'1.0'.split('').map(ch => ch.charCodeAt(0))]);
+    if (c === 0x1D && id < NP) st.cur = id;   // the unit follows the selection, as src/main.cpp does
+    if (c === 0x20) reply([0x21, st.fw, 0, 0, 6, st.cur || 0, 1, 1, 0, ...'1.0'.split('').map(ch => ch.charCodeAt(0))]);
     if (st.fw !== 0) return;   // the emulator never answers 0x67
     if (c === 0x65) {
       if (id === 0 && v < 4) st.dir = v;
@@ -65,6 +68,7 @@ FAKE = r"""
       if (id === 7 && v <= 60) st.delay = v;
       if (id === 8 && v >= 1 && v <= 3) st.arp = v;
       if (id === 11 && v <= 1) st.thru = v;
+      if (id === 12 && v <= 3) st.nout = v;
       if (id === 9) st.resyncs = (st.resyncs || 0) + 1;
       reply(feats());
     }
@@ -83,12 +87,20 @@ FAKE = r"""
       if (p >= NP || i >= st.pats[p].length || (st.pats[p][i] >> 6) === 1 || val > 1) { reply([0x14, 2]); return; }
       st.accs[p][i] = val; reply([0x14, 0]);
     }
+    if (c === 0x16 && m[4] === 4) {   // filter lane: any step inside the pattern, rests too
+      const [p, , i, val] = m.slice(3, 7);
+      if (p >= NP || i >= st.pats[p].length || val > 127) { reply([0x14, 2]); return; }
+      st.flts[p][i] = val; reply([0x14, 0]);
+    }
+    if (c === 0x2B && id < NP) reply([0x2C, id, ...st.pats[id].map((_, i) => st.flts[id][i] || 0)]);
+    if (c === 0x2D && id < NP) { st.flts[id] = m.slice(4, -1); reply([0x14, 0]); }
     if (c === 0x23) cvReply();
     if (c === 0x25) {
       const b = m.slice(3, -1);
       Object.assign(st.cv, {center: b[0] | b[1] << 7, cc: b[2], flags: b[3], mode: b[4], vcf: b[5], vca: Math.min(100, b[6]), decay: b[7],
                             thr: b[8], res: b[9], build: b[10], hw: b[11]});
       if (b.length >= 14) st.cv.park = b[12] | b[13] << 7;
+      if (b.length >= 15) st.cv.sus = b[14];
       st.cv25 = b; cvReply();
     }
     if (c === 0x69) {   // nudge: rotate the notes, ratchets move with their steps
@@ -150,6 +162,9 @@ with sync_playwright() as p:
     act(lambda: page.select_option("#selThru", "1"), [11, 1], "MIDI THRU")
     check(page.input_value("#selThru") == "1" and "MIDI THRU" in page.inner_text("#perfStatus"), "THRU renders from the 0x66 reply")
     act(lambda: page.select_option("#selThru", "0"), [11, 0], "MIDI OUT")
+    act(lambda: page.select_option("#selNoteOut", "1"), [12, 1], "notes out DIN only")
+    check(page.input_value("#selNoteOut") == "1" and "notes DIN only" in page.inner_text("#perfStatus"), "notes out renders from 0x66")
+    act(lambda: page.select_option("#selNoteOut", "0"), [12, 0], "notes out both")
     act(lambda: page.click("#dirGrid .div-btn[data-idx='2']"), [0, 2], "direction ping-pong")
     check("is-on" in page.get_attribute("#dirGrid .div-btn[data-idx='2']", "class"), "direction renders P-P")
     act(lambda: page.click("#arpGrid .div-btn[data-idx='3']"), [8, 3], "arp range 3")
@@ -247,7 +262,7 @@ with sync_playwright() as p:
     check(page.locator(".pat-pill").count() == 16, "16 pattern tabs")
     k = mark(); page.click(".pat-pill:nth-child(12)"); page.wait_for_timeout(200)
     check([0x1D, 11] in sent_since(k) and [0x2A, 11] in sent_since(k), "tab 12 selects pattern 12 and reads its scale")
-    check(page.inner_text("#seqTitle").lower() == "pattern 12", "tab 12 shows pattern 12")
+    check(page.inner_text("#seqTitle").lower() == "pattern 12", "tab 12 shows pattern 12 (" + page.inner_text("#seqTitle") + ")")
     page.click(".pat-pill:nth-child(1)"); page.wait_for_timeout(200)
 
     # ---- Randomize
@@ -341,13 +356,34 @@ with sync_playwright() as p:
     check(page.evaluate("window.__dev.accs[0]") == [0, 1, 0, 1], f"Write carries the accent tail on 0x12 ({page.evaluate('window.__dev.accs[0]')})")
     page.click("#btnLive")
 
+    # ---- Per-step filter CV: FLT slider -> 0x16 lane 4; 0x2C after 0x11 renders; Write sends 0x2D
+    page.evaluate("window.__dev.flts[0] = [0, 90, 0, 0]; window.__sendPat(0)"); page.wait_for_timeout(150)
+    check(page.input_value("#steps .step-card[data-i='1'] .flt-rng") == "90" and page.inner_text("#steps .step-card[data-i='1'] .flt-val") == "+41",
+          "0x2C after 0x11: step 2 shows filter 90 (+41)")
+    k = mark()
+    page.fill("#steps .step-card[data-i='0'] .flt-rng", "30"); page.dispatch_event("#steps .step-card[data-i='0'] .flt-rng", "change")
+    page.wait_for_timeout(250)
+    check([0x16, 0, 4, 0, 30] in sent_since(k) and page.evaluate("window.__dev.flts[0][0]") == 30, f"FLT on step 1 sends 16 00 04 00 1E ({sent_since(k)})")
+    page.click("#steps .step-card[data-i='0'] .step-num"); page.keyboard.press("]"); page.wait_for_timeout(250)
+    check(page.evaluate("window.__dev.flts[0][0]") == 38, "] raises the selected step's filter by 8")
+    page.keyboard.press("\\"); page.wait_for_timeout(250)
+    check(page.evaluate("window.__dev.flts[0][0]") == 0 and page.inner_text("#steps .step-card[data-i='0'] .flt-val") == "OFF", "backslash clears it (OFF)")
+    page.click("#btnLive")
+    page.fill("#steps .step-card[data-i='2'] .flt-rng", "100"); page.dispatch_event("#steps .step-card[data-i='2'] .flt-rng", "change")
+    k = mark(); page.click("#btnWrite"); page.wait_for_timeout(250)
+    check(page.evaluate("window.__dev.flts[0]") == [0, 90, 100, 0], f"Write sends the lane whole with 0x2D ({page.evaluate('window.__dev.flts[0]')})")
+    page.click("#btnLive")
+
     # ---- Filter CV / accent panel (0x23 on connect -> 0x24; edits -> 0x25)
     check(vis("#cvPanel") and page.input_value("#inCenter") == "2300", "CV panel shows the unit's filter CV offset (2300)")
     check("offset 2300 mV" in page.inner_text("#cvStatus"), "CV status line")
     page.fill("#inCenter", "2250"); page.press("#inCenter", "Tab"); page.wait_for_timeout(150)
     b25 = page.evaluate("window.__dev.cv25")
-    check(b25 and len(b25) == 14 and (b25[0] | b25[1] << 7) == 2250 and (b25[12] | b25[13] << 7) == 700,
-          f"offset 2250 -> 0x25 with 14 bytes, park kept ({b25})")
+    check(b25 and len(b25) == 15 and (b25[0] | b25[1] << 7) == 2250 and (b25[12] | b25[13] << 7) == 700,
+          f"offset 2250 -> 0x25 with 15 bytes, park and sustain kept ({b25})")
+    page.fill("#rngSus", "40"); page.dispatch_event("#rngSus", "change"); page.wait_for_timeout(150)
+    check(page.evaluate("window.__dev.cv.sus") == 40 and page.inner_text("#susVal") == "31 %", "accent sustain 40 -> 0x25, shown as 31 %")
+    check(page.inner_text("#vcaAmtVal") == "+100 %", "VCA accent 64 shows as +100 % of the envelope")
     check(page.input_value("#rngCenter") == "2250", "slider follows the 0x24 reply")
     page.click("#btnCal"); page.wait_for_timeout(150)
     check(page.evaluate("window.__dev.cv.center") == 848, "calculator: 4870 / 15000 mV with 68k -> 848")

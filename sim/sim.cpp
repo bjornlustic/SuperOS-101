@@ -719,7 +719,8 @@ static int SelfTest() {
     CHECK(g_midiOut.size() == 5 && g_midiOut[2] == 0x14 && g_midiOut[3] == 0, "SysEx 0x12 set pattern 5 -> ack 0");
     g_midiOut.clear();
     for (uint8_t b : {0xF0, 0x7D, 0x10, 5, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
-    uint8_t body[8] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(g_midiOut.size() - 7), body, sizeof(body));
+    size_t e11 = 6; while (e11 < g_midiOut.size() && g_midiOut[e11] != 0xF7) ++e11;   // the 0x11 (a 0x2C lane follows it)
+    uint8_t body[8] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(e11 - 6), body, sizeof(body));
     // The reply appends the packed ratchet and accent tails (one byte each for
     // len 3, all off); the tail-less 0x12 above is the pre-ratchet-host path.
     CHECK(g_midiOut[2] == 0x11 && g_midiOut[3] == 5 && m == 6 && memcmp(body, raw, 4) == 0 && body[4] == 0 && body[5] == 0,
@@ -1080,7 +1081,7 @@ static int SelfTest() {
     g_midiOut.clear();
     sx({0x65, 10, 1});
     std::vector<uint8_t> f = features();
-    CHECK(f.size() == 14 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
+    CHECK(f.size() == 15 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
     CHECK(sysex::LoadClockFrom() == midi::CLK_DIN, "DIN only saved to EEPROM");
     sx({0x65, 10, 3});
     CHECK(midi::ClockFrom() == midi::CLK_DIN && sysex::LoadClockFrom() == midi::CLK_DIN, "bad value 3 leaves the source alone");
@@ -1125,12 +1126,23 @@ static int SelfTest() {
     {   // MIDI OUT / THRU (0x65 id 11): THRU sends none of the 101's own notes
       auto noteOns = [&]() { int n = 0; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) n += (g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]; return n; };
       g_midiOut.clear(); sx({0x65, 11, 1}); std::vector<uint8_t> f = features();
-      CHECK(f.size() == 14 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
+      CHECK(f.size() == 15 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
       CHECK(noteOns() == 0, "THRU: a panel key sends no note on MIDI OUT");
       sx({0x65, 11, 0});
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
       CHECK(!midi::Thru() && !sysex::LoadThru() && noteOns() == 1, "0x65 id 11 = 0 -> OUT: the key's note is sent again");
+      // Note output (0x65 id 12): off sends no notes, SysEx still flows; back to both.
+      g_midiOut.clear(); sx({0x65, 12, 3}); f = features();
+      CHECK(f.size() == 15 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
+      g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5); sx({0x20});
+      bool cfg = false; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) cfg |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x21;
+      CHECK(noteOns() == 0 && cfg, "notes off: a panel key sends no note, SysEx replies still go out");
+      sx({0x65, 12, 9});
+      CHECK(midi::NoteOut() == 3, "note output: a bad value 9 is ignored");
+      sx({0x65, 12, 0});
+      g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
+      CHECK(midi::NoteOut() == 0 && sysex::LoadNoteOut() == 0 && noteOns() == 1, "0x65 id 12 = 0 -> notes on DIN and USB again");
     }
   }
   midiclk::SetSync(false);
@@ -1828,12 +1840,90 @@ static int SelfTest() {
       play();
       bool vcaStep0 = g_simCvOn[1];
       ClockTick(); bool vcaStep1 = g_simCvOn[1];
+      ClockTick(); RunLoops(40);                 // step 3 (accented legato) held 40 ms: still accented
+      bool vcaStep2 = g_simCvOn[1];
       std::vector<int> vel;
       for (size_t i = 0; i + 2 < g_midiOut.size(); ++i)
         if ((g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]) vel.push_back(g_midiOut[i + 2]);
       tap(B_PLAY); WaitVirtMs(40);
       CHECK(!vcaStep0 && vcaStep1, "playback: the accented step drives the VCA accent, the plain one does not");
+      CHECK(vcaStep2, "an accented legato step keeps its accent while held");
       CHECK(vel.size() >= 2 && vel[0] == 100 && vel[1] == 127, "playback: MIDI out velocity 100 plain, 127 accented");
+      // One note only (the MC-202's CPU accent line): an accented note, then a
+      // plain one: the accent is gone within the 7 ms release of the plain
+      // note's start, and a lone accented note's gate dropping ends it too.
+      {
+        auto push12 = [&](uint8_t pat, std::vector<uint8_t> raw) {   // 0x12 with whatever tails raw carries
+          uint16_t x = 0; for (uint8_t v : raw) x ^= v;
+          std::vector<uint8_t> m = {0x12, pat, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)};
+          uint8_t pk[64]; uint8_t pn = midi::Pack7(raw.data(), (uint8_t)raw.size(), pk);
+          m.insert(m.end(), pk, pk + pn);
+          g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D); for (uint8_t v : m) g_midiQ.push_back(v);
+          g_midiQ.push_back(0xF7); RunLoops(3);
+        };
+        auto lane = [&](uint8_t pat) {           // 0x2B -> the 0x2C values
+          g_midiOut.clear(); sx({0x2B, pat});
+          std::vector<uint8_t> v;
+          for (size_t i = 0; i + 3 < g_midiOut.size(); ++i)
+            if (g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x2C && g_midiOut[i + 3] == pat) {
+              for (size_t j = i + 4; j < g_midiOut.size() && g_midiOut[j] != 0xF7; ++j) v.push_back(g_midiOut[j]);
+              break;
+            }
+          return v;
+        };
+        const uint16_t C = cvdac::S().s.center;
+        // A MIDI note at velocity 127: its accent ends with its gate (7 ms release).
+        RunLoops(2500);
+        for (uint8_t b2 : {(uint8_t)0x90, (uint8_t)53, (uint8_t)127}) g_midiQ.push_back(b2); RunLoops(20);
+        bool heldOn = g_simCvOn[1];
+        for (uint8_t b2 : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b2); RunLoops(60);
+        CHECK(heldOn && !g_simCvOn[1], "one note: a velocity-127 note's accent ends 60 ms after its note-off (7 ms release, no 300 ms tail)");
+        // Sequencer: an accented step, then an UNACCENTED legato step (the gate
+        // never drops): the accent still ends at the step change.
+        push12(9, {2, 20, (uint8_t)(0x80 | 20), 0x00, 0x01});
+        sx({0x1D, 9}); RunLoops(2500);
+        play(); RunLoops(10);
+        bool accOn = g_simCvOn[1];
+        ClockTick(); RunLoops(60);
+        CHECK(accOn && GateOn() && !g_simCvOn[1], "one step: an accented step's accent ends when the next (legato, unaccented) step starts");
+        tap(B_PLAY); WaitVirtMs(40);
+
+        // Per-step filter CV lane.
+        g_midiOut.clear(); sx({0x16, 9, 4, 0, 100});
+        bool ackOk = false; for (size_t i = 0; i + 3 < g_midiOut.size(); ++i) ackOk |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x14 && g_midiOut[i + 3] == 0;
+        std::vector<uint8_t> v = lane(9);
+        CHECK(ackOk && v.size() == 2 && v[0] == 100 && v[1] == 0, "0x16 lane 4 sets a step's filter value; 0x2B -> 0x2C reads the lane (one value a step)");
+        sx({0x16, 9, 1, 0, 0});                  // step 0 unaccented: the cutoff alone
+        RunLoops(300);
+        const uint16_t idle = g_simCvCode[0];
+        play(); RunLoops(200);
+        const int want = C + (int)((100 * 128 - 8192) * 2025L / 8191);
+        const uint16_t onStep0 = g_simCvCode[0];
+        ClockTick(); RunLoops(200);
+        const uint16_t onStep1 = g_simCvCode[0];
+        tap(B_PLAY); WaitVirtMs(300);
+        printf("  (filter lane: idle %u, step 0 %u (want %d), tied step 1 %u, stopped %u)\n", idle, onStep0, want, onStep1, g_simCvCode[0]);
+        CHECK(std::abs((int)onStep0 - want) < 40, "playback: step 0's filter value 100 moves the cutoff to its CC-scale position");
+        CHECK(std::abs((int)onStep1 - want) < 40, "a tie with no value of its own holds the value of the note it continues");
+        CHECK(std::abs((int)g_simCvCode[0] - (int)idle) < 40, "stopping hands the cutoff back to the CC");
+        g_midiOut.clear(); sx({0x2D, 9, 10, 20});
+        v = lane(9);
+        CHECK(v.size() == 2 && v[0] == 10 && v[1] == 20, "0x2D writes the lane whole");
+        sx({0x69, 9, 1, 1});                     // nudge right: the lane moves with its steps
+        v = lane(9);
+        CHECK(v.size() == 2 && v[0] == 20 && v[1] == 10, "nudge rotates the filter lane with the notes");
+        for (int i = 0; i < 1600; ++i) { delayMicroseconds(1000); RunLoops(1); }   // deferred flush (pattern, then lane)
+        uint8_t lb[130]; uint8_t ln = persist::Store().read(persist::FB_FILTER_BASE + 9, lb, sizeof(lb));
+        CHECK(ln == 128 && lb[0] == 20 && lb[1] == 10, "the lane persists in its own flash block (FB_FILTER_BASE + p, 128 bytes)");
+        // MC-202 sustain (0x25 byte 14)
+        uint8_t cfg[cvdac::CFG_LEN]; cvdac::Pack(cvdac::Get(), cfg); cfg[14] = 40;
+        std::vector<uint8_t> m25 = {0x25}; m25.insert(m25.end(), cfg, cfg + 15);
+        g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D); for (uint8_t b2 : m25) g_midiQ.push_back(b2); g_midiQ.push_back(0xF7); RunLoops(3);
+        CHECK(cvdac::Get().sustain == 40, "0x25 with 15 bytes sets the MC-202 accent sustain");
+        cfg[14] = 0; m25 = {0x25}; m25.insert(m25.end(), cfg, cfg + 15);
+        g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D); for (uint8_t b2 : m25) g_midiQ.push_back(b2); g_midiQ.push_back(0xF7); RunLoops(3);
+        sx({0x1D, 7});
+      }
 
       g_midiOut.clear(); sx({0x16, 6, 1, 0, 1});
       bool ok0 = lastAck() == 0;

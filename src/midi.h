@@ -50,6 +50,8 @@
 //   0x16 <p><lane><step><value>  SET STEP (gate G4): lane 0 note (value=MIDI note,
 //                           0=rest), lane 1 accent (0/1, not on a rest), lane 3
 //                           gate (0 normal/1 legato); lane 2 absent       -> 0x14
+//                           lane 4 filter CV (0 none, 1..127 on the cutoff CC's
+//                           scale, 64 = the FREQ slider; rests too).
 //                           Accent also travels as a packed tail on 0x11/0x12
 //                           after the ratchet tail (1 bit per step, bit i&7 of
 //                           byte i>>3; absent = all off) and in the flash record.
@@ -67,6 +69,13 @@
 //                           travels as a packed tail on 0x11/0x12 (2 bits per
 //                           step after the step bytes; absent = all off) and
 //                           in the flash record the same way.            -> 0x14
+//   0x2B <p>              request pattern p's filter lane -> 0x2C
+//   0x2C <p> <v...>       filter lane: one value a step (0 none, 1..127), as many
+//                           as the pattern has steps. Also follows every 0x11 the
+//                           unit sends (0x10, 0x13, panel and editor edits) and any
+//                           lane change (mirrored like the pattern).
+//   0x2D <p> <v...>       set pattern p's filter lane whole (n <= 128 values from
+//                           step 0, the rest 0)                          -> 0x14
 //   0x1D <p>              select pattern p (as PLAY + key on the panel)
 //   0x1E <x>              transport: SuperOS x=1 play / 0 stop; the emulator
 //                         taps its PLAY button (toggle) for any x
@@ -176,6 +185,7 @@ struct State {
   uint8_t  hostPorts = 0;           // ports an editor has spoken SysEx on (sticky)
   bool     thru = false;            // soft thru: mirror channel messages + realtime
   uint8_t  clkFrom = PORT_ALL;      // ports whose realtime (clock, start, stop) drives the machine
+  uint8_t  notePorts = PORT_ALL;    // ports the notes it plays go out on (SysEx and thru are not affected)
 };
 inline State& S() { static State s; return s; }
 
@@ -306,11 +316,19 @@ inline void SendTo(uint8_t ports, uint8_t b) {
 inline uint8_t HostPorts() { uint8_t p = S().hostPorts; return p ? p : PORT_ALL; }
 inline void Send(uint8_t b) { SendTo(PORT_ALL, b); }
 inline void NoteOn (uint8_t note, uint8_t vel = 100) {
-  Send((uint8_t)(0x90 | S().channel)); Send(note & 0x7F); Send(vel & 0x7F);
+  const uint8_t p = S().notePorts;
+  SendTo(p, (uint8_t)(0x90 | S().channel)); SendTo(p, note & 0x7F); SendTo(p, vel & 0x7F);
 }
 inline void NoteOff(uint8_t note) {
-  Send((uint8_t)(0x80 | S().channel)); Send(note & 0x7F); Send(0);
+  const uint8_t p = S().notePorts;
+  SendTo(p, (uint8_t)(0x80 | S().channel)); SendTo(p, note & 0x7F); SendTo(p, 0);
 }
+// Note output (SysEx 0x65 id 12, saved): 0 DIN and USB, 1 DIN only, 2 USB only,
+// 3 off. A host that edits the 101 over USB but must not get its notes (an MPC
+// whose pads would play them) picks 1 or 3; SysEx sync is unaffected.
+enum : uint8_t { NOTES_ALL = 0, NOTES_DIN = 1, NOTES_USB = 2, NOTES_OFF = 3 };
+inline uint8_t NoteOut() { const uint8_t p = S().notePorts; return p == PORT_ALL ? NOTES_ALL : p == PORT_DIN ? NOTES_DIN : p == PORT_USB ? NOTES_USB : NOTES_OFF; }
+inline void SetNoteOut(uint8_t m) { S().notePorts = m == NOTES_DIN ? PORT_DIN : m == NOTES_USB ? PORT_USB : m == NOTES_OFF ? 0 : PORT_ALL; }
 // SysEx: F0 7D body... F7 (body bytes must be < 0x80), to the editor port(s).
 inline void SendSysex(const uint8_t* body, uint8_t len) {
   const uint8_t p = HostPorts();

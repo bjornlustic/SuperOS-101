@@ -13,6 +13,7 @@
 //   0x005        LFO hard-sync division, 0x006 sync delay ms (midiclock.h)
 //   0x007        soft MIDI thru: 1 = on, anything else (incl. 0xFF) = off (sysex.h)
 //   0x008        clock source: 1 DIN, 2 USB, anything else (incl. 0xFF) = both (sysex.h)
+//   0x009        note output: 1 DIN, 2 USB, 3 off, anything else (incl. 0xFF) = both (sysex.h)
 //   0x010        CV DAC settings magic (cvdac.h, EE_CV_MAGIC_VAL)
 //   0x011..0x01E CV DAC settings: center(2), cutoff CC, flags, accent mode,
 //                VCF/VCA amounts, decay, velocity threshold, res depth, build-up,
@@ -50,7 +51,8 @@ static const uint16_t EE_A_CFG_LFODIV = 0x005;  // LFO hard-sync division (midic
 static const uint16_t EE_A_CFG_SYNCDLY = 0x006; // sync delay in ms (midiclock.h)
 static const uint16_t EE_A_CFG_THRU = 0x007;    // soft MIDI thru on/off (sysex.h)
 static const uint16_t EE_A_CFG_CLKSRC = 0x008;  // clock source (sysex.h)
-static const uint16_t EE_CFG_END     = 0x009;   // one past EE_A_CFG_CLKSRC
+static const uint16_t EE_A_CFG_NOTEOUT = 0x009; // note output ports (sysex.h)
+static const uint16_t EE_CFG_END     = 0x00A;   // one past EE_A_CFG_NOTEOUT
 static const uint16_t EE_CV_FIRST    = 0x010;   // cvdac.h's EE_CV_MAGIC
 static const uint16_t EE_A_FEAT_MAGIC = 0x020;  // SuperOS performance settings (main.cpp)
 static const uint16_t EE_A_FEAT_DIR   = 0x021;  // sequencer direction (engine.h SeqDir)
@@ -76,6 +78,7 @@ static const uint16_t EE_TOTAL_BYTES = 0x1000;  // E2END + 1, AT90USB1286
 #define EE_CFG_SYNCDLY ((uint8_t*)EE_A_CFG_SYNCDLY)
 #define EE_CFG_THRU  ((uint8_t*)EE_A_CFG_THRU)
 #define EE_CFG_CLKSRC ((uint8_t*)EE_A_CFG_CLKSRC)
+#define EE_CFG_NOTEOUT ((uint8_t*)EE_A_CFG_NOTEOUT)
 
 static const uint8_t EE_EMU_MAGIC_VAL = 0x49;   // '8049'
 static const uint8_t EMU_RAM_FIRST    = 0x1C;   // first persisted 80C49 RAM byte
@@ -84,7 +87,7 @@ static const uint8_t EE_CFG_MAGIC_VAL = 0x4D;   // 'M'
 static const uint8_t EE_FEAT_MAGIC_VAL = 0x46;  // 'F'
 static_assert(EE_FEAT_END <= EE_FREE_FIRST, "the feature block runs into the free arena");
 
-static_assert(EE_A_CFG_SYNCDLY + 1 == EE_A_CFG_THRU && EE_A_CFG_THRU + 1 == EE_A_CFG_CLKSRC && EE_A_CFG_CLKSRC + 1 == EE_CFG_END,
+static_assert(EE_A_CFG_SYNCDLY + 1 == EE_A_CFG_THRU && EE_A_CFG_THRU + 1 == EE_A_CFG_CLKSRC && EE_A_CFG_CLKSRC + 1 == EE_A_CFG_NOTEOUT && EE_A_CFG_NOTEOUT + 1 == EE_CFG_END,
               "the CFG block moved");
 static_assert(EE_CFG_END <= EE_CV_FIRST, "the CFG block runs into the CV block");
 static_assert(EE_FREE_FIRST <= EE_A_EMU_MAGIC,

@@ -50,8 +50,17 @@
 //           CV), so it cannot be read: depth is the resDepth parameter, set to
 //           taste; the build-up is a leaky integrator.
 // Both: the accent envelope is generated here (we cannot see the analog ADSR),
-// triggered by a fresh note whose MIDI velocity >= velThreshold (or every
-// note with the ACCENT_ALL flag), ticked once per main-loop pass (~1 kHz).
+// triggered by a fresh note whose MIDI velocity >= velThreshold, an accented
+// sequencer step (or every note with the ACCENT_ALL flag), ticked once per
+// main-loop pass (~1 kHz).
+// ONE NOTE ONLY, as both originals: the MC-202's CPU raises its accent line for
+// the accented step and drops it at the next, and the accent (envelope x ACCENT
+// pot) goes with it through the same 7 ms RC it rose through; on the 303 the
+// accent is switched per step too. So the accent here lasts while that note's
+// gate is held (attack, then decay toward `sustain`, 303: the fixed 200 ms) and
+// releases through the 7 ms RC when the gate drops or the next step starts
+// unaccented: nothing leaks into the next note. The 303's C13 build-up still
+// carries between accented notes, but only shows while an accent sounds.
 // Accent depths are defined in LSB on VOUTA, so on the unipolar board they
 // are worth 27/100 of the bipolar board's in fader terms (0.55 throw max).
 //
@@ -87,6 +96,7 @@ static const uint16_t VCF_ACC_MC202  = 810;    // bipolar board: ~0.4 fader thro
 static const uint16_t VCF_ACC_TB303  = 1620;   // bipolar board: ~0.8 fader throw at full resDepth (303 sweep is big)
 // Timing (ms).
 static const uint8_t  ATTACK_TAU_MS  = 7;      // MC-202 R184 330k * C74 22n
+static const uint8_t  RELEASE_TAU_MS = 7;      // the accent line dropping through the same RC
 static const uint16_t TB303_DECAY_MS = 200;    // the 303's accent-forced short decay
 static const uint16_t TB303_BUILD_TAU_MS = 400; // C13 bleed between accented notes
 static const uint16_t TB303_BUILD_CAP = 16384;  // 0.5 of full sweep (Q15); env alone gives 0.5
@@ -119,12 +129,14 @@ struct Settings {
   uint8_t  mode      = MODE_MC202;
   uint8_t  vcfAmount = 100;   // 0..127
   uint8_t  vcaAmount = 64;    // 0..VCA_AMOUNT_MAX(100); bipolar board: 64 = +1 envelope, 100 = +1.6; unipolar: 100 = +0.74
-  uint8_t  decay10ms = 30;    // MC-202 accent decay, units of 10 ms (1..127); 303 uses TB303_DECAY_MS
+  uint8_t  decay10ms = 30;    // MC-202 accent decay toward sustain, units of 10 ms (1..127); 303 uses TB303_DECAY_MS
   uint8_t  velThr    = 100;   // MIDI velocity at/above which a note is accented
   uint8_t  resDepth  = 64;    // 303: stands in for the RESONANCE slider (0..127)
   uint8_t  buildup   = 64;    // 303: per-accent C13 charge (0..127)
   uint8_t  hw        = HW_V11_BIPOLAR;    // board variant (see header); full-range MIDI cutoff needs the bipolar board
   uint16_t vcaPark   = VCA_PARK;          // LSB (= mV); VOUTB at rest, calibrate to the pin-1 node
+  uint8_t  sustain   = 0;     // MC-202: accent level held while the gate stays on, 0..127 of the peak
+                              // (match the SH-101's SUSTAIN slider: the MC-202 accent is its envelope)
 };
 
 // EEPROM map (combined.h: 0x010.. free).
@@ -133,7 +145,7 @@ static const uint16_t EE_A_CV_BASE  = 0x011;
 #define EE_CV_MAGIC ((uint8_t*)EE_A_CV_MAGIC)
 #define EE_CV_BASE  ((uint8_t*)EE_A_CV_BASE)        // CFG_LEN bytes, Pack() order
 static const uint8_t EE_CV_MAGIC_VAL = 0x5E;   // 0x5C/0x5D = earlier layouts (reset to defaults)
-static const uint8_t CFG_LEN = 14;   // 12 + vcaPark; 0x25 still accepts the old 12
+static const uint8_t CFG_LEN = 15;   // 12 + vcaPark + sustain; 0x25 still accepts 12 or 14
 
 // The CV block's own bound, asserted next to the constant that sets it rather
 // than in combined.h, because CFG_LEN is what moves. See the EEPROM map there.
@@ -145,12 +157,15 @@ static_assert(EE_A_CV_BASE + CFG_LEN <= EE_A_FEAT_MAGIC,
 struct State {
   Settings s;
   // cutoff
-  int16_t  cutoffTarget = 0;   // LSB offset from center
+  int16_t  cutoffTarget = 0;   // LSB offset from center (the step's, else the CC's)
+  int16_t  ccTarget     = 0;   // what the cutoff CC asks for
+  uint8_t  stepCut      = 0;   // the playing step's filter value, 1..127 (0 = none: the CC's)
   int16_t  cutoffNow    = 0;
   uint8_t  ccLsb        = 0;   // 14-bit CC: LSB (CC cutoffCc+32) last received
   // accent envelope, Q15 (0..32767)
   uint16_t env = 0;
   bool     attacking = false;
+  bool     accOn = false;      // the accent line: high for the accented note's gate
   uint16_t build = 0;          // 303 C13 charge, Q15
   // output
   uint16_t codeA = 2300, codeB = VCA_PARK;
@@ -171,6 +186,7 @@ inline void Pack(const Settings& s, uint8_t* b) {
   b[8] = s.velThr & 0x7F; b[9] = s.resDepth & 0x7F; b[10] = s.buildup & 0x7F;
   b[11] = s.hw & 0x7F;
   b[12] = s.vcaPark & 0x7F; b[13] = (s.vcaPark >> 7) & 0x1F;
+  b[14] = s.sustain & 0x7F;
 }
 inline bool Unpack(const uint8_t* b, Settings& s, uint8_t len = CFG_LEN) {
   uint16_t c = (uint16_t)((b[0] & 0x7F) | ((uint16_t)(b[1] & 0x1F) << 7));
@@ -187,6 +203,7 @@ inline bool Unpack(const uint8_t* b, Settings& s, uint8_t len = CFG_LEN) {
     uint16_t pk = (uint16_t)((b[12] & 0x7F) | ((uint16_t)(b[13] & 0x1F) << 7));
     if (b[12] <= 0x7F && b[13] <= 0x1F && pk <= DAC_MAX) s.vcaPark = pk;
   }
+  if (len >= 15 && b[14] <= 0x7F) s.sustain = b[14];   // EEPROM from before reads 0xFF: keep 0
   return true;
 }
 inline void Save() {
@@ -257,7 +274,8 @@ inline void Flush() {
 inline void Park() {
   BusInit();
   State& st = S();
-  st.env = 0; st.attacking = false; st.build = 0;
+  st.env = 0; st.attacking = false; st.accOn = false; st.build = 0; st.stepCut = 0;
+  st.cutoffTarget = st.ccTarget;
   st.codeA = st.s.center; st.codeB = st.s.vcaPark;
   st.lastA = st.lastB = 0xFFFF;
   Flush();
@@ -275,7 +293,7 @@ inline void Begin() {
 // Bipolar board: 0..16383 = -1..+1 fader throw around the slider's own position
 // (8192 = no change), or 0..+1 with F_CUTOFF_UNIPOLAR. Unipolar board: always
 // 0..+1 throw worth of LSB (the DAC clamps at its 0.55-throw ceiling).
-inline void ApplyCutoff(uint16_t v14) {
+inline int16_t CutoffLsb(uint16_t v14) {
   State& st = S();
   const int32_t F = FaderLsb();
   int32_t t;
@@ -283,8 +301,18 @@ inline void ApplyCutoff(uint16_t v14) {
   else if (v14 >= 8192)                t = ((int32_t)v14 - 8192) * F / 8191;   // 16383 -> +1 throw
   else                                 t = ((int32_t)v14 - 8192) * F / 8192;   //     0 -> -1 throw
   if (t > 8000) t = 8000; if (t < -8000) t = -8000;
-  st.cutoffTarget = (int16_t)t;
+  return (int16_t)t;
 }
+// The step's filter value wins while the sequencer plays one; otherwise the CC.
+inline void Retarget() {
+  State& st = S();
+  st.cutoffTarget = st.stepCut ? CutoffLsb((uint16_t)(st.stepCut << 7)) : st.ccTarget;
+}
+inline void ApplyCutoff(uint16_t v14) { S().ccTarget = CutoffLsb(v14); Retarget(); }
+// Per-step filter CV (engine.h filter lane): v = 1..127 on the CC's scale (64 =
+// the FREQ slider's own position), 0 = none (back to the CC). Glides through the
+// same de-zipper as the CC, so a step change is a 16 ms curve, not a click.
+inline void SetStepCutoff(uint8_t v) { State& st = S(); v &= 0x7F; if (v != st.stepCut) { st.stepCut = v; Retarget(); } }
 inline void OnCc(uint8_t num, uint8_t val) {
   State& st = S();
   if (!(st.s.flags & F_MIDI_CUTOFF)) return;
@@ -294,16 +322,19 @@ inline void OnCc(uint8_t num, uint8_t val) {
 }
 inline void SetCutoffEnabled(bool on) {
   State& st = S();
-  if (on) st.s.flags |= F_MIDI_CUTOFF; else { st.s.flags &= (uint8_t)~F_MIDI_CUTOFF; st.cutoffTarget = 0; }
+  if (on) st.s.flags |= F_MIDI_CUTOFF; else { st.s.flags &= (uint8_t)~F_MIDI_CUTOFF; st.ccTarget = 0; Retarget(); }
   Save();
 }
 
-// A fresh (non-legato) note started. vel = MIDI velocity (0 for panel /
-// sequencer notes, which carry none). Returns true if it was accented.
+// A note (or sequencer step) started. vel = MIDI velocity, 127 for an accented
+// step, 0 for panel / plain sequencer notes. An unaccented note drops the accent
+// line, so the previous note's accent releases now instead of leaking into this
+// one. Returns true if it was accented.
 inline bool NoteOn(uint8_t vel) {
   State& st = S();
   bool acc = (st.s.flags & F_ACCENT_ALL) || (vel && vel >= st.s.velThr);
-  if (!acc) return false;
+  st.accOn = acc;
+  if (!acc) { st.attacking = false; return false; }
   st.attacking = true;                // MC-202 attack RC; the 303 pulse is just as fast
   if (st.s.mode == MODE_TB303) {
     // C13 charge: +0.25 of full sweep per hit at buildup 127, capped at 0.5,
@@ -314,6 +345,9 @@ inline bool NoteOn(uint8_t vel) {
   }
   return true;
 }
+
+// The note's gate dropped: the accent line goes with it (7 ms release).
+inline void NoteOff() { State& st = S(); st.accOn = false; st.attacking = false; }
 
 // --- per-pass update ---------------------------------------------------------
 // Runs the accent envelope and the cutoff slew with the pass's real elapsed
@@ -343,11 +377,18 @@ inline void Tick() {
     else st.env = (uint16_t)(st.env + (uint32_t)(32767 - st.env) * dt / ATTACK_TAU_MS);
     if (st.env >= 32100) { st.env = 32767; st.attacking = false; }
   } else if (st.env) {
-    // exponential decay in integer math: never let the step round to 0, and
-    // snap to 0 below 0.5 % of full scale so the outputs return exactly to rest
-    uint16_t tau = (st.s.mode == MODE_TB303) ? TB303_DECAY_MS : (uint16_t)st.s.decay10ms * 10;
-    uint32_t dec = (uint32_t)st.env * dt / tau; if (!dec) dec = dt;
-    st.env = (dec >= st.env) ? 0 : (uint16_t)(st.env - dec);
+    // Gate held: exponential decay toward the sustain floor (the 303 to 0 in its
+    // fixed 200 ms). Gate gone / next note unaccented: release through the 7 ms
+    // RC. Integer math: never let the step round to 0, and snap to 0 below
+    // 0.5 % of full scale so the outputs return exactly to rest.
+    const bool held = st.accOn;
+    uint16_t floorQ = (held && st.s.mode == MODE_MC202) ? (uint16_t)((uint32_t)st.s.sustain * 32767 / 127) : 0;
+    uint16_t tau = !held ? RELEASE_TAU_MS : (st.s.mode == MODE_TB303) ? TB303_DECAY_MS : (uint16_t)st.s.decay10ms * 10;
+    if (st.env > floorQ) {
+      uint32_t span = (uint32_t)(st.env - floorQ);
+      uint32_t dec = span * dt / tau; if (!dec) dec = dt;
+      st.env = (dec >= span) ? floorQ : (uint16_t)(st.env - dec);
+    }
     if (st.env < 164) st.env = 0;
   }
   if (st.build) {
@@ -363,7 +404,9 @@ inline void Tick() {
     if (st.s.mode == MODE_TB303) {
       // a lone accent sweeps 0.5 of full; the C13 charge (build) adds up to 0.5,
       // so runs of accents climb toward the full sweep like the 303's squelch
-      uint32_t sweep = (uint32_t)st.env / 2 + st.build; if (sweep > 32767) sweep = 32767;
+      // (the C13 charge only reaches the filter while an accent sounds: it
+      // scales with this note's envelope, so it cannot leak into a plain note)
+      uint32_t sweep = (uint32_t)st.env / 2 + (uint32_t)st.build * st.env / 32767; if (sweep > 32767) sweep = 32767;
       vcf = (int32_t)(sweep * VCF_ACC_TB303 / 32767) * st.s.resDepth / 127 * st.s.vcfAmount / 127;
     } else {
       int32_t above = (int32_t)st.env - MC202_THR_Q15;     // only the peak passes the diodes

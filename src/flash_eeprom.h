@@ -33,7 +33,7 @@ static constexpr uint16_t FE_RECORD_PAGES     = FE_ARENA_PAGES - 1; // page 0 = 
 static constexpr uint16_t FE_PAGE             = 256;
 
 // Logical block-id space (flash_persist.h): 16 patterns + settings + spare.
-static constexpr uint16_t FE_MAX_BLOCKS = 24;   // 16 patterns + settings + spare
+static constexpr uint16_t FE_MAX_BLOCKS = 40;   // 16 patterns + settings + 16 filter lanes + spare
 
 // The record header carries a 16-bit id (kept wire-compatible with the 303).
 static constexpr uint8_t  FE_ID_BYTES  = 2;

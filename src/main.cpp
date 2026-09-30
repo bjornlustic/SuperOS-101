@@ -96,6 +96,15 @@ static void SendPattern(uint8_t p) {
   uint8_t n = midi::Pack7(raw, total, body + 4);
   midi::SendSysex(body, (uint8_t)(4 + n));
 }
+// 0x2C <p> <v0 .. v(len-1)>: pattern p's per-step filter CV, one 7-bit value a
+// step (0 none, 1..127), as many as the pattern has steps.
+static void SendFilter(uint8_t p) {
+  if (p >= engine::NUM_PATTERNS) return;
+  uint8_t body[2 + engine::MAX_STEPS];
+  body[0] = 0x2C; body[1] = p;
+  g_engine.seq().filterLane(p, body + 2);
+  midi::SendSysex(body, (uint8_t)(2 + g_engine.seq().length(p)));
+}
 static void SendConfig() {
   uint8_t body[8 + 24];
   body[0] = 0x21; body[1] = 0;                       // fw 0 = SuperOS
@@ -110,14 +119,14 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[13] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[14] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
                   (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
-                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru()};
+                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru(), midi::NoteOut()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendScale(uint8_t p) {
@@ -128,17 +137,18 @@ static void SendScale(uint8_t p) {
 static void SendAck(uint8_t code) { uint8_t b[2] = {0x14, code}; midi::SendSysex(b, 2); }
 // 0x24: CV DAC config (cvdac.h Pack order) + live codes for the editor's meters.
 static void SendCvConfig() {
-  // 12 config bytes, the 4 live-code bytes, then vcaPark: appended after the
-  // codes so readers that index the codes at 12..15 keep working.
+  // 12 config bytes, the 4 live-code bytes, then vcaPark and sustain: appended
+  // after the codes so readers that index the codes at 12..15 keep working.
   uint8_t cfg[cvdac::CFG_LEN];
   cvdac::Pack(cvdac::Get(), cfg);
-  uint8_t body[1 + 12 + 4 + 2];
+  uint8_t body[1 + 12 + 4 + 2 + 1];
   body[0] = 0x24;
   for (uint8_t i = 0; i < 12; ++i) body[1 + i] = cfg[i];
   uint16_t a = cvdac::CodeA(), b = cvdac::CodeB();
   body[13] = a & 0x7F; body[14] = (a >> 7) & 0x1F;
   body[15] = b & 0x7F; body[16] = (b >> 7) & 0x1F;
   body[17] = cfg[12]; body[18] = cfg[13];
+  body[19] = cfg[14];   // sustain (MC-202 accent), after the park
   midi::SendSysex(body, sizeof(body));
 }
 static void SendStep() {
@@ -149,8 +159,14 @@ static void SendStep() {
 static void OnSysex(const uint8_t* body, uint8_t len) {
   if (sysex::HandleCommon(body, len)) return;
   switch (body[0]) {
-    case 0x10: if (len >= 2) SendPattern(body[1]); break;
-    case 0x13: for (uint8_t p = 0; p < engine::NUM_PATTERNS; ++p) SendPattern(p); break;
+    case 0x10: if (len >= 2) { SendPattern(body[1]); SendFilter(body[1]); } break;
+    case 0x13: for (uint8_t p = 0; p < engine::NUM_PATTERNS; ++p) { SendPattern(p); SendFilter(p); } break;
+    case 0x2B: if (len >= 2) SendFilter(body[1]); break;          // request a filter lane -> 0x2C
+    case 0x2D:   // SET FILTER LANE [pat, v0 .. vn-1] (n <= 128; the rest 0) -> 0x14
+      if (len >= 2) { bool ok = g_engine.seq().setFilterLane(body[1], body + 2, (uint8_t)(len - 2));
+                      if (ok) g_lastEditMs = millis(); SendAck(ok ? 0 : 2); }
+      else SendAck(1);
+      break;
     case 0x12: {
       if (len < 4) { SendAck(2); break; }
       uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4 + engine::MAX_STEPS / 8];
@@ -261,6 +277,10 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           // MIDI OUT mode: 0 = OUT (the notes it plays), 1 = THRU (IN mirrored, its own
           // notes not sent; a sounding note is released next pass). Saved, as menu key 32.
           case 11: if (v <= 1) { midi::SetThru(v); sysex::SaveThru(v); } break;
+          // Note output: 0 DIN and USB, 1 DIN only, 2 USB only, 3 off. The sounding
+          // note is released where it was sent first, then replays on the new ports.
+          case 12: if (v <= 3) { if (g_outNote >= 0) midi::NoteOff((uint8_t)g_outNote); g_outNote = -1;
+                                 midi::SetNoteOut(v); sysex::SaveNoteOut(v); } break;
           default: break;
         }
       }
@@ -505,10 +525,24 @@ void superos_loop() {
   // when an accented sequencer step starts (out.accent, legato steps too);
   // other panel notes carry no velocity (ACCENT_ALL flag covers them).
   // Then one tick of the envelope / cutoff slew and the DAC writes.
+  // The accent lasts one note: its gate dropping ends it (7 ms release), and a
+  // sequencer step that starts unaccented (a legato one included) ends the
+  // previous one's. A step's filter value (0 = none) goes to the cutoff at the
+  // step's start; stopping hands the cutoff back to the CC.
   {
     bool fresh = out.gate && (!g_prevGate || out.portaOff);
+    bool fell = g_prevGate && !out.gate;
     g_prevGate = out.gate;
-    if (fresh || out.accent) { cvdac::NoteOn(out.accent ? 127 : g_lastVel); g_lastVel = 0; }
+    if (fell) cvdac::NoteOff();
+    if (out.stepStart && out.gate && !fresh) cvdac::NoteOn(out.accent ? 127 : 0);   // legato step
+    else if (fresh) { cvdac::NoteOn(out.accent ? 127 : (out.stepStart ? 0 : g_lastVel)); }
+    if (fresh || out.stepStart) g_lastVel = 0;
+    const bool playing = g_engine.mode() == engine::MODE_SEQ_PLAY;
+    static bool s_wasPlaying = false;
+    if (out.stepStart) cvdac::SetStepCutoff(out.filter);
+    else if (s_wasPlaying && !playing) cvdac::SetStepCutoff(0);
+    s_wasPlaying = playing;
+    g_engine.seq().laneService(!playing || g_engine.seq().halfSeen());
     cvdac::Tick();
   }
   if (midi::HostSeen()) {
@@ -518,9 +552,11 @@ void superos_loop() {
     uint16_t ed = g_engine.seq().consumeEdited();
     for (uint8_t p = 0; ed && p < engine::NUM_PATTERNS; ++p) if (ed & (1u << p)) SendPattern(p);
     if (g_engine.seq().consumeSelChanged()) SendConfig();
+    uint16_t fl = g_engine.seq().consumeLaneChanged();
+    for (uint8_t p = 0; fl && p < engine::NUM_PATTERNS; ++p) if (fl & (1u << p)) SendFilter(p);
     uint16_t sc = g_engine.seq().consumeScaleChanged();
     for (uint8_t p = 0; sc && p < engine::NUM_PATTERNS; ++p) if (sc & (1u << p)) SendScale(p);
-  } else { g_engine.seq().consumeScaleChanged(); g_engine.seq().consumeStepChanged(); g_engine.seq().consumeEdited(); g_engine.seq().consumeSelChanged(); }
+  } else { g_engine.seq().consumeLaneChanged(); g_engine.seq().consumeScaleChanged(); g_engine.seq().consumeStepChanged(); g_engine.seq().consumeEdited(); g_engine.seq().consumeSelChanged(); }
 
   // Deferred pattern persistence: SysEx writes and panel edits land in RAM;
   // flush one dirty pattern per pass once things have been quiet for 500 ms

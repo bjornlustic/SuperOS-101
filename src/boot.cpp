@@ -270,6 +270,7 @@ void setup() {
   midi::Begin(sysex::LoadChannel());   // UART1 rings + ISRs (both firmwares)
   midi::SetThru(sysex::LoadThru());
   midi::SetClockFrom(sysex::LoadClockFrom());
+  midi::SetNoteOut(sysex::LoadNoteOut());
   midiclk::Begin();                    // saved sync/division settings
   cvdac::Begin();                      // CV DAC neutral in both firmwares (the emulator never writes it)
   uint8_t sel = eeprom_read_byte(EE_FW_SELECT);

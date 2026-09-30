@@ -41,6 +41,8 @@ inline void SaveThru(bool on) { eeprom_update_byte(EE_CFG_THRU, on ? 1 : 0); }
 // Clock source (midi.h CLK_*). Same rule: an older image's 0xFF reads as both.
 inline uint8_t LoadClockFrom() { uint8_t v = eeprom_read_byte(EE_CFG_CLKSRC); return v <= 2 ? v : 0; }
 inline void SaveClockFrom(uint8_t v) { eeprom_update_byte(EE_CFG_CLKSRC, v); }
+inline uint8_t LoadNoteOut() { uint8_t v = eeprom_read_byte(EE_CFG_NOTEOUT); return v <= 3 ? v : 0; }
+inline void SaveNoteOut(uint8_t v) { eeprom_update_byte(EE_CFG_NOTEOUT, v); }
 
 // 0x34 -> 0x35 build identity: "<version> <sha>[*]" in 7-bit ASCII, e.g.
 // "0.2 0642b7f" clean or "0.2 0642b7f*" dirty. Same opcode pair and same

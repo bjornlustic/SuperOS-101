@@ -19,7 +19,11 @@ namespace persist {
 static const uint8_t  NUM_PATTERNS    = 16;   // keys 1-16; each up to 128 steps
 static const uint16_t FB_PATTERN_BASE = 0;
 static const uint16_t FB_SETTINGS     = 16;   // reserved, unused (was 8 with 8 patterns; never written)
-static_assert(FB_SETTINGS + 1 <= FE_MAX_BLOCKS, "block map exceeds FE_MAX_BLOCKS");
+// Per-step filter CV lane of pattern p (engine.h): MAX_STEPS bytes, 0..127, in
+// its own block like the SuperOS-303's (fcv_codec.h) so the pattern record and
+// its format are untouched; an older store reads these ids as absent (all 0).
+static const uint16_t FB_FILTER_BASE  = 17;
+static_assert(FB_FILTER_BASE + NUM_PATTERNS <= FE_MAX_BLOCKS, "block map exceeds FE_MAX_BLOCKS");
 
 #ifdef __AVR__
 } // namespace persist

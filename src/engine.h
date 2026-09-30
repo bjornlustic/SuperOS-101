@@ -97,6 +97,7 @@ static const uint8_t LANE_NOTE   = 0;
 static const uint8_t LANE_ACCENT = 1;   // per-step accent (CV DAC mod), 0x16 only; RANDOMIZE refuses it
 static const uint8_t LANE_SLIDE  = 2;   // absent on the 101 -> ack 2
 static const uint8_t LANE_GATE   = 3;
+static const uint8_t LANE_FILTER = 4;   // per-step filter CV, 0 none / 1..127 (0x16 only)
 static const uint8_t LANE_ALL    = 0x7F;
 
 // One step byte, the SH-101's own model: 6-bit CV + 2 type bits.
@@ -104,7 +105,10 @@ inline uint8_t  StepByte(uint8_t cv, StepType t) { return (uint8_t)((cv & 0x3F) 
 inline uint8_t  StepCv  (uint8_t s) { return s & 0x3F; }
 inline StepType StepKind(uint8_t s) { uint8_t t = s >> 6; return t > 2 ? STEP_NOTE : (StepType)t; }
 
-struct Output { uint8_t cv; bool gate; bool clockReset; bool portaOff; bool accent; };   // accent: an accented sequencer step starts this pass
+// accent: an accented sequencer step starts this pass. stepStart: a sequencer
+// step (any kind) starts this pass, with filter = its per-step filter value
+// (0 = none, else 1..127 on the cutoff CC's scale).
+struct Output { uint8_t cv; bool gate; bool clockReset; bool portaOff; bool accent; bool stepStart; uint8_t filter; };
 
 // --- held-key (32-bit) mask helpers -----------------------------------------
 inline int8_t lowestKey (uint32_t m) { for (uint8_t k = 0; k < 32; ++k) if (m & (1UL << k)) return (int8_t)k; return -1; }
@@ -189,6 +193,17 @@ class Sequencer {
   // Per-step accent, 1 bit each (bit i&7 of byte i>>3): the step fires the CV
   // DAC's accent envelope (cvdac.h) as a velocity-127 note would.
   uint8_t acc_[NUM_PATTERNS][MAX_STEPS / 8];
+  // Per-step filter CV (0 = none: the cutoff CC / FREQ slider; 1..127 on the
+  // CC's scale, 64 = the slider's own position). All 16 lanes would cost 2 KB of
+  // an 8 KB part whose stack needs the room, so the lanes live in the flash
+  // arena (FB_FILTER_BASE + p) and two are cached: slot 0 is always the
+  // current pattern's (playback reads it), slot 1 holds the pattern queued
+  // next (preloaded between notes, so a switch on the bar is a swap, not a
+  // 5 ms flash read) or the last other pattern an editor changed. Dirty slots
+  // are written by flushOne() with the patterns.
+  struct Lane { uint8_t pat; bool dirty; uint8_t v[MAX_STEPS]; };
+  Lane lane_[2] = {{0xFF, false, {}}, {0xFF, false, {}}};
+  uint16_t laneChanged_ = 0;          // bit p = lane p changed (mirror to the editor, 0x2C)
   // Scale per pattern: bits 0-11 = allowed pitch classes (bit 0 = C), bit 15
   // = on. Non-destructive: steps keep their pitch, the output snaps to the
   // nearest allowed note (lower on a tie), before any transpose (as the 303).
@@ -304,7 +319,7 @@ class Sequencer {
     if (p >= NUM_PATTERNS) return;
     queued_ = 0xFF; chainN_ = 0;
     if (p == cur_) return;
-    cur_ = p; loopLen_ = 0; selChanged_ = true;
+    cur_ = p; loopLen_ = 0; selChanged_ = true; laneFollow();
     uint8_t l = effLen();
     if (l) pos_ = (uint8_t)(pos_ % l);
     realign(steps_);
@@ -337,6 +352,7 @@ class Sequencer {
   // CONTENT is not touched here, loadAll() reloads it from flash right after.
   void resetRuntime() {
     dirty_ = 0; cur_ = 0; pos_ = 0; curCv_ = CV_BASE; curGate_ = false;
+    lane_[0].pat = lane_[1].pat = 0xFF; lane_[0].dirty = lane_[1].dirty = false; laneChanged_ = 0;
     stepChanged_ = false; selChanged_ = false; edited_ = 0;
     started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0; steps_ = 0; rotPending_ = 0;
     chainN_ = 0; chainPos_ = 0; wcur_ = 0;
@@ -350,12 +366,18 @@ class Sequencer {
   bool consumeStepChanged() { bool c = stepChanged_; stepChanged_ = false; return c; }
 
   void select(uint8_t p) {
-    if (p < NUM_PATTERNS && p != cur_) { cur_ = p; loopLen_ = 0; rewind(); selChanged_ = true; }
+    if (p < NUM_PATTERNS && p != cur_) { cur_ = p; loopLen_ = 0; laneFollow(); rewind(); selChanged_ = true; }
     queued_ = 0xFF; chainN_ = 0;
   }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
   void markEdited() { edited_ |= (uint16_t)(1u << cur_); }
-  void clear() { len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); memset(acc_[cur_], 0, sizeof(acc_[cur_])); dirty_ |= (uint16_t)(1u << cur_); }
+  void clear() {
+    len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); memset(acc_[cur_], 0, sizeof(acc_[cur_]));
+    dirty_ |= (uint16_t)(1u << cur_);
+    laneFollow();
+    bool any = false; for (uint8_t i = 0; i < MAX_STEPS; ++i) any |= lane_[0].v[i] != 0;
+    if (any) { memset(lane_[0].v, 0, MAX_STEPS); lane_[0].dirty = true; laneChanged_ |= (uint16_t)(1u << cur_); }
+  }
   // Stock "Correcting and Adding" (OM p.35): LOAD while playing keeps the
   // pattern and re-loads from the step after the one sounding; steps past
   // the corrected ones stay and play.
@@ -375,6 +397,84 @@ class Sequencer {
   void ratchetRaw(uint8_t p, uint8_t i, uint8_t v) {
     uint8_t sh = (uint8_t)((i & 3) * 2);
     rat_[p][i >> 2] = (uint8_t)((rat_[p][i >> 2] & ~(3u << sh)) | ((v & 3u) << sh));
+  }
+  // --- filter lane cache ---
+  void laneWrite(Lane& l) {
+    if (l.pat < NUM_PATTERNS && l.dirty && persist::Available())
+      persist::Store().write((uint16_t)(persist::FB_FILTER_BASE + l.pat), l.v, MAX_STEPS);
+    l.dirty = false;
+  }
+  void laneRead(uint8_t p, uint8_t* dst) const {
+    uint8_t n = persist::Available() ? persist::Store().read((uint16_t)(persist::FB_FILTER_BASE + p), dst, MAX_STEPS) : 0;
+    for (uint8_t i = n; i < MAX_STEPS; ++i) dst[i] = 0;
+    for (uint8_t i = 0; i < n; ++i) dst[i] &= 0x7F;
+  }
+  void laneLoad(Lane& l, uint8_t p) { if (l.pat == p) return; laneWrite(l); laneRead(p, l.v); l.pat = p; l.dirty = false; }
+  // Slot 0 = cur_ (call whenever cur_ changes).
+  void laneFollow() {
+    if (lane_[0].pat == cur_) return;
+    Lane t = lane_[0]; lane_[0] = lane_[1]; lane_[1] = t;   // the old current waits in slot 1
+    if (lane_[0].pat != cur_) laneLoad(lane_[0], cur_);
+  }
+  // The lane of p for an edit (loads into slot 1 when it is not cached).
+  Lane& laneFor(uint8_t p) {
+    if (lane_[0].pat == p) return lane_[0];
+    laneLoad(lane_[1], p);
+    return lane_[1];
+  }
+ public:
+  // Between notes (or stopped): preload the queued pattern's lane so the switch
+  // on the bar is a swap. Called every main-loop pass.
+  void laneService(bool quietNow) {
+    if (queued_ < NUM_PATTERNS && queued_ != cur_ && lane_[1].pat != queued_ && quietNow) laneLoad(lane_[1], queued_);
+  }
+  uint8_t filter(uint8_t p, uint8_t i) {
+    if (p >= NUM_PATTERNS || i >= MAX_STEPS) return 0;
+    if (lane_[0].pat == p) return lane_[0].v[i];
+    if (lane_[1].pat == p) return lane_[1].v[i];
+    uint8_t tmp[MAX_STEPS]; laneRead(p, tmp); return tmp[i];
+  }
+  // The whole lane of p into dst (MAX_STEPS bytes), cached or from flash.
+  void filterLane(uint8_t p, uint8_t* dst) {
+    if (p >= NUM_PATTERNS) { memset(dst, 0, MAX_STEPS); return; }
+    if (lane_[0].pat == p) memcpy(dst, lane_[0].v, MAX_STEPS);
+    else if (lane_[1].pat == p) memcpy(dst, lane_[1].v, MAX_STEPS);
+    else laneRead(p, dst);
+  }
+  // SysEx 0x16 lane 4: one step (rests too: the value then rides the rest, as the 303).
+  bool setFilter(uint8_t p, uint8_t idx, uint8_t v) {
+    if (p >= NUM_PATTERNS || idx >= len_[p] || v > 127) return false;
+    Lane& l = laneFor(p);
+    if (l.v[idx] != v) { l.v[idx] = v; l.dirty = true; laneChanged_ |= (uint16_t)(1u << p); }
+    return true;
+  }
+  // SysEx 0x2D: the lane whole (n values from step 0; the rest 0).
+  bool setFilterLane(uint8_t p, const uint8_t* v, uint8_t n) {
+    if (p >= NUM_PATTERNS || n > MAX_STEPS) return false;
+    Lane& l = laneFor(p);
+    bool changed = false;
+    for (uint8_t i = 0; i < MAX_STEPS; ++i) {
+      uint8_t nv = i < n ? (uint8_t)(v[i] & 0x7F) : 0;
+      if (l.v[i] != nv) { l.v[i] = nv; changed = true; }
+    }
+    if (changed) { l.dirty = true; laneChanged_ |= (uint16_t)(1u << p); }
+    return true;
+  }
+  uint16_t consumeLaneChanged() { uint16_t c = laneChanged_; laneChanged_ = 0; return c; }
+  // The playing step's filter value. A TIE (legato step) with none of its own
+  // holds the value of the note it continues (walking back through the chain),
+  // so a held note keeps one cutoff; a note or rest with 0 releases to the CC.
+  uint8_t filterNow() const {
+    const Lane& l = lane_[0];
+    if (l.pat != cur_) return 0;
+    uint8_t len = effLen(); if (!len) return 0;
+    uint8_t i = (uint8_t)(pos_ % len);
+    for (uint8_t k = 0; k < len; ++k) {
+      if (l.v[i]) return l.v[i];
+      if (StepKind(step_[cur_][i]) != STEP_LEGATO) return 0;
+      i = (uint8_t)((i + len - 1) % len);
+    }
+    return 0;
   }
   bool accent(uint8_t p, uint8_t i) const { return (acc_[p < NUM_PATTERNS ? p : 0][i >> 3] >> (i & 7)) & 1; }
   bool accentCur() const { return accent(cur_, pos_); }
@@ -454,6 +554,8 @@ class Sequencer {
     } else if (lane == 3) {                                  // gate/legato field
       if (StepKind(s) == STEP_REST) return false;            // no gate on a rest
       s = StepByte(StepCv(s), value ? STEP_LEGATO : STEP_NOTE);
+    } else if (lane == LANE_FILTER) {
+      return setFilter(p, idx, value);
     } else if (lane == LANE_ACCENT) {
       if (StepKind(s) == STEP_REST || value > 1) return false;   // no accent on a rest
       accentRaw(p, idx, value);
@@ -520,7 +622,7 @@ class Sequencer {
     // Loop pass complete with a pattern switch waiting: switch now, and the
     // new pattern starts at its first step.
     if (started_ && queued_ != 0xFF && cycle_ == 0) {
-      if (queued_ != cur_) { cur_ = queued_; loopLen_ = 0; selChanged_ = true; }
+      if (queued_ != cur_) { cur_ = queued_; loopLen_ = 0; selChanged_ = true; laneFollow(); }
       if (chainN_ > 1) { chainPos_ = (uint8_t)((chainPos_ + 1) % chainN_); queued_ = chain_[chainPos_]; }
       else queued_ = 0xFF;
     }
@@ -559,6 +661,15 @@ class Sequencer {
     for (uint8_t i = 0; i < len; ++i) {
       uint8_t src = (uint8_t)((i + len - k) % len);
       step_[p][i] = tmp[src]; ratchetRaw(p, i, rt[src] & 3); accentRaw(p, i, rt[src] >> 2);
+    }
+    {   // the filter lane moves with its steps
+      Lane& l = laneFor(p);
+      bool any = false;
+      for (uint8_t i = 0; i < len; ++i) { tmp[i] = l.v[i]; any |= tmp[i] != 0; }
+      if (any) {
+        for (uint8_t i = 0; i < len; ++i) l.v[i] = tmp[(uint8_t)((i + len - k) % len)];
+        l.dirty = true; laneChanged_ |= (uint16_t)(1u << p);
+      }
     }
     dirty_ |= (uint16_t)(1u << p); edited_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
@@ -706,12 +817,17 @@ class Sequencer {
       }
     }
     dirty_ = 0;
+    lane_[0].pat = lane_[1].pat = 0xFF; lane_[0].dirty = lane_[1].dirty = false;
+    laneFollow();
   }
-  bool dirty() const { return dirty_ != 0; }
+  bool dirty() const { return dirty_ != 0 || lane_[0].dirty || lane_[1].dirty; }
   // Persist ONE dirty pattern (a page write halts the CPU for a few ms).
   // Returns true if something was written.
   bool flushOne() {
-    if (!dirty_) return false;
+    if (!dirty_) {   // patterns first, then the filter lanes
+      for (uint8_t k = 0; k < 2; ++k) if (lane_[k].dirty) { laneWrite(lane_[k]); return true; }
+      return false;
+    }
     for (uint8_t p = 0; p < NUM_PATTERNS; ++p) {
       if (!(dirty_ & (1u << p))) continue;
       dirty_ &= (uint16_t)~(1u << p);
@@ -1031,7 +1147,7 @@ class NoteEngine {
     prevRaw_ = mask;
     if (tune_) {
       // A at the panel's octave: key 16 = A4 = 440 Hz at 8', TRANSPOSE middle.
-      Output t{noteCv(16, p), true, false, !prevTune_, false};
+      Output t{noteCv(16, p), true, false, !prevTune_, false, false, 0};
       prevTune_ = true; prevMask_ = mask; prevExtCv_ = extCv; lastCv_ = t.cv;
       return t;
     }
@@ -1085,7 +1201,7 @@ class NoteEngine {
       holdMask_ = 0;
     }
 
-    Output o{lastCv_, false, false, false, false};
+    Output o{lastCv_, false, false, false, false, false, 0};
     switch (mode_) {
       case MODE_ARP_UP: case MODE_ARP_DOWN: case MODE_ARP_UPDOWN: case MODE_ARP_RANDOM:
         // CLOCK RESET only when the arp starts (first key after silence), so
@@ -1202,6 +1318,7 @@ class NoteEngine {
         // Accented step: fires at the step's start (legato ones too, 303
         // style) and on each ratchet sub-hit.
         o.accent = o.gate && (began || o.portaOff) && seq_.accentCur();
+        if (began) { o.stepStart = true; o.filter = seq_.filterNow(); }
         break;
       }
 
