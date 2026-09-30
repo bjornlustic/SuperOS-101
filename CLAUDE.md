@@ -68,13 +68,24 @@ does not exist here and acks status 2 rather than being silently accepted. Lane 
 (**accent**) exists since 2026-09-30 (the CV DAC mod): 0x16 lane 1 sets it (ack 2
 on a rest), RANDOMIZE still refuses it, and 0x11/0x12 and the flash record carry
 a packed ceil(len/8)-byte accent tail after the ratchet tail (flash: after the 2
-scale bytes). So the G12 combination axes that apply are length boundary,
+scale bytes). Lane 4 is the per-step **filter CV** (0..127), which is NOT in the
+pattern record or 0x11: it lives in its own flash blocks (FB_FILTER_BASE + p) and
+travels as 0x2C (sent after every 0x11) / 0x2D. So the G12 combination axes that apply are length boundary,
 legato/tie, accent, playhead position and edit type; chain and A/B are a
 *report*, not an omission, when you describe coverage.
 
+**The accent lasts one note.** It ends with the note's gate or when the next step
+starts unaccented (the MC-202's CPU accent line), 7 ms release. A test expecting
+an accent tail into the next step is testing the pre-56a13bc bug.
+
+**Flash the 101 over DIN, not over the MPC's USB.** That link drops bootloader
+messages; `AkaiMPCLIVE2/tools/device/sh101_update.py --din` sends through MPC
+Port A and fails unless the build identity (0x35) changed.
+
 **MIDI OUT vs THRU is a setting, not a cable.** 0x65 id 11 (0x66's 12th field,
 panel menu key 32, saved): THRU mirrors MIDI IN to OUT and suppresses the 101's
-own notes. A host that sees no notes from the 101 should check this first.
+own notes. A host that sees no notes from the 101 should check this first, and
+then `0x65 id 12` (notes out: DIN+USB / DIN / USB / off).
 
 `NUM_PATTERNS` 8, `MAX_STEPS` 128, `MIDI_CV_OFFSET` 36 (cv = note - 36, clamped
 0..63). Edit lanes: 0 = note (value is the MIDI note, 0 = rest), 3 = gate (0

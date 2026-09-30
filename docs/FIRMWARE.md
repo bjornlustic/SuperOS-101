@@ -244,12 +244,63 @@ carries it after the scale bytes). Other panel notes carry no velocity; the
 
 | | MC-202 | TB-303 |
 |---|---|---|
-| envelope | 7 ms one-pole attack, exponential decay `decay10ms` (default 300 ms) | same attack, **fixed 200 ms** decay (the 303 overrides DECAY on accents) |
+| envelope | 7 ms one-pole attack (R184 330k x C74 22n), exponential decay `decay10ms` toward `sustain` while the gate is held | same attack, **fixed 200 ms** decay to 0 (the 303 overrides DECAY on accents) |
+| end | **one note only**: 7 ms release when the note's gate drops or the next step starts unaccented (the MC-202's CPU drops its accent line at the next step, and the accent, being envelope x ACCENT pot, falls through the same RC) | same; the C13 build-up carries to the next ACCENTED note but only reaches the filter while an accent sounds (it is scaled by the note's accent envelope) |
 | VCF | only the part above a 15 % threshold passes (the MC-202's two diodes), max ~0.4 fader throw | env/2 + **build-up** (leaky integrator, +`buildup` per hit, 400 ms bleed = C13), scaled by `resDepth` (stands in for the 303's second RESONANCE pot gang; the SH-101's RES slider is a passive audio attenuator and cannot be read), max ~0.8 fader throw |
 | VCA | `vcaAmount` 64 = +1 envelope (the MC-202's 3.3k‖3.3k) | `vcaAmount` up to the cap of **100 = +1.6 envelopes** (the 303's 1k vs 2.2k would be +2.2; capped because BA662 pin 1 is rated ~2 mA and the envelope alone is ~0.78 mA: 0.78 + 1.23 = 2.0 mA at amount 100) |
 
-Settings persist in internal EEPROM 0x010..0x01B (`combined.h`). SysEx 0x23 /
-0x24 / 0x25 carry the 11-byte config (`cvdac::Pack` order) plus the live DAC
-codes for metering. Headroom note: at cutoff CC near the top the VCF accent
+Why one note: before 56a13bc the accent ran on its own 300 ms clock, so at
+16th notes an accent overlapped the next two steps, and VOUTB kept pushing VCA
+current after the gate had closed. Measured on the unit after the change
+(2026-09-30, DAC codes read over 0x24 while playing): an accented step drives
+VOUTB to ~2200 mV and it is back at the 700 mV rest within one 35 ms read of the
+next (legato, unaccented) step starting. The accent amounts are what the two
+originals' ACCENT pots are: an amount, not a share of other panel settings.
+`vcaAmount` is extra envelope current as a share of the synth's own envelope
+peak (64 = +100 %), `vcfAmount` a share of the model's full sweep. The MC-202's
+accent follows its own envelope's shape; the SH-101's envelope cannot be read
+by the CPU (no ADC pin is free), so `decay10ms` and `sustain` are set to match
+the SH-101's DECAY and SUSTAIN sliders.
+
+Settings persist in internal EEPROM 0x010..0x01F (`combined.h`). SysEx 0x23 /
+0x24 / 0x25 carry the config (`cvdac::Pack` order: 12 bytes, then vcaPark lo7
+hi5 and sustain) plus the live DAC codes for metering (0x24: the 12 bytes, the
+codes, then park and sustain; 0x25 accepts 12, 14 or 15 bytes). Headroom note: at cutoff CC near the top the VCF accent
 saturates (the filter is wide open there anyway); R8 22k would buy +50 % more
 range if ever wanted.
+
+## Filter CV per step
+
+Each step can carry a filter value (0 = none: the cutoff CC and the FREQ slider
+decide; 1..127 on the cutoff CC's scale, 64 = the slider's own position, 0 and
+127 = one FREQ-fader throw down / up). It goes to the cutoff at the step's start
+and glides through the CC's 16 ms de-zipper; a TIE with no value of its own
+holds the value of the note it continues (the SuperOS-303's rule,
+`fcv_codec.h`), a note or rest with 0 hands the cutoff back to the CC, and so
+does stopping. The accent's filter bump adds on top.
+
+Storage: 16 lanes of 128 bytes would cost 2 KB of the 8 KB part, which the
+stack needs, so each lane is its own flash-arena block (`FB_FILTER_BASE + p`,
+`FE_MAX_BLOCKS` 40; the pattern record and its format are untouched) and two
+are cached in RAM: slot 0 is always the playing pattern's, slot 1 the queued
+pattern's (preloaded between notes so a switch on the bar is a swap, not a
+flash read) or the last other pattern an editor changed. A dirty slot is written
+by the deferred flush after the patterns; lanes only go dirty on a real change.
+
+SysEx: `0x16 <p> 4 <step> <v>` sets one step (rests too), `0x2B <p>` requests a
+lane (-> `0x2C <p> <v0..vlen-1>`, one byte a step), `0x2D <p> <v...>` sets it
+whole. Every `0x11` the unit sends is followed by that pattern's `0x2C`, and a
+lane change is mirrored like a pattern edit. Nudge rotates the lane with the
+notes; LOAD's clear clears it. No panel entry: the editors set it (web editor
+FLT slider, MPC 101 page filter key + DATA, Mac step card slider).
+Measured on the unit (2026-09-30): a step value of 100 moves VOUTA from the
+850 center to 1989 (850 + 1139, as computed) within ~40 ms and back at the next
+step without a value.
+
+## Note output
+
+`0x65 id 12` (saved in EEPROM 0x009, 0x66's 13th field): where the notes the 101
+plays go, 0 DIN and USB (default), 1 DIN only, 2 USB only, 3 off. SysEx and
+soft thru are not affected, so an editor on USB keeps full sync with the notes
+off its port (an MPC whose pads would otherwise play them). Changing it releases
+a sounding note on the old ports first.

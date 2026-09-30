@@ -80,6 +80,11 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
 - **MIDI OUT / THRU**: SysEx 0x65 id 11 (saved; 0x66's 12th field; panel menu key 32): 0 OUT
   sends the notes the 101 plays (keys, arp, sequencer; accented steps at velocity 127), 1 THRU
   mirrors MIDI IN to OUT and sends none of its own notes, so a sequence does not spam the chain.
+- **Notes out**: SysEx 0x65 id 12 (saved; 0x66's 13th field): the notes the 101 plays go to DIN
+  and USB, DIN only, USB only, or nowhere. SysEx sync is unaffected.
+- **Filter CV per step** (CV DAC mod): 0 = none, 1..127 on the cutoff CC's scale (64 = the FREQ
+  slider). Set from the editors (0x16 lane 4, 0x2B/0x2C/0x2D); ties hold their note's value.
+  See docs/FIRMWARE.md "Filter CV per step".
 - **Accent per step** (CV DAC mod): in LOAD, hold **U&D** while entering a note (with HOLD too
   for an accented legato step). The step fires the accent envelope like a velocity-127 note.
   SysEx 0x16 lane 1 (0/1), and a packed accent tail after the ratchets on 0x11/0x12.
