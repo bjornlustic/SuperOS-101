@@ -195,7 +195,7 @@
   .is-note .r-btn.acc-btn.is-on { background:var(--red); border-color:var(--red); color:var(--white); }
   .step-card.is-acc .step-num::after { content:' >'; color:var(--red); }
   /* Rest cards hide the pitch machinery in CSS, not JS; ratchets need a plain note */
-  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row, .is-rest .step-ratchet, .is-tie .step-ratchet, .is-rest .step-acc { visibility:hidden; }
+  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row, .is-rest .step-ratchet, .is-tie .step-ratchet, .is-rest .step-acc, .is-rest .step-flt { visibility:hidden; }
   .cv-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .cv-row input[type=number] { width:72px; }
   /* Scale on and the note is outside it: the unit plays the snapped note */
@@ -967,7 +967,7 @@ function writePattern(p) {
   pendingWrite = p;
   sendSysex([0x12, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
   lastSent = {pat: p, len: patterns[p].length, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat, acc: s.acc, flt: s.flt || 0}))};
-  if (patterns[p].some(s => s.flt) || lanePresent[p]) sendSysex([0x2D, p, ...patterns[p].map(s => (s.flt || 0) & 0x7F)]);   // the filter lane whole
+  if (patterns[p].some(s => s.flt) || lanePresent[p]) sendSysex([0x2D, p, ...patterns[p].map(fltOut)]);   // the filter lane whole (0 on rests)
   log('write pattern ' + (p + 1) + ' (' + patterns[p].length + ' steps)', 'log-syx');
 }
 function selectDevicePattern(p) { sendSysex([0x1D, p]); }
@@ -1009,7 +1009,7 @@ function scheduleLiveSend() {
       // accent lane 1 (the unit refuses it on a rest); resent with a changed
       // note so a step that was a rest cannot keep a stale bit on the unit
       if (a.type !== 1 && (stepChanged || a.acc !== b.acc)) { sendSysex([0x16, p, 1, i, a.acc ? 1 : 0]); ++sent; }
-      if (!b || (a.flt || 0) !== (b.flt || 0)) { sendSysex([0x16, p, 4, i, (a.flt || 0) & 0x7F]); ++sent; }   // filter lane (rests too)
+      if (!b || fltOut(a) !== fltOut(b)) { sendSysex([0x16, p, 4, i, fltOut(a)]); ++sent; }   // filter lane (a rest takes none: the unit refuses it)
     }
     lastSent = {pat: p, len, steps: pat.map(s => ({cv: s.cv, type: s.type, rat: s.rat, acc: s.acc, flt: s.flt || 0}))};
     dirty[p] = false; renderPills();
@@ -1507,6 +1507,8 @@ function stepNameHtml(s) {
   return (s.type === 2 ? '<span class="tie-mark">&#8767;</span>' : '') + noteName(s.cv) +
          (snap !== s.cv ? '<span class="snap" title="Outside the scale: the unit plays ' + noteName(snap) + '">&#8594;' + noteName(snap) + '</span>' : '');
 }
+// The filter value a step sends: none on a rest (the unit refuses one there, as the accent).
+function fltOut(s) { return s.type === 1 ? 0 : (s.flt || 0) & 0x7F; }
 function stepStateClass(t) { return t === 1 ? ' is-rest' : t === 2 ? ' is-tie' : ' is-note'; }
 function renderSteps() {
   const el = $('steps');
@@ -1704,7 +1706,7 @@ document.addEventListener('keydown', ev => {
   if (k === 'r' || k === 'R') edit(() => s.type = 1);
   if (k === 'l' || k === 'L' || k === 't' || k === 'T') edit(() => s.type = 2);
   if ((k === 'a' || k === 'A') && s.type !== 1) edit(() => s.acc = s.acc ? 0 : 1);
-  if (k === '[' || k === ']' || k === '{' || k === '}') {   // filter value: 8 a press, Shift 1
+  if ((k === '[' || k === ']' || k === '{' || k === '}') && s.type !== 1) {   // filter value: 8 a press, Shift 1 (none on a rest)
     const d = (k === ']' || k === '}' ? 1 : -1) * (ev.shiftKey ? 1 : 8);
     edit(() => s.flt = Math.max(0, Math.min(127, (s.flt || 64) + d)));
   }

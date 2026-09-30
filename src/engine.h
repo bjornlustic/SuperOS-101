@@ -441,7 +441,7 @@ class Sequencer {
     else if (lane_[1].pat == p) memcpy(dst, lane_[1].v, MAX_STEPS);
     else laneRead(p, dst);
   }
-  // SysEx 0x16 lane 4: one step (rests too: the value then rides the rest, as the 303).
+  // SysEx 0x16 lane 4: one step (setStep refuses a value on a rest, as the accent).
   bool setFilter(uint8_t p, uint8_t idx, uint8_t v) {
     if (p >= NUM_PATTERNS || idx >= len_[p] || v > 127) return false;
     Lane& l = laneFor(p);
@@ -463,13 +463,15 @@ class Sequencer {
   uint16_t consumeLaneChanged() { uint16_t c = laneChanged_; laneChanged_ = 0; return c; }
   // The playing step's filter value. A TIE (legato step) with none of its own
   // holds the value of the note it continues (walking back through the chain),
-  // so a held note keeps one cutoff; a note or rest with 0 releases to the CC.
+  // so a held note keeps one cutoff; a note with 0, and every rest (a value a
+  // whole-lane write or a nudge left on one is ignored), releases to the CC.
   uint8_t filterNow() const {
     const Lane& l = lane_[0];
     if (l.pat != cur_) return 0;
     uint8_t len = effLen(); if (!len) return 0;
     uint8_t i = (uint8_t)(pos_ % len);
     for (uint8_t k = 0; k < len; ++k) {
+      if (StepKind(step_[cur_][i]) == STEP_REST) return 0;
       if (l.v[i]) return l.v[i];
       if (StepKind(step_[cur_][i]) != STEP_LEGATO) return 0;
       i = (uint8_t)((i + len - 1) % len);
@@ -555,6 +557,7 @@ class Sequencer {
       if (StepKind(s) == STEP_REST) return false;            // no gate on a rest
       s = StepByte(StepCv(s), value ? STEP_LEGATO : STEP_NOTE);
     } else if (lane == LANE_FILTER) {
+      if (StepKind(s) == STEP_REST && value) return false;   // no filter CV on a rest (clearing it is fine)
       return setFilter(p, idx, value);
     } else if (lane == LANE_ACCENT) {
       if (StepKind(s) == STEP_REST || value > 1) return false;   // no accent on a rest

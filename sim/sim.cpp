@@ -1915,6 +1915,24 @@ static int SelfTest() {
         for (int i = 0; i < 1600; ++i) { delayMicroseconds(1000); RunLoops(1); }   // deferred flush (pattern, then lane)
         uint8_t lb[130]; uint8_t ln = persist::Store().read(persist::FB_FILTER_BASE + 9, lb, sizeof(lb));
         CHECK(ln == 128 && lb[0] == 20 && lb[1] == 10, "the lane persists in its own flash block (FB_FILTER_BASE + p, 128 bytes)");
+        // A rest takes no filter CV: 0x16 lane 4 refuses a value on one (ack 2), and a value the
+        // lane still holds there (step 1's 10, from 0x2D and the nudge) is not played.
+        sx({0x16, 9, 0, 1, 0});                  // step 1 a rest
+        g_midiOut.clear(); sx({0x16, 9, 4, 1, 50});
+        bool ack2 = false; for (size_t i = 0; i + 3 < g_midiOut.size(); ++i) ack2 |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x14 && g_midiOut[i + 3] == 2;
+        v = lane(9);
+        CHECK(ack2 && v.size() == 2 && v[1] == 10, "0x16 lane 4 refuses a filter value on a rest (ack 2)");
+        g_midiOut.clear(); sx({0x16, 9, 4, 1, 0});
+        bool ack0 = false; for (size_t i = 0; i + 3 < g_midiOut.size(); ++i) ack0 |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x14 && g_midiOut[i + 3] == 0;
+        CHECK(ack0 && lane(9)[1] == 0, "clearing a rest's filter value is accepted");
+        sx({0x2D, 9, 100, 90});                  // a whole-lane write can still leave one there
+        RunLoops(300);
+        const uint16_t idle2 = g_simCvCode[0];
+        play(); RunLoops(200);
+        ClockTick(); RunLoops(200);
+        const uint16_t onRest = g_simCvCode[0];
+        tap(B_PLAY); WaitVirtMs(300);
+        CHECK(std::abs((int)onRest - (int)idle2) < 40, "a rest plays no filter CV (the cutoff goes back to the CC)");
         // MC-202 sustain (0x25 byte 14)
         uint8_t cfg[cvdac::CFG_LEN]; cvdac::Pack(cvdac::Get(), cfg); cfg[14] = 40;
         std::vector<uint8_t> m25 = {0x25}; m25.insert(m25.end(), cfg, cfg + 15);
