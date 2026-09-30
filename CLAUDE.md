@@ -40,7 +40,7 @@ and it has eaten hours of diagnosis across this fleet.
 
 ## Things that look like defects and are not
 
-**8 MHz (was 4) is a supply-rail limit, not power, not USB, not EMI.** The SH-101's
+**4 MHz is a supply-rail choice, not power, not USB, not EMI.** The SH-101's
 +5 V rail is the pitch DAC's reference, so it *is* the pitch scale, and its small
 discrete regulator has a knee. Re-measured 2026-09-30 after the R63 ground strap
 (0x3E bench + 0x3B probe, and pitch recorded through the MPC's Input R): 4 and
@@ -48,13 +48,15 @@ discrete regulator has a knee. Re-measured 2026-09-30 after the R63 ground strap
 emulator; 16 MHz sags to ~4570 mV with a 90 mV swing (+350 cents, sd 71 cents).
 The ground strap cannot change that: it lowers ground-return resistance, not the
 regulator's current capacity. 16 MHz needs the CPU board on its own supply.
+The app stays at 4 MHz by the owner's choice (8 MHz is verified safe if the
+emulator ever needs the speed: one line in platformio.ini).
 Every other machine in the fleet divides for a different physical reason (the
 606 for EMI, the 808 not at all), so "why is this divided" has four answers.
 
 **The emulator running below real time is ACCEPTED, not a bug.** G5 was
 rewritten by the human specifically for this machine: the 80C49 interpreter is at
 its computed-goto ceiling with the hot loop already native (~25 % of real time at
-4 MHz, 171k cycles/s ~ 50 % at 8 MHz since 2026-09-30), and the clock is the rail's
+4 MHz; 171k cycles/s, ~50 %, measured at 8 MHz on 2026-09-30), and the clock is the rail's
 limit (above), not slack code.
 The same interpreter clears real time at 16 MHz. The 101's G5 bar is instead that
 the musical path is unaffected and key-scan response stays inside a stated bound.
