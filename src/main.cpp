@@ -65,7 +65,7 @@ static void MidiCC(uint8_t num, uint8_t val) { cvdac::OnCc(num, val); }   // fil
 // --- MIDI note output --------------------------------------------------------
 static int16_t g_outNote = -1;
 static void MidiOut(uint8_t cv, bool gate) {
-  int16_t note = gate ? (int16_t)cv + engine::MIDI_CV_OFFSET : -1;
+  int16_t note = (gate && !midi::Thru()) ? (int16_t)cv + engine::MIDI_CV_OFFSET : -1;   // thru: OUT is the input, not our notes
   if (note == g_outNote) return;
   if (note >= 0) midi::NoteOn((uint8_t)note);          // new note first: legato-friendly
   if (g_outNote >= 0) midi::NoteOff((uint8_t)g_outNote);

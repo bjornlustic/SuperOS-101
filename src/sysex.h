@@ -34,6 +34,11 @@ inline void SaveChannel(uint8_t c) {
   eeprom_update_byte(EE_CFG_CHAN, (uint8_t)(c & 0x0F));
 }
 
+// Soft thru. Not gated on EE_CFG_MAGIC: an image from before this byte existed
+// reads 0xFF here, which is off, and the byte is only ever written as 0 or 1.
+inline bool LoadThru() { return eeprom_read_byte(EE_CFG_THRU) == 1; }
+inline void SaveThru(bool on) { eeprom_update_byte(EE_CFG_THRU, on ? 1 : 0); }
+
 // 0x34 -> 0x35 build identity: "<version> <sha>[*]" in 7-bit ASCII, e.g.
 // "0.2 0642b7f" clean or "0.2 0642b7f*" dirty. Same opcode pair and same
 // string shape as the 606 (its src/midi.cpp:40-41, CMD_REQ_VERSION /

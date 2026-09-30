@@ -170,6 +170,7 @@ struct State {
   usbmidi::Encoder utx;             // USB-MIDI TX packetiser
 #endif
   uint8_t  hostPorts = 0;           // ports an editor has spoken SysEx on (sticky)
+  bool     thru = false;            // soft thru: mirror channel messages + realtime
 };
 inline State& S() { static State s; return s; }
 
@@ -351,6 +352,20 @@ inline void Begin(uint8_t channel) { S().channel = channel & 0x0F; HalBegin(); }
 inline void SetChannel(uint8_t c) { S().channel = c & 0x0F; }
 inline uint8_t Channel() { return S().channel; }
 inline bool HostSeen() { return S().hostPorts != 0; }
+// Soft thru: every channel message and realtime byte received is re-sent
+// explicit-status to the other side (DIN in -> DIN + USB out, USB in -> DIN
+// out, never back into the port it came from). SysEx is not forwarded: F0 7D
+// is this machine's editor protocol. The caller mutes the machine's own note
+// echo while this is on (main.cpp MidiOut, emu101.cpp), or OUT carries both.
+inline bool Thru() { return S().thru; }
+inline void SetThru(bool on) { S().thru = on; }
+// A forwarded message is dropped whole, never blocked on, when the DIN ring
+// cannot take it: HalWrite spins on a full ring and this runs mid-parse.
+inline void ThruSend(uint8_t port, const uint8_t* msg, uint8_t n) {
+  uint8_t out = (port == PORT_USB) ? PORT_DIN : PORT_ALL;
+  if ((out & PORT_DIN) && TxFree() < n) out &= (uint8_t)~PORT_DIN;
+  for (uint8_t i = 0; i < n; ++i) SendTo(out, msg[i]);
+}
 inline void SetHandlers(const Handlers& h) { S().h = h; }
 
 inline void Dispatch(uint8_t status, uint8_t d1, uint8_t d2) {
@@ -367,7 +382,11 @@ inline void Dispatch(uint8_t status, uint8_t d1, uint8_t d2) {
 
 inline void Feed(Parser& p, uint8_t port, uint8_t b) {
   State& s = S();
-  if (b >= 0xF8) { if (s.h.realtime) s.h.realtime(b); return; }   // realtime: transparent
+  if (b >= 0xF8) {                                                // realtime: transparent
+    if (s.thru) ThruSend(port, &b, 1);
+    if (s.h.realtime) s.h.realtime(b);
+    return;
+  }
   if (b == 0xF0) { p.inSx = true; p.sxDrop = false; p.sxLen = 0; p.status = 0; return; }
   if (b == 0xF7) {
     if (p.inSx) {
@@ -395,6 +414,10 @@ inline void Feed(Parser& p, uint8_t port, uint8_t b) {
   if (!p.status) return;
   p.data[p.nData++] = b;
   if (p.nData >= p.need) {
+    if (s.thru) {
+      uint8_t m[3] = {p.status, p.data[0], p.data[1]};
+      ThruSend(port, m, p.need == 2 ? 3 : 2);
+    }
     Dispatch(p.status, p.data[0], p.need == 2 ? p.data[1] : 0);
     p.nData = 0;                        // running status: keep p.status
   }

@@ -595,6 +595,29 @@ static int SelfTest() {
   CHECK(sim::g_sh[0] == 4 && GateOn(), "MIDI note 40 (out of key range) -> CV 4 mono override");
   for (uint8_t b : {0x80, 40, 0}) g_midiQ.push_back(b); RunLoops(1);
 
+  // Soft thru: OUT mirrors IN (any channel, explicit status, realtime), the
+  // machine's own note echo is muted, SysEx is not forwarded.
+  puts("MIDI thru:");
+  midi::SetThru(true); g_midiOut.clear();
+  for (uint8_t b : {0x90, 53, 100}) g_midiQ.push_back(b); RunLoops(1);
+  CHECK(g_midiOut.size() == 3 && g_midiOut[0] == 0x90 && g_midiOut[1] == 53 && g_midiOut[2] == 100,
+        "thru: note on forwarded once, no engine echo");
+  g_midiOut.clear();
+  for (uint8_t b : {0xE5, 0x10, 0x20, 0x30, 0x40}) g_midiQ.push_back(b); RunLoops(1);   // other channel, running status
+  CHECK(g_midiOut.size() == 6 && g_midiOut[0] == 0xE5 && g_midiOut[3] == 0xE5 && g_midiOut[5] == 0x40,
+        "thru: other channel + running status forwarded explicit");
+  g_midiOut.clear();
+  MidiByte(0xF8);
+  CHECK(g_midiOut.size() == 1 && g_midiOut[0] == 0xF8, "thru: realtime forwarded");
+  g_midiOut.clear();
+  for (uint8_t b : {0xF0, 0x43, 0x01, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
+  CHECK(g_midiOut.empty(), "thru: foreign SysEx not forwarded");
+  for (uint8_t b : {0x80, 53, 0}) g_midiQ.push_back(b); RunLoops(1);
+  midi::SetThru(false); g_midiOut.clear();
+  for (uint8_t b : {0x90, 53, 100}) g_midiQ.push_back(b); RunLoops(1);
+  CHECK(g_midiOut.size() == 3 && g_midiOut[0] == 0x90, "thru off: engine echo is back (one note)");
+  for (uint8_t b : {0x80, 53, 0}) g_midiQ.push_back(b); RunLoops(1);
+
   // CV DAC (cvdac.h): cutoff CC + accent models, observed on the MCP4822
   // codes. Each sim pass counts as 1 ms in cvdac::Tick (pass << 1 ms).
   puts("CV DAC:");

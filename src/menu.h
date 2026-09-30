@@ -21,6 +21,7 @@
 //   keys 15-18    -> sequencer direction FWD / BWD / PING-PONG / RANDOM
 //   key 19        -> pedal jack route: HOLD <-> KEY TRANSPOSE
 //   keys 20-31    -> sync delay 0 2 4 6 8 10 12 15 18 21 25 30 ms
+//   key 32        -> toggle soft MIDI thru (highest key; no LED, see midi.h)
 //   KEY-TRANSPOSE -> exit, resume the running firmware
 #pragma once
 #include <Arduino.h>
@@ -32,6 +33,7 @@
 #include "midiclock.h"
 #include "cvdac.h"
 #include "engine.h"
+#include "sysex.h"
 
 namespace menu {
 
@@ -123,6 +125,8 @@ inline void Poll() {
     controls::PedalRoute() = controls::PedalRoute() == controls::PEDAL_HOLD ? controls::PEDAL_TRANSPOSE : controls::PEDAL_HOLD;
     engine::SaveFeatures();
   }
+
+  if (keyRise & (1UL << 31)) { midi::SetThru(!midi::Thru()); sysex::SaveThru(midi::Thru()); }
 
   if (rise & (1u << controls::BTN_LOAD)) {
     if (emu101::available()) SwitchTo(FW_EMU);   // no ROM embedded -> ignore

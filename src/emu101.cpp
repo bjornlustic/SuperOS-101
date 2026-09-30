@@ -151,7 +151,7 @@ static void MidiNoteOff(uint8_t note) {
   if (k >= 0 && k < 32) g_midiKeys &= ~(1UL << k);
 }
 static void EchoOut() {
-  int16_t note = g_gate ? (int16_t)g_cvOut + 36 : -1;
+  int16_t note = (g_gate && !midi::Thru()) ? (int16_t)g_cvOut + 36 : -1;   // thru: OUT is the input
   if (note == g_echoNote) return;
   if (note >= 0) midi::NoteOn((uint8_t)note);          // new note first: legato-friendly
   if (g_echoNote >= 0) midi::NoteOff((uint8_t)g_echoNote);
