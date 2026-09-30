@@ -75,7 +75,7 @@ does not exist here and acks status 2 rather than being silently accepted. Lane 
 (**accent**) exists since 2026-09-30 (the CV DAC mod): 0x16 lane 1 sets it (ack 2
 on a rest), RANDOMIZE still refuses it, and 0x11/0x12 and the flash record carry
 a packed ceil(len/8)-byte accent tail after the ratchet tail (flash: after the 2
-scale bytes). Lane 4 is the per-step **filter CV** (0..127), which is NOT in the
+scale bytes). Lane 4 is the per-step **filter CV** (0..127; refused on a rest with ack 2 like the accent, and a rest plays none), which is NOT in the
 pattern record or 0x11: it lives in its own flash blocks (FB_FILTER_BASE + p) and
 travels as 0x2C (sent after every 0x11) / 0x2D. So the G12 combination axes that apply are length boundary,
 legato/tie, accent, playhead position and edit type; chain and A/B are a
