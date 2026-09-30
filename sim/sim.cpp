@@ -211,6 +211,8 @@ extern "C" void sim_flash_read(uint16_t page, uint8_t* buf) {
 // Driving the firmware
 // ---------------------------------------------------------------------------
 static void RunLoops(int n) { while (n-- > 0) loop(); }
+// A pass of exactly 1 ms (the CV DAC tests: cvdac::Tick counts elapsed time).
+static void CvPass(int n) { while (n-- > 0) { delayMicroseconds(1000); loop(); } }
 
 // Advance virtual time. Panel tests need this after tapping a function
 // button: fresh keys are ignored for 30 ms after button activity (the
@@ -620,71 +622,95 @@ static int SelfTest() {
   for (uint8_t b : {0x80, 53, 0}) g_midiQ.push_back(b); RunLoops(1);
 
   // CV DAC (cvdac.h): cutoff CC + accent models, observed on the MCP4822
-  // codes. Each sim pass counts as 1 ms in cvdac::Tick (pass << 1 ms).
+  // codes. cvdac::Tick counts real time; a sim pass is far under 1 ms of it, so this block runs
+  // passes of exactly 1 ms (CvPass) and its pass counts read as milliseconds.
   puts("CV DAC:");
   {
     // Unipolar variant (first fabbed boards before rework: R8 100k, no bias): center 0, additive only.
-    cvdac::SetHw(cvdac::HW_V11_UNIPOLAR); RunLoops(2500);
+    cvdac::SetHw(cvdac::HW_V11_UNIPOLAR); CvPass(2500);
     CHECK(g_simCvCode[0] == 0 && !g_simCvOn[1], "unipolar board: VOUTA rests at 0 V, VOUTB shut down");
-    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)127}) g_midiQ.push_back(b); RunLoops(200);
+    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)127}) g_midiQ.push_back(b); CvPass(200);
     CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "unipolar board: CC74=127 -> DAC full scale (0.55 throw, clamped)");
-    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(200);
+    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)0}) g_midiQ.push_back(b); CvPass(200);
     CHECK(g_simCvCode[0] == 0, "unipolar board: CC74=0 -> 0 V");
     // The rest of the block exercises the bipolar variant (R8 27k + R10 100k from +15 V, board v1.2), the default.
-    cvdac::SetHw(cvdac::HW_V11_BIPOLAR); RunLoops(15);
+    cvdac::SetHw(cvdac::HW_V11_BIPOLAR); CvPass(15);
     const uint16_t C = cvdac::CENTER_DEFAULT_BY_HW[1], F = cvdac::FADER_LSB_BY_HW[1], P = cvdac::VCA_PARK;
     { cvdac::Settings s3 = cvdac::Get(); s3.vcaAmount = 127; cvdac::Set(s3);
       CHECK(cvdac::Get().vcaAmount == cvdac::VCA_AMOUNT_MAX, "VCA amount is capped at 100 (BA662 control-current limit)");
       s3.vcaAmount = 64; cvdac::Set(s3); }
-    auto cc = [](uint8_t v) { for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, v}) g_midiQ.push_back(b); RunLoops(1); };
-    auto noteOn  = [](uint8_t vel) { for (uint8_t b : {(uint8_t)0x90, (uint8_t)53, vel}) g_midiQ.push_back(b); RunLoops(1); };
-    auto noteOff = []() { for (uint8_t b : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(1); };
+    auto cc = [](uint8_t v) { for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, v}) g_midiQ.push_back(b); CvPass(1); };
+    auto noteOn  = [](uint8_t vel) { for (uint8_t b : {(uint8_t)0x90, (uint8_t)53, vel}) g_midiQ.push_back(b); CvPass(1); };
+    auto noteOff = []() { for (uint8_t b : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b); CvPass(1); };
     // Track both channels' maxima over N passes (the 7 ms one-pole attack
     // needs ~4 tau = 28 passes to reach its plateau).
     auto peaks = [](int passes, uint16_t& ma, uint16_t& mb) {
       ma = mb = 0;
-      while (passes-- > 0) { RunLoops(1); if (g_simCvCode[0] > ma) ma = g_simCvCode[0]; if (g_simCvCode[1] > mb) mb = g_simCvCode[1]; }
+      while (passes-- > 0) { CvPass(1); if (g_simCvCode[0] > ma) ma = g_simCvCode[0]; if (g_simCvCode[1] > mb) mb = g_simCvCode[1]; }
     };
     // The MIDI block above played notes at velocity 100 = the accent threshold,
     // so let that accent bleed off fully first (env tail ~8 tau).
-    RunLoops(2500);
+    CvPass(2500);
     CHECK(g_simCvCode[0] == C && g_simCvOn[0] && !g_simCvOn[1], "rest: VOUTA at center, VOUTB shut down (takes no envelope current)");
-    cc(127); RunLoops(150);
+    cc(127); CvPass(150);
     CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "CC74=127 -> center + one fader throw (2300+2025 clamps at 4095 = +89 %)");
-    cc(64);  RunLoops(150);
+    cc(64);  CvPass(150);
     CHECK(g_simCvCode[0] == C, "CC74=64 -> back to center");
-    cc(0);   RunLoops(150);
+    cc(0);   CvPass(150);
     CHECK(g_simCvCode[0] == C - F, "CC74=0 -> center - one throw (275 LSB above 0 = -100 %)");
     // smoothness: one 7-bit CC step (32 LSB) must not jump in a single pass
-    cc(64);  RunLoops(150); uint16_t before = g_simCvCode[0];
-    cc(65);  uint16_t after1 = g_simCvCode[0]; RunLoops(150); uint16_t settled = g_simCvCode[0];
+    cc(64);  CvPass(150); uint16_t before = g_simCvCode[0];
+    cc(65);  uint16_t after1 = g_simCvCode[0]; CvPass(150); uint16_t settled = g_simCvCode[0];
     CHECK(after1 - before < 8 && settled - before > 28 && settled - before < 36, "one CC step glides (no 32-LSB jump) and settles at +1/64 throw");
     // 14-bit: CC 106 refines CC 74
-    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)106, (uint8_t)64}) g_midiQ.push_back(b); RunLoops(150);
+    for (uint8_t b : {(uint8_t)0xB0, (uint8_t)106, (uint8_t)64}) g_midiQ.push_back(b); CvPass(150);
     CHECK(g_simCvCode[0] - settled > 12 && g_simCvCode[0] - settled < 20, "CC106 (LSB) adds half a CC step (14-bit cutoff)");
-    cc(64);  RunLoops(150);
+    cc(64);  CvPass(150);
     // MC-202 accent: velocity 127 clears the threshold; both channels bump, then decay.
     noteOn(127);
     uint16_t pa, pb; peaks(40, pa, pb);
     CHECK(pb > P + 1650 && pb <= P + 1740, "MC-202 accent: VCA +1 envelope at amount 64");
     CHECK(pa > C + 550 && pa < C + 700,    "MC-202 accent: VCF peak-only bump (~0.32 throw at amount 100)");
-    RunLoops(100);
+    CvPass(100);
     uint16_t bMid = g_simCvCode[1];
     CHECK(bMid < pb && bMid > P && g_simCvOn[1], "MC-202 accent decays (300 ms), VOUTB driven while it does");
-    noteOff(); RunLoops(2500);
+    noteOff(); CvPass(2500);
     CHECK(g_simCvCode[0] == C && !g_simCvOn[1], "after the accent both channels return to rest (VOUTB shut down)");
-    noteOn(50); RunLoops(10);
+    noteOn(50); CvPass(10);
     CHECK(!g_simCvOn[1] && g_simCvCode[0] == C, "velocity 50 < threshold 100: no accent");
-    noteOff(); RunLoops(5);
+    noteOff(); CvPass(5);
+    // The learned attack (0x25 byte 15, the MPC's LEARN): the MC-202 accent rises with the SH-101's
+    // ATTACK (it is its envelope) instead of the fixed 7 ms, and the byte survives a reload.
+    {
+      auto send25 = [&](uint8_t attack) {
+        uint8_t cfg[cvdac::CFG_LEN]; cvdac::Pack(cvdac::Get(), cfg); cfg[15] = attack;
+        g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D); g_midiQ.push_back(0x25);
+        for (uint8_t i = 0; i < cvdac::CFG_LEN; ++i) g_midiQ.push_back(cfg[i]);
+        g_midiQ.push_back(0xF7); CvPass(3);
+      };
+      send25(10);   // tau 100 ms
+      cvdac::S().s.attack10ms = 0; cvdac::Load();
+      CHECK(cvdac::Get().attack10ms == 10, "0x25 with 16 bytes sets the learned accent attack, and it is saved (EE_A_CV_ATTACK)");
+      auto rise = [&]() {   // ms from note-on to 90 % of the accent's peak
+        noteOn(127); const uint32_t t0 = millis();
+        while (cvdac::S().env < 29490 && millis() - t0 < 2000) CvPass(1);
+        const uint32_t ms = millis() - t0; noteOff(); WaitVirtMs(600); return ms;
+      };
+      const uint32_t slow = rise();
+      send25(0);
+      const uint32_t fast = rise();
+      printf("  (accent rise to 90 %%: learned 100 ms attack %u ms, MC-202 7 ms %u ms)\n", (unsigned)slow, (unsigned)fast);
+      CHECK(fast < 40 && slow > 150 && slow < 400, "a learned attack slows the accent's rise (tau 100 ms: ~230 ms to 90 %); 0 keeps the MC-202's 7 ms");
+    }
     // TB-303 model: fixed 200 ms decay, build-up across consecutive accents.
     cvdac::SetMode(cvdac::MODE_TB303);
     uint16_t p1, p2, q;
-    noteOn(127); peaks(40, p1, q); noteOff(); RunLoops(10);
+    noteOn(127); peaks(40, p1, q); noteOff(); CvPass(10);
     noteOn(127); peaks(40, p2, q); noteOff();
     CHECK(p1 > C + 300, "TB-303 accent: VCF sweep present");
     // default buildup 64 = +0.125 of the full sweep per hit ~= 70 LSB at these amounts
     CHECK(p2 > p1 + 50, "TB-303 accent: second accent 50 ms later sweeps further (C13 build-up)");
-    RunLoops(2500);
+    CvPass(2500);
     CHECK(g_simCvCode[0] == C && !g_simCvOn[1], "TB-303 accent fully bled off");
     cvdac::SetMode(cvdac::MODE_MC202);
     // vcaPark calibration (SysEx 0x25 bytes 12-13): VOUTB rests there, a 12-byte body keeps it.
@@ -693,7 +719,7 @@ static int SelfTest() {
       g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D); g_midiQ.push_back(0x25);
       for (uint8_t i = 0; i < 12; ++i) g_midiQ.push_back(cfg[i]);
       for (uint8_t e : extra) g_midiQ.push_back(e);
-      g_midiQ.push_back(0xF7); RunLoops(3);
+      g_midiQ.push_back(0xF7); CvPass(3);
     };
     set25({1400 & 0x7F, 1400 >> 7}); RunLoops(10);
     CHECK(cvdac::Get().vcaPark == 1400 && !g_simCvOn[1], "0x25 vcaPark 1400 stored, VOUTB still shut down at rest");
@@ -774,15 +800,20 @@ static int SelfTest() {
     CHECK((raw[97] & (1u << P2_GATE)) != 0, "probe P2 image: gate released after note off");
     // Toggle counters: the gate just changed twice, so bit 7 must have counted
     // transitions once the one-second window rolls. Advance past the window.
-    for (int i = 0; i < 1100; ++i) { delayMicroseconds(1000); RunLoops(1); }
+    for (int i = 0; i < 2100; ++i) { delayMicroseconds(1000); RunLoops(1); }   // two windows: the last one whole and quiet
     probe(raw, sizeof(raw));
     uint16_t gateTog = (uint16_t)((raw[98 + 2 * P2_GATE] << 8) | raw[99 + 2 * P2_GATE]);
     CHECK(gateTog == 0, "probe toggles/s: a quiet second reports zero gate transitions");
     for (uint8_t b : {(uint8_t)0x90, (uint8_t)53, (uint8_t)100}) g_midiQ.push_back(b); RunLoops(2);
     for (uint8_t b : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(2);
-    for (int i = 0; i < 1100; ++i) { delayMicroseconds(1000); RunLoops(1); }
-    probe(raw, sizeof(raw));
-    gateTog = (uint16_t)((raw[98 + 2 * P2_GATE] << 8) | raw[99 + 2 * P2_GATE]);
+    // The window's phase is its own: read it every 100 ms for two windows and keep the most counted.
+    gateTog = 0;
+    for (int w = 0; w < 22; ++w) {
+      for (int i = 0; i < 100; ++i) { delayMicroseconds(1000); RunLoops(1); }
+      probe(raw, sizeof(raw));
+      const uint16_t t = (uint16_t)((raw[98 + 2 * P2_GATE] << 8) | raw[99 + 2 * P2_GATE]);
+      if (t > gateTog) gateTog = t;
+    }
     CHECK(gateTog >= 2, "probe toggles/s: a note on+off inside the window counts 2 gate transitions");
 
     // The function-LED select (P20-22, one-hot via IC8 4556) reported through
@@ -1874,17 +1905,17 @@ static int SelfTest() {
         const uint16_t C = cvdac::S().s.center;
         // A MIDI note at velocity 127: its accent ends with its gate (7 ms release).
         RunLoops(2500);
-        for (uint8_t b2 : {(uint8_t)0x90, (uint8_t)53, (uint8_t)127}) g_midiQ.push_back(b2); RunLoops(20);
+        for (uint8_t b2 : {(uint8_t)0x90, (uint8_t)53, (uint8_t)127}) g_midiQ.push_back(b2); CvPass(20);
         bool heldOn = g_simCvOn[1];
-        for (uint8_t b2 : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b2); RunLoops(60);
+        for (uint8_t b2 : {(uint8_t)0x80, (uint8_t)53, (uint8_t)0}) g_midiQ.push_back(b2); CvPass(60);
         CHECK(heldOn && !g_simCvOn[1], "one note: a velocity-127 note's accent ends 60 ms after its note-off (7 ms release, no 300 ms tail)");
         // Sequencer: an accented step, then an UNACCENTED legato step (the gate
         // never drops): the accent still ends at the step change.
         push12(9, {2, 20, (uint8_t)(0x80 | 20), 0x00, 0x01});
         sx({0x1D, 9}); RunLoops(2500);
-        play(); RunLoops(10);
+        play(); CvPass(10);
         bool accOn = g_simCvOn[1];
-        ClockTick(); RunLoops(60);
+        ClockTick(); CvPass(60);
         CHECK(accOn && GateOn() && !g_simCvOn[1], "one step: an accented step's accent ends when the next (legato, unaccented) step starts");
         tap(B_PLAY); WaitVirtMs(40);
 

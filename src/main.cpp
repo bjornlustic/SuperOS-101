@@ -141,7 +141,7 @@ static void SendCvConfig() {
   // after the codes so readers that index the codes at 12..15 keep working.
   uint8_t cfg[cvdac::CFG_LEN];
   cvdac::Pack(cvdac::Get(), cfg);
-  uint8_t body[1 + 12 + 4 + 2 + 1];
+  uint8_t body[1 + 12 + 4 + 2 + 1 + 1];
   body[0] = 0x24;
   for (uint8_t i = 0; i < 12; ++i) body[1 + i] = cfg[i];
   uint16_t a = cvdac::CodeA(), b = cvdac::CodeB();
@@ -149,6 +149,7 @@ static void SendCvConfig() {
   body[15] = b & 0x7F; body[16] = (b >> 7) & 0x1F;
   body[17] = cfg[12]; body[18] = cfg[13];
   body[19] = cfg[14];   // sustain (MC-202 accent), after the park
+  body[20] = cfg[15];   // attack (MC-202 accent, learned)
   midi::SendSysex(body, sizeof(body));
 }
 static void SendStep() {

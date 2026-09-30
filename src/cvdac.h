@@ -137,6 +137,9 @@ struct Settings {
   uint16_t vcaPark   = VCA_PARK;          // LSB (= mV); VOUTB at rest, calibrate to the pin-1 node
   uint8_t  sustain   = 0;     // MC-202: accent level held while the gate stays on, 0..127 of the peak
                               // (match the SH-101's SUSTAIN slider: the MC-202 accent is its envelope)
+  uint8_t  attack10ms = 0;    // MC-202: the accent's rise, an RC time constant in 10 ms (0: the MC-202's
+                              // own 7 ms). The MC-202 accent IS its envelope, so it rises with the SH-101's
+                              // ATTACK: the MPC's LEARN measures that (and decay, sustain) from the audio.
 };
 
 // EEPROM map (combined.h: 0x010.. free).
@@ -145,14 +148,15 @@ static const uint16_t EE_A_CV_BASE  = 0x011;
 #define EE_CV_MAGIC ((uint8_t*)EE_A_CV_MAGIC)
 #define EE_CV_BASE  ((uint8_t*)EE_A_CV_BASE)        // CFG_LEN bytes, Pack() order
 static const uint8_t EE_CV_MAGIC_VAL = 0x5E;   // 0x5C/0x5D = earlier layouts (reset to defaults)
-static const uint8_t CFG_LEN = 15;   // 12 + vcaPark + sustain; 0x25 still accepts 12 or 14
+static const uint8_t CFG_LEN = 16;   // 12 + vcaPark + sustain + attack; 0x25 still accepts 12, 14 or 15
+static const uint8_t EE_CV_LEN = 15; // what the CV block holds; the attack has its own byte (EE_A_CV_ATTACK)
 
 // The CV block's own bound, asserted next to the constant that sets it rather
 // than in combined.h, because CFG_LEN is what moves. See the EEPROM map there.
 static_assert(EE_A_CV_MAGIC == EE_CV_FIRST,
               "the CV magic moved out of the slot the map reserves");
-static_assert(EE_A_CV_BASE + CFG_LEN <= EE_A_FEAT_MAGIC,
-              "CFG_LEN grew and the CV block now runs into the feature block");
+static_assert(EE_A_CV_BASE + EE_CV_LEN <= EE_A_FEAT_MAGIC,
+              "the CV block grew and now runs into the feature block");
 
 struct State {
   Settings s;
@@ -187,6 +191,7 @@ inline void Pack(const Settings& s, uint8_t* b) {
   b[11] = s.hw & 0x7F;
   b[12] = s.vcaPark & 0x7F; b[13] = (s.vcaPark >> 7) & 0x1F;
   b[14] = s.sustain & 0x7F;
+  b[15] = s.attack10ms & 0x7F;
 }
 inline bool Unpack(const uint8_t* b, Settings& s, uint8_t len = CFG_LEN) {
   uint16_t c = (uint16_t)((b[0] & 0x7F) | ((uint16_t)(b[1] & 0x1F) << 7));
@@ -204,17 +209,20 @@ inline bool Unpack(const uint8_t* b, Settings& s, uint8_t len = CFG_LEN) {
     if (b[12] <= 0x7F && b[13] <= 0x1F && pk <= DAC_MAX) s.vcaPark = pk;
   }
   if (len >= 15 && b[14] <= 0x7F) s.sustain = b[14];   // EEPROM from before reads 0xFF: keep 0
+  if (len >= 16 && b[15] <= 0x7F) s.attack10ms = b[15];
   return true;
 }
 inline void Save() {
   uint8_t b[CFG_LEN]; Pack(S().s, b);
-  for (uint8_t i = 0; i < CFG_LEN; ++i) eeprom_update_byte(EE_CV_BASE + i, b[i]);
+  for (uint8_t i = 0; i < EE_CV_LEN; ++i) eeprom_update_byte(EE_CV_BASE + i, b[i]);
+  eeprom_update_byte((uint8_t*)EE_A_CV_ATTACK, b[15]);
   eeprom_update_byte(EE_CV_MAGIC, EE_CV_MAGIC_VAL);
 }
 inline void Load() {
   if (eeprom_read_byte(EE_CV_MAGIC) != EE_CV_MAGIC_VAL) return;   // defaults
   uint8_t b[CFG_LEN];
-  for (uint8_t i = 0; i < CFG_LEN; ++i) b[i] = eeprom_read_byte(EE_CV_BASE + i);
+  for (uint8_t i = 0; i < EE_CV_LEN; ++i) b[i] = eeprom_read_byte(EE_CV_BASE + i);
+  b[15] = eeprom_read_byte((uint8_t*)EE_A_CV_ATTACK);   // 0xFF before it existed: keeps 0
   Settings s; if (Unpack(b, s)) S().s = s;
 }
 inline const Settings& Get() { return S().s; }
@@ -355,10 +363,13 @@ inline void NoteOff() { State& st = S(); st.accOn = false; st.attacking = false;
 // a stalled pass (flash page write) just makes one longer step.
 inline void Tick() {
   State& st = S();
+  // Whole milliseconds since the last step, the remainder carried: a pass shorter than 1 ms must
+  // not count as 1 ms, or every time constant (attack, decay, release, glide) runs short.
+  // (dt 0: nothing moves this pass, the outputs are still written).
   uint32_t now = micros();
-  uint32_t dtUs = now - st.lastTickUs; st.lastTickUs = now;
-  uint16_t dt = (uint16_t)(dtUs > 20000 ? 20 : (dtUs + 500) / 1000);   // ms, capped
-  if (!dt && dtUs) dt = 1;
+  uint32_t dtUs = now - st.lastTickUs;
+  uint16_t dt = (uint16_t)(dtUs > 20000 ? 20 : dtUs / 1000);   // ms, capped
+  st.lastTickUs = dtUs > 20000 ? now : st.lastTickUs + (uint32_t)dt * 1000;
 
   // cutoff glide toward the CC target (one-pole per ms with a convergence floor)
   for (uint8_t k = 0; k < dt; ++k) {
@@ -372,9 +383,10 @@ inline void Tick() {
 
   // accent envelope (Q15)
   if (st.attacking) {
-    // one-pole toward full scale, tau = ATTACK_TAU_MS
-    if (dt >= ATTACK_TAU_MS) st.env = 32767;
-    else st.env = (uint16_t)(st.env + (uint32_t)(32767 - st.env) * dt / ATTACK_TAU_MS);
+    // one-pole toward full scale: the MC-202's 7 ms RC, or the SH-101's learned attack (it IS the envelope)
+    const uint16_t tauA = (st.s.mode == MODE_MC202 && st.s.attack10ms * 10 > ATTACK_TAU_MS) ? (uint16_t)st.s.attack10ms * 10 : ATTACK_TAU_MS;
+    if (dt >= tauA) st.env = 32767;
+    else st.env = (uint16_t)(st.env + (uint32_t)(32767 - st.env) * dt / tauA);
     if (st.env >= 32100) { st.env = 32767; st.attacking = false; }
   } else if (st.env) {
     // Gate held: exponential decay toward the sustain floor (the 303 to 0 in its

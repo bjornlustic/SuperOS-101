@@ -59,7 +59,8 @@ static const uint16_t EE_A_FEAT_DIR   = 0x021;  // sequencer direction (engine.h
 static const uint16_t EE_A_FEAT_PEDAL = 0x022;  // pedal route (controls.h PedalMode)
 static const uint16_t EE_A_FEAT_ARPRANGE = 0x023;  // arp octave range 1..3
 static const uint16_t EE_FEAT_END     = 0x024;
-static const uint16_t EE_FREE_FIRST  = 0x030;
+static const uint16_t EE_A_CV_ATTACK  = 0x030;  // cvdac.h: the MC-202 accent's attack (the CV block is full)
+static const uint16_t EE_FREE_FIRST  = 0x031;
 static const uint16_t EE_A_EMU_MAGIC = 0x100;
 static const uint16_t EE_A_EMU_RAM   = 0x101;
 // Named EE_TOTAL_BYTES, not EE_SIZE: sim/sim.cpp already has an EE_SIZE of
