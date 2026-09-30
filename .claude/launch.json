@@ -4,7 +4,7 @@
     {
       "name": "web-editor",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "3101", "--directory", "tools/web-editor"],
+      "runtimeArgs": ["-I", "-c", "import os,sys,http.server,functools;d='/private/tmp/claude-501/-Users-bjornlustic-Desktop-Projects-SH101-SuperOS-101FIRMWARE/7174e01c-198b-498f-aa6b-6f01f9f5e8be/scratchpad/editor';os.chdir(d);http.server.ThreadingHTTPServer(('127.0.0.1',3101),functools.partial(http.server.SimpleHTTPRequestHandler,directory=d)).serve_forever()"],
       "port": 3101
     }
   ]
