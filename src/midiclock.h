@@ -131,7 +131,10 @@ inline uint8_t DivIdx() { return S().divIdx; }
 inline bool    LfoSyncOn() { return S().lfoSync; }
 inline uint8_t LfoDivIdx() { return S().lfoDiv; }
 inline uint8_t LfoDivEff() { return S().lfoDiv == LFO_DIV_AUTO ? S().autoIdx : S().lfoDiv; }
+// Only a change resets the grid: 0x22 carries sync with every config change (the LFO's rate and
+// lock, the channel), and resending the same value must not throw the pattern off the host's beat.
 inline void SetSync(bool on) {
+  if (on == S().sync) return;
   S().sync = on; S().running = true; S().hostStopped = false; S().anchored = false;
   S().tick = 0; S().lfoTick = 0; S().abs = 0; DropTicks(); Save();
 }

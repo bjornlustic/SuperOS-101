@@ -2185,6 +2185,28 @@ static int SelfTest() {
     midiclk::SetSync(false); midiclk::SetLfoDiv(0); sim::g_clock = false; RunLoops(2);
   }
 
+  // A config change under clock (0x22 resends sync and division with the LFO's rate and lock) must
+  // not move the grid: the count since Start and the pattern's position carry on.
+  puts("Config under clock keeps the grid:");
+  {
+    for (uint8_t v : {0xF0, 0x7D, 0x22, 0, 1, 6, 1, 0, 0xF7}) g_midiQ.push_back(v);
+    RunLoops(2);
+    MidiByte(0xFA);
+    MidiClocks(6 * 5 + 2);
+    const uint32_t abs0 = midiclk::S().abs;
+    const uint16_t div0 = midiclk::DivisionsSinceStart();
+    for (uint8_t v : {0xF0, 0x7D, 0x22, 0, 1, 6, 0, 3, 0xF7}) g_midiQ.push_back(v);   // LFO free, rate 1/8
+    RunLoops(2);
+    for (uint8_t v : {0xF0, 0x7D, 0x22, 0, 1, 6, 1, 7, 0xF7}) g_midiQ.push_back(v);   // LFO locked, rate 1/16.
+    RunLoops(2);
+    MidiClocks(6 * 3);
+    printf("  (ticks since Start %u -> %u, divisions %u -> %u)\n", (unsigned)abs0, (unsigned)midiclk::S().abs, div0, midiclk::DivisionsSinceStart());
+    CHECK(midiclk::S().abs == abs0 + 18 && midiclk::DivisionsSinceStart() == div0 + 3,
+          "changing the LFO's rate and lock under clock keeps the count since Start (no grid reset)");
+    MidiByte(0xFC);
+    midiclk::SetSync(false); midiclk::SetLfoDiv(0); RunLoops(2);
+  }
+
   // Ratchets: a 2x step retriggers once, evenly inside its clock period
   // (SysEx 0x1B; needs one measured period first, so play two full steps
   // before counting). Each MidiByte pass is ~1 ms of virtual time; 6 ticks
