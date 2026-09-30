@@ -14,7 +14,7 @@
 //   0x007        soft MIDI thru: 1 = on, anything else (incl. 0xFF) = off (sysex.h)
 //   0x008        clock source: 1 DIN, 2 USB, anything else (incl. 0xFF) = both (sysex.h)
 //   0x010        CV DAC settings magic (cvdac.h, EE_CV_MAGIC_VAL)
-//   0x011..0x01C CV DAC settings: center(2), cutoff CC, flags, accent mode,
+//   0x011..0x01E CV DAC settings: center(2), cutoff CC, flags, accent mode,
 //                VCF/VCA amounts, decay, velocity threshold, res depth, build-up,
 //                board variant (1 = bipolar, default; 0 = unreworked first-batch v1.1)
 //   0x020        feature magic (EE_FEAT_MAGIC_VAL), 0x021 sequencer direction,

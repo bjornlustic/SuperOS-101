@@ -163,7 +163,8 @@ void EnterBootloader() {
   hw::P2Write(P2_IDLE);
   BUS_PORT = 0xFF;
   UCSR1B = 0;                    // stop the UART ISR sources before the jump
-  GPIOR0 = 0xB7;                 // BOOT_MAGIC, keep in sync with bootloader/bootload.c
+  cvdac::Park();                 // CV DAC neutral: it holds this through the update
+  GPIOR0 = 0xB7;                // BOOT_MAGIC, keep in sync with bootloader/bootload.c
   CLKPR = 0x80; CLKPR = 0x00;    // bootloader is built for the full 16 MHz
   asm volatile("jmp 0x1F000");   // boot section (BOOTRST, BOOTSZ=01)
 #else
@@ -188,6 +189,7 @@ static void DoSwitch(uint8_t fw) {
   // persist NOW (a switch must not lose edits), hanging MIDI notes end, and
   // the emulator's INT0 edge source goes quiet.
   if (g_fw == FW_EMU) emu101::teardown(); else superos_teardown();
+  cvdac::Park();   // no accent frozen mid-decay into the emulator, which never writes the DAC
 
   // Everything off during the switch: gate off, portamento off, no LED lit
   // (HOLD LED off = P25 high, KT LED off = P26 low, function select 0), so
@@ -269,6 +271,7 @@ void setup() {
   midi::SetThru(sysex::LoadThru());
   midi::SetClockFrom(sysex::LoadClockFrom());
   midiclk::Begin();                    // saved sync/division settings
+  cvdac::Begin();                      // CV DAC neutral in both firmwares (the emulator never writes it)
   uint8_t sel = eeprom_read_byte(EE_FW_SELECT);
   g_fw = (sel == FW_EMU && emu101::available()) ? FW_EMU : FW_SUPEROS;
   if (menu::PowerOnComboHeld()) menu::Enter();

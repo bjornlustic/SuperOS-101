@@ -172,8 +172,14 @@
   .is-note .r-btn { border-color:rgba(255,255,255,0.25); color:rgba(255,255,255,0.45); }
   .is-note .r-btn:hover { background:rgba(255,255,255,0.15); color:var(--white); }
   .is-note .r-btn.is-on { background:var(--white); border-color:var(--white); color:var(--black); }
+  .step-acc { display:flex; margin-top:2px; }
+  .r-btn.acc-btn.is-on { background:var(--red); border-color:var(--red); color:var(--white); }
+  .is-note .r-btn.acc-btn.is-on { background:var(--red); border-color:var(--red); color:var(--white); }
+  .step-card.is-acc .step-num::after { content:' >'; color:var(--red); }
   /* Rest cards hide the pitch machinery in CSS, not JS; ratchets need a plain note */
-  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row, .is-rest .step-ratchet, .is-tie .step-ratchet { visibility:hidden; }
+  .is-rest .pitch-knob-wrap, .is-rest .step-oct-row, .is-rest .step-ratchet, .is-tie .step-ratchet, .is-rest .step-acc { visibility:hidden; }
+  .cv-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .cv-row input[type=number] { width:72px; }
   /* Scale on and the note is outside it: the unit plays the snapped note */
   .step-card.is-offscale .step-name { color:var(--red); }
   .step-card.is-note.is-offscale .step-name { color:#ff8a8a; }
@@ -385,7 +391,7 @@
       <button class="btn" id="btnUndo" title="Undo the last edit on this pattern (Ctrl/Cmd-Z)">Undo</button>
       <button class="btn" id="btnClear">Clear</button>
     <div class="seq-hint"><b>N</b> note &#183; <b>L</b> legato (glides on AUTO) &#183; <b>R</b> rest &#183; vertical drag = pitch &#183;
-      <b>1&#215; 2&#215; 3&#215;</b> ratchet &#183; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> octave), <kbd>Shift</kbd><kbd>&#8592;</kbd><kbd>&#8594;</kbd> nudge, <kbd>N</kbd> <kbd>L</kbd> <kbd>R</kbd> &#183;
+      <b>1&#215; 2&#215; 3&#215;</b> ratchet &#183; <b>ACC</b> accent (<kbd>A</kbd>; on the unit: <b>U&amp;D</b> held while entering the note in LOAD) &#183; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> select, <kbd>&#8593;</kbd><kbd>&#8595;</kbd> semitone (<kbd>Shift</kbd> octave), <kbd>Shift</kbd><kbd>&#8592;</kbd><kbd>&#8594;</kbd> nudge, <kbd>N</kbd> <kbd>L</kbd> <kbd>R</kbd> &#183;
       <span style="color:var(--red)">red note</span> = outside the scale (the unit plays the note shown after it) &#183; red dot = playing step</div>
     </div>
     <div class="seq-grid-wrap"><div class="seq-grid" id="steps"></div><div class="seq-empty" id="seqEmpty" style="display:none">Empty pattern. Set a length with STEPS, randomize it, or record on the unit (LOAD, keys, LOAD).</div></div>
@@ -467,6 +473,10 @@
           </div>
           <div class="config-note">With MIDI sync on, the whole machine plays this much later than the incoming clock. Menu keys 20&#8211;31.</div>
         </div>
+        <div class="config-field" data-f="11">
+          <label>MIDI OUT jack</label>
+          <select id="selThru" title="OUT: the notes the 101 plays (keys, arp, sequencer). THRU: MIDI IN passed through, none of its own notes, so a sequence does not spam the chain. Menu key 32."><option value="0">MIDI OUT</option><option value="1">MIDI THRU</option></select>
+        </div>
         <div class="config-field" data-f="1">
           <label>Pedal jack</label>
           <select id="selPedal" title="What the HOLD pedal jack does. Menu key 19."><option value="0">Hold</option><option value="1">Key transpose</option></select>
@@ -488,6 +498,66 @@
           <div class="config-note"><b>PLAY + U&amp;D</b> randomize (rhythm + pitch) &#183; <b>PLAY + UP</b> new pitches &#183; <b>PLAY + DOWN</b> mutate &#183;
             <b>PLAY + KEY TRANSPOSE + key</b> = scale root (the same key again = next scale) &#183; <b>PLAY + KEY TRANSPOSE</b> tap = scale on / off.
             Randomized notes land in the pattern's scale. While playing, <b>HOLD + UP / DOWN</b> nudges right / left.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filter CV + accent (CV DAC mod; SuperOS only: 0x23 read / 0x25 write -> 0x24) -->
+  <div class="config-panel" id="cvPanel" style="display:none">
+    <div class="config-bar is-open" id="cvBar">
+      <span class="config-bar-arrow">&#9654;</span>
+      <span class="config-bar-label">Filter CV &#183; Accent (CV mod)</span>
+      <span class="config-bar-status" id="cvStatus">reading...</span>
+    </div>
+    <div class="config-body is-open" id="cvBody">
+      <div class="config-inner">
+        <div class="config-field">
+          <label>Filter CV offset (center, mV)</label>
+          <div class="cv-row">
+            <input type="range" id="rngCenter" min="0" max="4095" value="2300" />
+            <input type="number" id="inCenter" min="0" max="4095" value="2300" />
+          </div>
+          <div class="cv-row" style="margin-top:6px">
+            <span>IC18 pin 5</span><input type="number" id="calRef" value="4870" title="mV; the probe's VCC reads the same +5 V rail" />
+            <span>+15 V</span><input type="number" id="calP15" value="15000" title="mV, at the bias wire's end (C12 or the FREQ fader lug)" />
+            <span>R10</span><select id="calR10"><option value="68">68k (v1.1)</option><option value="100">100k (v1.2)</option></select>
+            <button class="btn" id="btnCal" title="center = Vpin5 - (V+15 - Vpin5) x 27k / R10">Set</button>
+          </div>
+          <div class="config-note">The DAC level where MIDI cutoff adds nothing, so the FREQ slider behaves as stock: <b>Vpin5 &#8722; (V+15 &#8722; Vpin5) &#215; 27k / R10</b>. The first unit (68k, 4.87 V) runs 850; a v1.2 board at 5.00 V about 2300. Check: with cutoff at 64, toggling MIDI cutoff must not move IC18 pin 7. Lower = darker, higher = brighter.</div>
+        </div>
+        <div class="config-field">
+          <label>MIDI cutoff (CC <span id="cvCcNum">74</span>)</label>
+          <div class="cv-row">
+            <input type="range" id="rngCutoff" min="0" max="127" value="64" />
+            <span id="cutoffVal">64</span>
+            <button class="btn" id="btnCutoff" title="MIDI cutoff on / off (panel menu key 13)">On</button>
+          </div>
+          <div class="config-note">Sends the CC on the unit's channel; 64 = the slider's own position, 0 / 127 = one FREQ-fader throw down / up.</div>
+        </div>
+        <div class="config-field">
+          <label>Accent model</label>
+          <div class="cv-row">
+            <select id="selCvMode"><option value="0">MC-202</option><option value="1">TB-303</option></select>
+            <button class="btn" id="btnVcfAcc" title="Accent opens the filter">VCF</button>
+            <button class="btn" id="btnVcaAcc" title="Accent boosts the VCA">VCA</button>
+          </div>
+          <div class="config-note">Accents come from sequencer steps marked ACC and from MIDI notes at or above the velocity threshold. Panel menu keys 11 / 12.</div>
+        </div>
+        <div class="config-field"><label>VCF accent amount</label><div class="cv-row"><input type="range" id="rngVcfAmt" min="0" max="127" /><span id="vcfAmtVal"></span></div></div>
+        <div class="config-field"><label>VCA accent amount (max 100)</label><div class="cv-row"><input type="range" id="rngVcaAmt" min="0" max="100" /><span id="vcaAmtVal"></span></div></div>
+        <div class="config-field"><label>Accent decay (MC-202, ms)</label><div class="cv-row"><input type="range" id="rngDecay" min="1" max="127" /><span id="decayVal"></span></div></div>
+        <div class="config-field"><label>Velocity threshold</label><div class="cv-row"><input type="range" id="rngVelThr" min="1" max="127" /><span id="velThrVal"></span></div></div>
+        <div class="config-field"><label>Resonance depth (TB-303)</label><div class="cv-row"><input type="range" id="rngRes" min="0" max="127" /><span id="resVal"></span></div></div>
+        <div class="config-field"><label>Accent build-up (TB-303)</label><div class="cv-row"><input type="range" id="rngBuild" min="0" max="127" /><span id="buildVal"></span></div></div>
+        <div class="config-field">
+          <label>VCA park (mV)</label>
+          <div class="cv-row"><input type="number" id="inPark" min="0" max="4095" /></div>
+          <div class="config-note">VOUTB's rest point = TR28's collector during a note (measured 700 mV). Only accents use it.</div>
+        </div>
+        <div class="config-field">
+          <label>Live DAC codes</label>
+          <span class="status is-ok" id="cvCodes" style="padding-left:0">&#8212;</span>
         </div>
       </div>
     </div>
@@ -729,6 +799,7 @@ function setMode(m) {
   $('btnFwSwitch').textContent = m === 'emu' ? 'Switch to SuperOS' : 'Switch to emulator';
   if (m !== 'superos') feat = null;   // only SuperOS has the performance features
   renderFeatures();
+  renderCv();
   updateLinkUi();
 }
 
@@ -776,11 +847,13 @@ function handleSysex(b) {
       if (randomized) { randPending = -1; if (p === curPat) { clearTimeout(liveTimer); liveTimer = null; } }
       if (wasDirty && !readingAll && !randomized) { log('pattern ' + (p + 1) + ' changed on the unit; keeping your unsent edits (Resync or Pull all to discard them)'); break; }
       const ratTail = raw.slice(1 + len);   // packed ratchet bytes (absent from pre-ratchet firmware)
+      const accTail = raw.slice(1 + len + Math.ceil(len / 4));   // packed accent bits (absent before the CV mod)
       patterns[p] = raw.slice(1, 1 + len).map((s, i) => ({cv: s & 0x3F, type: Math.min(2, s >> 6),
-        rat: ratTail.length > (i >> 2) ? (ratTail[i >> 2] >> ((i & 3) * 2)) & 3 : 0}));
+        rat: ratTail.length > (i >> 2) ? (ratTail[i >> 2] >> ((i & 3) * 2)) & 3 : 0,
+        acc: accTail.length > (i >> 3) ? (accTail[i >> 3] >> (i & 7)) & 1 : 0}));
       patterns[p].forEach(s => { if (s.rat > 2) s.rat = 0; });
       dirty[p] = false;
-      if (p === curPat) lastSent = {pat: p, len, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
+      if (p === curPat) lastSent = {pat: p, len, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat, acc: s.acc}))};
       if (selStep >= patterns[p].length) selStep = patterns[p].length - 1;
       log((randomized ? pendingWhat : readingAll ? 'read' : 'unit updated') + ' pattern ' + (p + 1) + ' (' + len + ' steps)', readingAll ? '' : 'log-ok');
       renderAll();
@@ -818,7 +891,16 @@ function handleSysex(b) {
       }
       break;
     }
-    case 0x24: break;   // CV DAC config reply (no UI here yet; requested by Resync)
+    case 0x24: {   // CV DAC config: 12 config bytes, live codes A/B, then vcaPark (newer firmware)
+      if (b.length < 13) break;
+      const c = b.slice(1);
+      cv = {center: c[0] | (c[1] & 0x1F) << 7, cc: c[2], flags: c[3], mode: c[4], vcfAmt: c[5], vcaAmt: c[6],
+            decay: c[7], velThr: c[8], res: c[9], build: c[10], hw: c[11],
+            codeA: c.length > 13 ? c[12] | (c[13] & 0x1F) << 7 : -1, codeB: c.length > 15 ? c[14] | (c[15] & 0x1F) << 7 : -1,
+            park: c.length > 17 ? c[16] | (c[17] & 0x1F) << 7 : -1};
+      renderCv();
+      break;
+    }
     default: log('101: unknown SysEx cmd 0x' + cmd.toString(16));
   }
 }
@@ -837,12 +919,18 @@ function packRatchets(pat) {
   pat.forEach((s, i) => { out[i >> 2] |= (s.rat & 3) << ((i & 3) * 2); });
   return out;
 }
+// Packed accent tail after the ratchets: 1 bit per step, 8 steps/byte.
+function packAccents(pat) {
+  const out = new Array(Math.ceil(pat.length / 8)).fill(0);
+  pat.forEach((s, i) => { if (s.acc) out[i >> 3] |= 1 << (i & 7); });
+  return out;
+}
 function writePattern(p) {
-  const raw = [patterns[p].length, ...patterns[p].map(s => (s.cv & 0x3F) | (s.type << 6)), ...packRatchets(patterns[p])];
+  const raw = [patterns[p].length, ...patterns[p].map(s => (s.cv & 0x3F) | (s.type << 6)), ...packRatchets(patterns[p]), ...packAccents(patterns[p])];
   let x = 0; raw.forEach(v => x ^= v);
   pendingWrite = p;
   sendSysex([0x12, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
-  lastSent = {pat: p, len: patterns[p].length, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
+  lastSent = {pat: p, len: patterns[p].length, steps: patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat, acc: s.acc}))};
   log('write pattern ' + (p + 1) + ' (' + patterns[p].length + ' steps)', 'log-syx');
 }
 function selectDevicePattern(p) { sendSysex([0x1D, p]); }
@@ -870,7 +958,7 @@ function scheduleLiveSend() {
     const base = (lastSent && lastSent.pat === p) ? lastSent : null;
     let diff = 0;
     if (base && len === base.len) {
-      for (let i = 0; i < len; ++i) { const a = pat[i], b = base.steps[i]; if (a.cv !== b.cv || a.type !== b.type || a.rat !== b.rat) ++diff; }
+      for (let i = 0; i < len; ++i) { const a = pat[i], b = base.steps[i]; if (a.cv !== b.cv || a.type !== b.type || a.rat !== b.rat || a.acc !== b.acc) ++diff; }
     } else diff = 1e9;
     if (!base || len === 0 || len > 127 || diff > 6 || len !== base.len && Math.abs(len - base.len) > 6) { writePattern(p); dirty[p] = false; renderPills(); return; }
     let sent = 0;
@@ -878,10 +966,14 @@ function scheduleLiveSend() {
     const overlap = Math.min(len, base.len);
     for (let i = 0; i < len; ++i) {
       const a = pat[i], b = i < overlap ? base.steps[i] : null;
-      if (!b || a.cv !== b.cv || a.type !== b.type) sent += sendStepDelta(p, i, a);
+      const stepChanged = !b || a.cv !== b.cv || a.type !== b.type;
+      if (stepChanged) sent += sendStepDelta(p, i, a);
       if (!b || a.rat !== b.rat) { sendSysex([0x1B, p, i, a.rat & 3]); ++sent; }
+      // accent lane 1 (the unit refuses it on a rest); resent with a changed
+      // note so a step that was a rest cannot keep a stale bit on the unit
+      if (a.type !== 1 && (stepChanged || a.acc !== b.acc)) { sendSysex([0x16, p, 1, i, a.acc ? 1 : 0]); ++sent; }
     }
-    lastSent = {pat: p, len, steps: pat.map(s => ({cv: s.cv, type: s.type, rat: s.rat}))};
+    lastSent = {pat: p, len, steps: pat.map(s => ({cv: s.cv, type: s.type, rat: s.rat, acc: s.acc}))};
     dirty[p] = false; renderPills();
     if (sent) log('live: ' + sent + ' msg' + (sent === 1 ? '' : 's') + ' to pattern ' + (p + 1), 'log-syx');
   }, 100);
@@ -1025,6 +1117,7 @@ function featSummary() {
   add(6, () => 'tune ' + (f[6] ? 'on' : 'off'));
   add(5, () => 'rt-rec ' + (f[5] ? 'on' : 'off'));
   add(7, () => 'queued ' + (f[7] === 0x7F ? 'none' : 'P' + (f[7] + 1)));
+  add(11, () => f[11] ? 'MIDI THRU' : 'MIDI OUT');
   return parts.join(', ');
 }
 function renderFeatures() {
@@ -1046,6 +1139,7 @@ function renderFeatures() {
   tog('btnRtRec', f[5]); tog('btnTune', f[6]);
   $('queued').textContent = f.length > 7 ? (f[7] === 0x7F ? 'none' : 'Pattern ' + (f[7] + 1) + ' (next, at the end of this pass)') : '';
   $('selPedal').value = f[1];
+  if (f.length > 11) $('selThru').value = f[11];
   if (document.activeElement !== $('inDelay')) $('inDelay').value = f[8];
   $('rngDelay').value = f[8];
 }
@@ -1077,6 +1171,7 @@ $('inTr').onchange = () => setTransposeUi(+$('inTr').value);
 $('btnTrMode').onclick = () => sendFeature(3, feat[3] ? 0 : 1, 'transpose mode ' + (feat[3] ? 'off' : 'on'));
 $('btnRtRec').onclick = () => sendFeature(5, feat[5] ? 0 : 1, 'real-time record ' + (feat[5] ? 'off' : 'on'));
 $('btnTune').onclick = () => sendFeature(6, feat[6] ? 0 : 1, 'tune ' + (feat[6] ? 'off' : 'on'));
+$('selThru').onchange = () => sendFeature(11, +$('selThru').value, $('selThru').value === '1' ? 'MIDI THRU (its own notes not sent)' : 'MIDI OUT');
 $('selPedal').onchange = () => sendFeature(1, +$('selPedal').value, 'pedal ' + ($('selPedal').value === '1' ? 'key transpose' : 'hold'));
 // Loop length: 1..127 is all SysEx can carry (128 is a status byte); 0 = full.
 (function fillLoop() {
@@ -1196,8 +1291,66 @@ $('scaleSelect').onchange = () => {
 };
 $('btnScaleOn').onclick = () => { const sc = scales[curPat] || {mask: 0xFFF, on: 0}; sendScale(sc.mask, !sc.on); };
 
+// Filter CV + accent (CV DAC mod). 0x25 takes the 12-byte body, plus vcaPark
+// when this firmware reports one; the unit answers 0x24 with what it applied.
+let cv = null;
+const CV_F_CUTOFF = 1, CV_F_VCF = 2, CV_F_VCA = 4;
+function sendCv(what) {
+  if (!cv) return;
+  const body = [0x25, cv.center & 0x7F, (cv.center >> 7) & 0x1F, cv.cc & 0x7F, cv.flags & 0x7F, cv.mode & 0x7F,
+                cv.vcfAmt & 0x7F, cv.vcaAmt & 0x7F, cv.decay & 0x7F, cv.velThr & 0x7F, cv.res & 0x7F, cv.build & 0x7F, cv.hw & 0x7F];
+  if (cv.park >= 0) body.push(cv.park & 0x7F, (cv.park >> 7) & 0x1F);
+  if (sendSysex(body)) log('CV -> unit: ' + what, 'log-syx');
+}
+function renderCv() {
+  $('cvPanel').style.display = deviceMode === 'superos' ? '' : 'none';
+  if (!cv) { $('cvStatus').textContent = verified ? 'no reply yet' : 'reading...'; return; }
+  const set = (id, v) => { if (document.activeElement !== $(id)) $(id).value = v; };
+  const tog = (id, on) => $(id).classList.toggle('is-on', !!on);
+  set('rngCenter', cv.center); set('inCenter', cv.center);
+  $('cvCcNum').textContent = cv.cc;
+  tog('btnCutoff', cv.flags & CV_F_CUTOFF); $('btnCutoff').textContent = cv.flags & CV_F_CUTOFF ? 'On' : 'Off';
+  tog('btnVcfAcc', cv.flags & CV_F_VCF); tog('btnVcaAcc', cv.flags & CV_F_VCA);
+  $('selCvMode').value = cv.mode;
+  [['rngVcfAmt', 'vcfAmtVal', 'vcfAmt'], ['rngVcaAmt', 'vcaAmtVal', 'vcaAmt'], ['rngDecay', 'decayVal', 'decay', 10],
+   ['rngVelThr', 'velThrVal', 'velThr'], ['rngRes', 'resVal', 'res'], ['rngBuild', 'buildVal', 'build']]
+    .forEach(([r, v, k, mul]) => { set(r, cv[k]); $(v).textContent = cv[k] * (mul || 1); });
+  $('inPark').parentNode.parentNode.style.display = cv.park >= 0 ? '' : 'none';
+  if (cv.park >= 0) set('inPark', cv.park);
+  $('cvCodes').textContent = cv.codeA >= 0 ? 'VOUTA ' + cv.codeA + ' mV · VOUTB ' + cv.codeB + ' mV' : '—';
+  $('cvStatus').textContent = 'offset ' + cv.center + ' mV · ' + (cv.mode ? 'TB-303' : 'MC-202') + ' accent · cutoff CC ' + (cv.flags & CV_F_CUTOFF ? cv.cc : 'off');
+}
+// Sliders preview on input and write on release: each 0x25 is an EEPROM update on the unit.
+const cvNum = (id, key, lo, hi, what) => {
+  $(id).oninput = () => { if (cv) { cv[key] = Math.max(lo, Math.min(hi, +$(id).value | 0)); renderCv(); } };
+  $(id).onchange = () => { if (cv) { cv[key] = Math.max(lo, Math.min(hi, +$(id).value | 0)); sendCv(what + ' ' + cv[key]); renderCv(); } };
+};
+cvNum('rngCenter', 'center', 0, 4095, 'filter CV offset');
+cvNum('inCenter', 'center', 0, 4095, 'filter CV offset');
+cvNum('rngVcfAmt', 'vcfAmt', 0, 127, 'VCF accent');
+cvNum('rngVcaAmt', 'vcaAmt', 0, 100, 'VCA accent');
+cvNum('rngDecay', 'decay', 1, 127, 'accent decay (x10 ms)');
+cvNum('rngVelThr', 'velThr', 1, 127, 'velocity threshold');
+cvNum('rngRes', 'res', 0, 127, 'resonance depth');
+cvNum('rngBuild', 'build', 0, 127, 'build-up');
+cvNum('inPark', 'park', 0, 4095, 'VCA park');
+$('btnCal').onclick = () => {
+  if (!cv) return;
+  const ref = +$('calRef').value, p15 = +$('calP15').value, r10 = +$('calR10').value;
+  cv.center = Math.max(0, Math.min(4095, Math.round(ref - (p15 - ref) * 27 / r10)));
+  sendCv('filter CV offset ' + cv.center + ' (from ' + ref + ' / ' + p15 + ' mV, R10 ' + r10 + 'k)'); renderCv();
+};
+$('selCvMode').onchange = () => { if (cv) { cv.mode = +$('selCvMode').value; sendCv(cv.mode ? 'TB-303 accent' : 'MC-202 accent'); renderCv(); } };
+[['btnCutoff', CV_F_CUTOFF, 'MIDI cutoff'], ['btnVcfAcc', CV_F_VCF, 'VCF accent'], ['btnVcaAcc', CV_F_VCA, 'VCA accent']].forEach(([id, f, what]) => {
+  $(id).onclick = () => { if (cv) { cv.flags ^= f; sendCv(what + (cv.flags & f ? ' on' : ' off')); renderCv(); } };
+});
+$('rngCutoff').oninput = () => {
+  const v = +$('rngCutoff').value; $('cutoffVal').textContent = v;
+  sendRaw([0xB0 | cfg.chan, cv ? cv.cc : 74, v]);
+};
+
 // Collapsible panels
-[['perfBar','perfBody'],['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
+[['cvBar','cvBody'],['perfBar','perfBody'],['cfgBar','cfgBody'],['mmBar','mmBody'],['logBar','logBody']].forEach(([bar, body]) => {
   $(bar).onclick = () => { $(bar).classList.toggle('is-open'); $(body).classList.toggle('is-open'); };
 });
 
@@ -1267,7 +1420,7 @@ $('fileSyx').onchange = async ev => {
 const history = Array.from({length: NUM_PATTERNS}, () => []);
 function pushHistory(p) {
   const h = history[p];
-  h.push(patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat || 0})));
+  h.push(patterns[p].map(s => ({cv: s.cv, type: s.type, rat: s.rat || 0, acc: s.acc || 0})));
   if (h.length > 100) h.shift();
 }
 function undo() {
@@ -1322,7 +1475,7 @@ function renderSteps() {
   const frag = document.createDocumentFragment();
   pat.forEach((s, i) => {
     const d = document.createElement('div');
-    d.className = 'step-card' + stepStateClass(s.type) + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-playing-step' : '') +
+    d.className = 'step-card' + stepStateClass(s.type) + (s.acc && s.type !== 1 ? ' is-acc' : '') + (i === selStep ? ' is-sel' : '') + (i === playPos && unitPlaying && devPat === curPat ? ' is-playing-step' : '') +
                   (snapCv(s) !== s.cv ? ' is-offscale' : '');
     d.dataset.i = i;
     const name = stepNameHtml(s);
@@ -1343,7 +1496,8 @@ function renderSteps() {
         '<button class="r-btn' + (!s.rat ? ' is-on' : '') + '" data-a="r0" title="Single hit">1&#215;</button>' +
         '<button class="r-btn' + (s.rat === 1 ? ' is-on' : '') + '" data-a="r1" title="Ratchet: two hits in this step">2&#215;</button>' +
         '<button class="r-btn' + (s.rat === 2 ? ' is-on' : '') + '" data-a="r2" title="Ratchet: three hits in this step">3&#215;</button>' +
-      '</div>';
+      '</div>' +
+      '<div class="step-acc"><button class="r-btn acc-btn' + (s.acc ? ' is-on' : '') + '" data-a="acc" title="Accent: fires the CV mod\'s accent envelope (louder, brighter) on this step (A)">ACC</button></div>';
     frag.appendChild(d);
     const wrap = d.querySelector('.pitch-knob-wrap');
     layoutPitchKnob(wrap, s);
@@ -1411,6 +1565,7 @@ $('steps').addEventListener('click', ev => {
     case 'r0': s.rat = 0; break;
     case 'r1': s.rat = 1; break;
     case 'r2': s.rat = 2; break;
+    case 'acc': s.acc = s.acc ? 0 : 1; break;
     default: history[curPat].pop(); return;
   }
   afterEdit(); renderSteps();
@@ -1423,7 +1578,7 @@ function setLength(n) {
   if (n === pat.length) return;
   pushHistory(curPat);
   while (pat.length > n) pat.pop();
-  while (pat.length < n) { const last = pat.length ? pat[pat.length - 1] : null; pat.push({cv: last ? last.cv : 17, type: last ? last.type : 0, rat: 0}); }
+  while (pat.length < n) { const last = pat.length ? pat[pat.length - 1] : null; pat.push({cv: last ? last.cv : 17, type: last ? last.type : 0, rat: 0, acc: 0}); }
   if (selStep >= pat.length) selStep = pat.length - 1;
   afterEdit(); renderSteps();
 }
@@ -1479,6 +1634,7 @@ document.addEventListener('keydown', ev => {
   if (k === 'n' || k === 'N') edit(() => s.type = 0);
   if (k === 'r' || k === 'R') edit(() => s.type = 1);
   if (k === 'l' || k === 'L' || k === 't' || k === 'T') edit(() => s.type = 2);
+  if ((k === 'a' || k === 'A') && s.type !== 1) edit(() => s.acc = s.acc ? 0 : 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -1568,19 +1724,19 @@ function convertNotes(notes, o) {
   const lastEnd = line.length ? Math.max(...line.map(n => n.e)) : 0;
   const barSteps = Math.max(1, Math.round(o.barTicks / stepT));
   const total = Math.max(1, Math.ceil(lastEnd / barSteps) * barSteps);
-  const flat = Array.from({length: total}, () => ({cv: 0, type: 1, rat: 0}));
+  const flat = Array.from({length: total}, () => ({cv: 0, type: 1, rat: 0, acc: 0}));
   let notesN = 0;
   line.forEach((n, k) => {
     const prev = line[k - 1], next = line[k + 1], cv = cvOf(n);
-    flat[n.s] = {cv, type: prev && prev.e > n.s ? 2 : 0, rat: 0}; ++notesN;
+    flat[n.s] = {cv, type: prev && prev.e > n.s ? 2 : 0, rat: 0, acc: 0}; ++notesN;
     const stop = Math.min(n.e, next ? next.s : n.e, total);
-    for (let t = n.s + 1; t < stop; ++t) flat[t] = {cv, type: 2, rat: 0};
+    for (let t = n.s + 1; t < stop; ++t) flat[t] = {cv, type: 2, rat: 0, acc: 0};
   });
   const chunkLen = o.len > 0 ? Math.min(MAX_STEPS, o.len) : Math.min(MAX_STEPS, total);
   const chunks = [];
   for (let at = 0; at < total && (o.split || !chunks.length); at += chunkLen) {
     const c = flat.slice(at, at + chunkLen);
-    while (o.len > 0 && c.length < chunkLen) c.push({cv: 0, type: 1, rat: 0});   // Auto: the last part keeps its own length
+    while (o.len > 0 && c.length < chunkLen) c.push({cv: 0, type: 1, rat: 0, acc: 0});   // Auto: the last part keeps its own length
     chunks.push(c);
   }
   const used = chunks.length * chunkLen;
@@ -1680,7 +1836,7 @@ $('fileJson').onchange = async ev => {
   try {
     const j = JSON.parse(await f.text());
     if (!Array.isArray(j.patterns)) throw new Error('no patterns array');
-    j.patterns.slice(0, NUM_PATTERNS).forEach((p, i) => { patterns[i] = p.slice(0, MAX_STEPS).map(s => ({cv: Math.min(63, Math.max(0, s.cv | 0)), type: Math.min(2, Math.max(0, s.type | 0)), rat: Math.min(2, Math.max(0, s.rat | 0))})); dirty[i] = true; });
+    j.patterns.slice(0, NUM_PATTERNS).forEach((p, i) => { patterns[i] = p.slice(0, MAX_STEPS).map(s => ({cv: Math.min(63, Math.max(0, s.cv | 0)), type: Math.min(2, Math.max(0, s.type | 0)), rat: Math.min(2, Math.max(0, s.rat | 0)), acc: s.acc ? 1 : 0})); dirty[i] = true; });
     lastSent = null;
     log('loaded ' + f.name + ' (write each pattern to the unit, or edit with live on)', 'log-ok'); renderAll();
   } catch (e) { log('bad file: ' + e.message, 'log-err'); }

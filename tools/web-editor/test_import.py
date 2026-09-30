@@ -155,7 +155,7 @@ with sync_playwright() as p:
     page.click("#impWrite"); page.wait_for_timeout(400)
     sent = [m for m in page.evaluate("window.__sent")[k:] if m[:3] == [0xF0, 0x7D, 0x12]]
     steps = page.evaluate("patterns[0].map(s => (s.cv & 0x3F) | (s.type << 6))")
-    raw = [len(steps)] + steps + [0] * ((len(steps) + 3) // 4)
+    raw = [len(steps)] + steps + [0] * ((len(steps) + 3) // 4) + [0] * ((len(steps) + 7) // 8)   # ratchet + accent tails
     x = 0
     for v in raw: x ^= v
     want = [0xF0, 0x7D, 0x12, 0, x & 0x7F, (x >> 7) & 1] + pack7(raw) + [0xF7]
@@ -172,7 +172,7 @@ with sync_playwright() as p:
     k = len(page.evaluate("window.__sent"))
     page.click("#impWrite"); page.wait_for_timeout(400)
     sent = [m for m in page.evaluate("window.__sent")[k:] if m[:3] == [0xF0, 0x7D, 0x12]]
-    raw = [128] + page.evaluate("patterns[0].map(s => (s.cv & 0x3F) | (s.type << 6))") + [0] * 32
+    raw = [128] + page.evaluate("patterns[0].map(s => (s.cv & 0x3F) | (s.type << 6))") + [0] * 32 + [0] * 16
     x = 0
     for v in raw: x ^= v
     check(len(sent) == 1 and sent[0] == [0xF0, 0x7D, 0x12, 0, x & 0x7F, (x >> 7) & 1] + pack7(raw) + [0xF7] and all(v < 0x80 for v in sent[0][1:-1]),

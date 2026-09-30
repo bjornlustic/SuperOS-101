@@ -77,6 +77,12 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
   1 DIN only, 2 USB only. Realtime bytes (clock, Start, Stop, Continue) from the other jack are
   not acted on (soft thru still forwards them). A host that clocks both jacks, such as an MPC
   with its clock on the USB port and on the DIN cable, otherwise steps the machine twice a tick.
+- **MIDI OUT / THRU**: SysEx 0x65 id 11 (saved; 0x66's 12th field; panel menu key 32): 0 OUT
+  sends the notes the 101 plays (keys, arp, sequencer; accented steps at velocity 127), 1 THRU
+  mirrors MIDI IN to OUT and sends none of its own notes, so a sequence does not spam the chain.
+- **Accent per step** (CV DAC mod): in LOAD, hold **U&D** while entering a note (with HOLD too
+  for an accented legato step). The step fires the accent envelope like a velocity-127 note.
+  SysEx 0x16 lane 1 (0/1), and a packed accent tail after the ratchets on 0x11/0x12.
 - **Arp octave range**: in arp mode, **KEY TRANSPOSE + UP / DOWN** = one octave more / less
   (1 to 3). UP climbs octave by octave, DOWN starts at the top, U&D bounces across the whole
   span, random picks an octave too. Persists. (Our addition; the SH-1oh1 has no range.)

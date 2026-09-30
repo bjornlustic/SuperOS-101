@@ -64,29 +64,32 @@ static void MidiCC(uint8_t num, uint8_t val) { cvdac::OnCc(num, val); }   // fil
 
 // --- MIDI note output --------------------------------------------------------
 static int16_t g_outNote = -1;
-static void MidiOut(uint8_t cv, bool gate) {
+static void MidiOut(uint8_t cv, bool gate, bool accent) {
   int16_t note = (gate && !midi::Thru()) ? (int16_t)cv + engine::MIDI_CV_OFFSET : -1;   // thru: OUT is the input, not our notes
   if (note == g_outNote) return;
-  if (note >= 0) midi::NoteOn((uint8_t)note);          // new note first: legato-friendly
+  if (note >= 0) midi::NoteOn((uint8_t)note, accent ? 127 : 100);   // accented step = velocity 127          // new note first: legato-friendly
   if (g_outNote >= 0) midi::NoteOff((uint8_t)g_outNote);
   g_outNote = note;
 }
 
 // --- SysEx (editor protocol, see midi.h) -----------------------------------
 // 0x11 payload: [0]=len, [1..len]=steps, then ceil(len/4) packed ratchet
-// bytes (2 bits/step). The checksum XORs every payload byte, so hosts that
-// predate ratchets fail the checksum only if they also parse the tail; ours
-// sends/expects the tail both ways, and 0x12 accepts payloads without it.
+// bytes (2 bits/step), then ceil(len/8) packed accent bytes (bit i&7 of byte
+// i>>3). The checksum XORs every payload byte, so hosts that predate a tail
+// fail the checksum only if they also parse it; ours sends both tails, and
+// 0x12 accepts payloads with neither, ratchets only, or both.
 static void SendPattern(uint8_t p) {
   if (p >= engine::NUM_PATTERNS) return;
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4];
+  uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4 + engine::MAX_STEPS / 8];
   raw[0] = sq.length(p);
   memcpy(raw + 1, sq.steps(p), raw[0]);
   uint8_t rb = (uint8_t)((raw[0] + 3) >> 2);
   memcpy(raw + 1 + raw[0], sq.ratchets(p), rb);
-  uint8_t total = (uint8_t)(1 + raw[0] + rb);
-  uint8_t body[4 + 188];   // 4 + PackedLen(161)
+  uint8_t ab = engine::Sequencer::AccBytes(raw[0]);
+  memcpy(raw + 1 + raw[0] + rb, sq.accents(p), ab);
+  uint8_t total = (uint8_t)(1 + raw[0] + rb + ab);
+  uint8_t body[4 + 203];   // 4 + PackedLen(177)
   body[0] = 0x11; body[1] = p;
   uint8_t x = 0; for (uint8_t i = 0; i < total; ++i) x ^= raw[i];
   body[2] = x & 0x7F; body[3] = (x >> 7) & 1;
@@ -107,14 +110,14 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[12] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[13] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
                   (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
-                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom()};
+                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendScale(uint8_t p) {
@@ -125,12 +128,17 @@ static void SendScale(uint8_t p) {
 static void SendAck(uint8_t code) { uint8_t b[2] = {0x14, code}; midi::SendSysex(b, 2); }
 // 0x24: CV DAC config (cvdac.h Pack order) + live codes for the editor's meters.
 static void SendCvConfig() {
-  uint8_t body[1 + cvdac::CFG_LEN + 4];
+  // 12 config bytes, the 4 live-code bytes, then vcaPark: appended after the
+  // codes so readers that index the codes at 12..15 keep working.
+  uint8_t cfg[cvdac::CFG_LEN];
+  cvdac::Pack(cvdac::Get(), cfg);
+  uint8_t body[1 + 12 + 4 + 2];
   body[0] = 0x24;
-  cvdac::Pack(cvdac::Get(), body + 1);
+  for (uint8_t i = 0; i < 12; ++i) body[1 + i] = cfg[i];
   uint16_t a = cvdac::CodeA(), b = cvdac::CodeB();
-  body[1 + cvdac::CFG_LEN + 0] = a & 0x7F; body[1 + cvdac::CFG_LEN + 1] = (a >> 7) & 0x1F;
-  body[1 + cvdac::CFG_LEN + 2] = b & 0x7F; body[1 + cvdac::CFG_LEN + 3] = (b >> 7) & 0x1F;
+  body[13] = a & 0x7F; body[14] = (a >> 7) & 0x1F;
+  body[15] = b & 0x7F; body[16] = (b >> 7) & 0x1F;
+  body[17] = cfg[12]; body[18] = cfg[13];
   midi::SendSysex(body, sizeof(body));
 }
 static void SendStep() {
@@ -145,14 +153,14 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     case 0x13: for (uint8_t p = 0; p < engine::NUM_PATTERNS; ++p) SendPattern(p); break;
     case 0x12: {
       if (len < 4) { SendAck(2); break; }
-      uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4];
+      uint8_t raw[engine::MAX_STEPS + 1 + engine::MAX_STEPS / 4 + engine::MAX_STEPS / 8];
       uint8_t n = midi::Unpack7(body + 4, (uint8_t)(len - 4), raw, sizeof(raw));
       if (n < 1 || raw[0] > engine::MAX_STEPS || n < (uint8_t)(raw[0] + 1) || body[1] >= engine::NUM_PATTERNS) { SendAck(2); break; }
       // Checksum over everything received: old hosts send 1+len bytes, new
-      // ones append the packed ratchet tail; both XOR what they sent.
+      // ones append the packed ratchet and accent tails; all XOR what they sent.
       uint8_t x = 0; for (uint8_t i = 0; i < n; ++i) x ^= raw[i];
       if ((x & 0x7F) != body[2] || ((x >> 7) & 1) != body[3]) { SendAck(1); break; }
-      uint8_t rb = (uint8_t)(n - 1 - raw[0]);   // 0 for pre-ratchet hosts
+      uint8_t rb = (uint8_t)(n - 1 - raw[0]);   // 0 for pre-ratchet hosts; ratchets then accents
       g_engine.seq().set(body[1], raw + 1, raw[0], rb ? raw + 1 + raw[0] : nullptr, rb);
       g_lastEditMs = millis();
       SendAck(0);
@@ -250,6 +258,9 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           case 8: if (v >= 1 && v <= 3) { engine::ArpRange() = v; engine::FeatDirty() = true; } break;
           case 9: g_engine.resync(); break;   // back on the one (value ignored)
           case 10: if (v <= midi::CLK_USB) { midi::SetClockFrom(v); sysex::SaveClockFrom(v); } break;
+          // MIDI OUT mode: 0 = OUT (the notes it plays), 1 = THRU (IN mirrored, its own
+          // notes not sent; a sounding note is released next pass). Saved, as menu key 32.
+          case 11: if (v <= 1) { midi::SetThru(v); sysex::SaveThru(v); } break;
           default: break;
         }
       }
@@ -292,7 +303,7 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     case 0x23: SendCvConfig(); break;
     case 0x25: {   // set CV DAC config; the editor gets the applied values back
       cvdac::Settings s = cvdac::Get();
-      if (len >= 1 + cvdac::CFG_LEN && cvdac::Unpack(body + 1, s)) cvdac::Set(s);
+      if (len >= 1 + 12 && cvdac::Unpack(body + 1, s, (uint8_t)(len - 1))) cvdac::Set(s);
       SendCvConfig();
       break;
     }
@@ -415,7 +426,10 @@ void superos_loop() {
     // still covers. Guarding the whole hold made PLAY + key select nothing.
     const uint8_t exempt = (uint8_t)((1u << controls::BTN_HOLD) | (1u << controls::BTN_KEYTRANS));
     uint8_t fnEdge = (uint8_t)((g_buttons.now ^ g_buttons.prev) & ~exempt);
-    uint8_t fnHeld = (uint8_t)(g_buttons.now & ~exempt & ~(1u << controls::BTN_PLAY));
+    // U&D likewise while held in LOAD: U&D + key records an accented step.
+    const uint8_t heldOk = (uint8_t)((1u << controls::BTN_PLAY) |
+        (g_engine.mode() == engine::MODE_SEQ_LOAD ? (1u << controls::BTN_UD) : 0));
+    uint8_t fnHeld = (uint8_t)(g_buttons.now & ~exempt & ~heldOk);
     if (fnEdge || fnHeld) g_btnQuietMs = nowMs + 30;
     if ((int32_t)(g_btnQuietMs - nowMs) > 0) panelKeys &= g_prevPanelKeys;
     g_prevPanelKeys = panelKeys;
@@ -483,17 +497,18 @@ void superos_loop() {
   }
   engine::Output out = g_engine.update(keys, ExtCv(), g_buttons.hold, panel, g_buttons, clockEdge, halfEdge);
   hw::DacWrite(out.cv, ROUTE_CV_OUT);
-  MidiOut(out.cv, out.gate);
+  MidiOut(out.cv, out.gate, out.accent);
 
   // CV DAC (cvdac.h): a fresh note = gate rising from silence, or a non-legato
   // retrigger (the engine flags those with the PORTAMENTO-OFF pulse). It fires
-  // the accent envelope when the note's MIDI velocity clears the threshold;
-  // panel and sequencer notes carry no velocity (ACCENT_ALL flag covers them).
+  // the accent envelope when the note's MIDI velocity clears the threshold, or
+  // when an accented sequencer step starts (out.accent, legato steps too);
+  // other panel notes carry no velocity (ACCENT_ALL flag covers them).
   // Then one tick of the envelope / cutoff slew and the DAC writes.
   {
     bool fresh = out.gate && (!g_prevGate || out.portaOff);
     g_prevGate = out.gate;
-    if (fresh) { cvdac::NoteOn(g_lastVel); g_lastVel = 0; }
+    if (fresh || out.accent) { cvdac::NoteOn(out.accent ? 127 : g_lastVel); g_lastVel = 0; }
     cvdac::Tick();
   }
   if (midi::HostSeen()) {

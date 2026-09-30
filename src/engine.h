@@ -89,11 +89,12 @@ static const uint8_t TRANSPOSE_REF_KEY = 7;
 enum StepType : uint8_t { STEP_NOTE = 0, STEP_REST = 1, STEP_LEGATO = 2 };
 
 // Edit lanes, shared with the fleet's edit opcodes (0x16 SET STEP, 0x2E
-// RANDOMIZE). Lanes 1 and 2 are accent and slide and DO NOT EXIST on the 101:
-// it is mono. They are named here so a refusal is a deliberate decision at a
-// named lane rather than a default case swallowing an unknown byte.
+// RANDOMIZE). Lane 2 (slide) DOES NOT EXIST on the 101; lane 1 (accent) does
+// since the CV DAC mod (a per-step bit that fires the accent envelope). They
+// are named here so a refusal is a deliberate decision at a named lane rather
+// than a default case swallowing an unknown byte.
 static const uint8_t LANE_NOTE   = 0;
-static const uint8_t LANE_ACCENT = 1;   // absent on the 101 -> ack 2
+static const uint8_t LANE_ACCENT = 1;   // per-step accent (CV DAC mod), 0x16 only; RANDOMIZE refuses it
 static const uint8_t LANE_SLIDE  = 2;   // absent on the 101 -> ack 2
 static const uint8_t LANE_GATE   = 3;
 static const uint8_t LANE_ALL    = 0x7F;
@@ -103,7 +104,7 @@ inline uint8_t  StepByte(uint8_t cv, StepType t) { return (uint8_t)((cv & 0x3F) 
 inline uint8_t  StepCv  (uint8_t s) { return s & 0x3F; }
 inline StepType StepKind(uint8_t s) { uint8_t t = s >> 6; return t > 2 ? STEP_NOTE : (StepType)t; }
 
-struct Output { uint8_t cv; bool gate; bool clockReset; bool portaOff; };
+struct Output { uint8_t cv; bool gate; bool clockReset; bool portaOff; bool accent; };   // accent: an accented sequencer step starts this pass
 
 // --- held-key (32-bit) mask helpers -----------------------------------------
 inline int8_t lowestKey (uint32_t m) { for (uint8_t k = 0; k < 32; ++k) if (m & (1UL << k)) return (int8_t)k; return -1; }
@@ -185,12 +186,18 @@ class Sequencer {
   // note retriggers evenly inside its clock period. Packed 4 steps/byte so the
   // whole lane costs 256 bytes, not another KB of a 2.5 KB SRAM part.
   uint8_t rat_[NUM_PATTERNS][MAX_STEPS / 4];
+  // Per-step accent, 1 bit each (bit i&7 of byte i>>3): the step fires the CV
+  // DAC's accent envelope (cvdac.h) as a velocity-127 note would.
+  uint8_t acc_[NUM_PATTERNS][MAX_STEPS / 8];
   // Scale per pattern: bits 0-11 = allowed pitch classes (bit 0 = C), bit 15
   // = on. Non-destructive: steps keep their pitch, the output snaps to the
   // nearest allowed note (lower on a tie), before any transpose (as the 303).
   uint16_t scale_[NUM_PATTERNS];
   static const uint8_t RAT_MAX = 2;
   static uint8_t RatBytes(uint8_t len) { return (uint8_t)((len + 3) >> 2); }
+ public:
+  static uint8_t AccBytes(uint8_t len) { return (uint8_t)((len + 7) >> 3); }
+ private:
   uint8_t len_[NUM_PATTERNS];
   uint16_t dirty_ = 0;                // bit p = pattern p differs from flash
   uint8_t cur_ = 0;                   // selected pattern
@@ -319,7 +326,7 @@ class Sequencer {
   // Real-time record: overwrite one step in place (pattern data, persisted).
   void writeStep(uint8_t idx, uint8_t stepByte) {
     if (idx >= len_[cur_]) return;
-    step_[cur_][idx] = stepByte; ratchetRaw(cur_, idx, 0);
+    step_[cur_][idx] = stepByte; ratchetRaw(cur_, idx, 0); accentRaw(cur_, idx, false);
     dirty_ |= (uint16_t)(1u << cur_); stepChanged_ = true;
   }
   // The step sounding now: its gate/CV change immediately (real-time record
@@ -348,7 +355,7 @@ class Sequencer {
   }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
   void markEdited() { edited_ |= (uint16_t)(1u << cur_); }
-  void clear() { len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); dirty_ |= (uint16_t)(1u << cur_); }
+  void clear() { len_[cur_] = 0; pos_ = 0; wcur_ = 0; memset(rat_[cur_], 0, sizeof(rat_[cur_])); memset(acc_[cur_], 0, sizeof(acc_[cur_])); dirty_ |= (uint16_t)(1u << cur_); }
   // Stock "Correcting and Adding" (OM p.35): LOAD while playing keeps the
   // pattern and re-loads from the step after the one sounding; steps past
   // the corrected ones stay and play.
@@ -369,6 +376,11 @@ class Sequencer {
     uint8_t sh = (uint8_t)((i & 3) * 2);
     rat_[p][i >> 2] = (uint8_t)((rat_[p][i >> 2] & ~(3u << sh)) | ((v & 3u) << sh));
   }
+  bool accent(uint8_t p, uint8_t i) const { return (acc_[p < NUM_PATTERNS ? p : 0][i >> 3] >> (i & 7)) & 1; }
+  bool accentCur() const { return accent(cur_, pos_); }
+  void accentRaw(uint8_t p, uint8_t i, bool on) {
+    if (on) acc_[p][i >> 3] |= (uint8_t)(1u << (i & 7)); else acc_[p][i >> 3] &= (uint8_t)~(1u << (i & 7));
+  }
   // SysEx 0x1B SET RATCHET [pat, step, 0..2] (0 = off/1x). ack 2 when out of range.
   bool setRatchet(uint8_t p, uint8_t idx, uint8_t v) {
     if (p >= NUM_PATTERNS || idx >= len_[p] || v > RAT_MAX) return false;
@@ -388,9 +400,9 @@ class Sequencer {
     curGate_ = false;
     started_ = false; halfSeen_ = false; cycle_ = 0; steps_ = 0;
   }
-  void record(uint8_t cv, StepType t) {
+  void record(uint8_t cv, StepType t, bool acc = false) {
     if (wcur_ < MAX_STEPS) {
-      ratchetRaw(cur_, wcur_, 0);
+      ratchetRaw(cur_, wcur_, 0); accentRaw(cur_, wcur_, acc && t != STEP_REST);
       step_[cur_][wcur_++] = StepByte(cv, t);
       if (wcur_ > len_[cur_]) len_[cur_] = wcur_;
       dirty_ |= (uint16_t)(1u << cur_);
@@ -406,23 +418,30 @@ class Sequencer {
     dirty_ |= (uint16_t)(1u << cur_);
   }
   // Replace pattern p wholesale (SysEx 0x12). Marks dirty; flush() persists.
-  // rat: optional packed ratchet bytes after the steps (old hosts send none).
-  bool set(uint8_t p, const uint8_t* steps, uint8_t len, const uint8_t* rat = nullptr, uint8_t ratBytes = 0) {
+  // tail: optional packed ratchet bytes after the steps, then packed accent
+  // bytes (old hosts send none, or ratchets only).
+  bool set(uint8_t p, const uint8_t* steps, uint8_t len, const uint8_t* tail = nullptr, uint8_t tailBytes = 0) {
     if (p >= NUM_PATTERNS || len > MAX_STEPS) return false;
     memcpy(step_[p], steps, len);
     memset(rat_[p], 0, sizeof(rat_[p]));
-    if (rat && ratBytes) memcpy(rat_[p], rat, ratBytes > RatBytes(len) ? RatBytes(len) : ratBytes);
+    memset(acc_[p], 0, sizeof(acc_[p]));
+    uint8_t rb = tailBytes > RatBytes(len) ? RatBytes(len) : tailBytes;
+    if (tail && rb) memcpy(rat_[p], tail, rb);
+    uint8_t ab = (uint8_t)(tailBytes - rb); if (ab > AccBytes(len)) ab = AccBytes(len);
+    if (tail && ab) memcpy(acc_[p], tail + rb, ab);
     len_[p] = len;
     dirty_ |= (uint16_t)(1u << p);
     if (p == cur_ && pos_ >= len) rewind();
     return true;
   }
   const uint8_t* ratchets(uint8_t p) const { return rat_[p < NUM_PATTERNS ? p : 0]; }
+  const uint8_t* accents(uint8_t p) const { return acc_[p < NUM_PATTERNS ? p : 0]; }
 
   // Live host edits (SysEx 0x16/0x18/0x15, docs/EDIT_OPCODES.md), atomic in place
   // so an edit under clock does not rewrite the whole pattern (gate G4). The 101
-  // is mono: lane 0 = note (value = MIDI note, 0 = rest), lane 3 = gate (0 normal
-  // retrigger, 1 legato/tie); lanes 1/2 (accent/slide) do not exist here. Any
+  // is mono: lane 0 = note (value = MIDI note, 0 = rest), lane 1 = accent (0/1,
+  // not on a rest), lane 3 = gate (0 normal retrigger, 1 legato/tie); lane 2
+  // (slide) does not exist here. Any
   // out-of-range pat/lane/step/value returns false -> SysEx ack status 2.
   bool setStep(uint8_t p, uint8_t lane, uint8_t idx, uint8_t value) {
     if (p >= NUM_PATTERNS || idx >= len_[p]) return false;   // grow with 0x18 first
@@ -435,14 +454,17 @@ class Sequencer {
     } else if (lane == 3) {                                  // gate/legato field
       if (StepKind(s) == STEP_REST) return false;            // no gate on a rest
       s = StepByte(StepCv(s), value ? STEP_LEGATO : STEP_NOTE);
-    } else return false;                                     // lanes 1/2 absent
+    } else if (lane == LANE_ACCENT) {
+      if (StepKind(s) == STEP_REST || value > 1) return false;   // no accent on a rest
+      accentRaw(p, idx, value);
+    } else return false;                                     // lane 2 absent
     step_[p][idx] = s; dirty_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
     return true;
   }
   bool setLength(uint8_t p, uint8_t len) {
     if (p >= NUM_PATTERNS || len < 1 || len > MAX_STEPS) return false;
-    for (uint8_t i = len_[p]; i < len; ++i) step_[p][i] = StepByte(0, STEP_REST);
+    for (uint8_t i = len_[p]; i < len; ++i) { step_[p][i] = StepByte(0, STEP_REST); accentRaw(p, i, false); }
     len_[p] = len; dirty_ |= (uint16_t)(1u << p);
     if (p == cur_ && pos_ >= len) rewind();
     return true;
@@ -533,10 +555,10 @@ class Sequencer {
     int16_t k = (int16_t)(n % len); if (k < 0) k += len;
     if (!k) return;
     uint8_t tmp[MAX_STEPS], rt[MAX_STEPS];
-    for (uint8_t i = 0; i < len; ++i) { tmp[i] = step_[p][i]; rt[i] = ratchet(p, i); }
+    for (uint8_t i = 0; i < len; ++i) { tmp[i] = step_[p][i]; rt[i] = (uint8_t)(ratchet(p, i) | (accent(p, i) << 2)); }
     for (uint8_t i = 0; i < len; ++i) {
       uint8_t src = (uint8_t)((i + len - k) % len);
-      step_[p][i] = tmp[src]; ratchetRaw(p, i, rt[src]);
+      step_[p][i] = tmp[src]; ratchetRaw(p, i, rt[src] & 3); accentRaw(p, i, rt[src] >> 2);
     }
     dirty_ |= (uint16_t)(1u << p); edited_ |= (uint16_t)(1u << p);
     if (p == cur_) stepChanged_ = true;
@@ -656,13 +678,15 @@ class Sequencer {
   bool    gate() const { return curGate_; }
 
   // --- persistence (flash arena; payload [0]=len [1..len]=steps, then
-  // RatBytes(len) packed ratchet bytes; records written before ratchets
-  // existed are exactly 1+len and load with every ratchet off) ---
+  // RatBytes(len) packed ratchet bytes, 2 scale bytes, AccBytes(len) packed
+  // accent bytes; records written before each tail existed end early and
+  // load with it off) ---
   void loadAll() {
-    uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2];
+    uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2 + MAX_STEPS / 8];
     for (uint8_t p = 0; p < NUM_PATTERNS; ++p) {
       len_[p] = 0;
       memset(rat_[p], 0, sizeof(rat_[p]));
+      memset(acc_[p], 0, sizeof(acc_[p]));
       scale_[p] = 0x0FFF;
       if (!persist::Available()) continue;
       uint8_t n = persist::Store().read((uint16_t)(persist::FB_PATTERN_BASE + p), buf, sizeof(buf));
@@ -678,6 +702,7 @@ class Sequencer {
           uint16_t sc = (uint16_t)(buf[so] | ((uint16_t)buf[so + 1] << 8));
           scale_[p] = (sc & 0xFFF) ? (uint16_t)(sc & 0x8FFF) : 0x0FFF;
         }
+        if (n >= (uint8_t)(so + 2 + AccBytes(len_[p]))) memcpy(acc_[p], buf + so + 2, AccBytes(len_[p]));
       }
     }
     dirty_ = 0;
@@ -691,13 +716,14 @@ class Sequencer {
       if (!(dirty_ & (1u << p))) continue;
       dirty_ &= (uint16_t)~(1u << p);
       if (!persist::Available()) return false;
-      uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2];
+      uint8_t buf[MAX_STEPS + 1 + MAX_STEPS / 4 + 2 + MAX_STEPS / 8];
       buf[0] = len_[p];
       memcpy(buf + 1, step_[p], len_[p]);
       memcpy(buf + 1 + len_[p], rat_[p], RatBytes(len_[p]));
       uint8_t so = (uint8_t)(1 + len_[p] + RatBytes(len_[p]));
       buf[so] = (uint8_t)(scale_[p] & 0xFF); buf[so + 1] = (uint8_t)(scale_[p] >> 8);
-      persist::Store().write((uint16_t)(persist::FB_PATTERN_BASE + p), buf, (uint8_t)(so + 2));
+      memcpy(buf + so + 2, acc_[p], AccBytes(len_[p]));
+      persist::Store().write((uint16_t)(persist::FB_PATTERN_BASE + p), buf, (uint8_t)(so + 2 + AccBytes(len_[p])));
       return true;
     }
     return false;
@@ -1005,7 +1031,7 @@ class NoteEngine {
     prevRaw_ = mask;
     if (tune_) {
       // A at the panel's octave: key 16 = A4 = 440 Hz at 8', TRANSPOSE middle.
-      Output t{noteCv(16, p), true, false, !prevTune_};
+      Output t{noteCv(16, p), true, false, !prevTune_, false};
       prevTune_ = true; prevMask_ = mask; prevExtCv_ = extCv; lastCv_ = t.cv;
       return t;
     }
@@ -1059,7 +1085,7 @@ class NoteEngine {
       holdMask_ = 0;
     }
 
-    Output o{lastCv_, false, false, false};
+    Output o{lastCv_, false, false, false, false};
     switch (mode_) {
       case MODE_ARP_UP: case MODE_ARP_DOWN: case MODE_ARP_UPDOWN: case MODE_ARP_RANDOM:
         // CLOCK RESET only when the arp starts (first key after silence), so
@@ -1081,6 +1107,7 @@ class NoteEngine {
         break;
 
       case MODE_SEQ_PLAY: {
+        bool began = false;                             // a step started this pass
         if (playStart_) {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
           subTotal_ = 1; subLeft_ = 0; lastEdgeUs_ = 0;   // no stale ratchet state into a new run
@@ -1097,6 +1124,7 @@ class NoteEngine {
             playNow_ = false;
             if (!midiclk::SyncOn()) {
               if (seq_.advance()) o.portaOff = true;
+              began = true;
               lastCv_ = seq_.cv();
               clockEdge = false; halfEdge = false;
             }
@@ -1104,6 +1132,7 @@ class NoteEngine {
         }
         if (nudge_) {                                   // shift: a step now, off the clock
           if (seq_.nudge(nudge_)) o.portaOff = true;
+          began = true;
           lastCv_ = seq_.cv(); subTotal_ = 1; subLeft_ = 0;
           nudge_ = 0;
         }
@@ -1117,6 +1146,7 @@ class NoteEngine {
           lastEdgeUs_ = now;
           bool fresh = seq_.advance();
           if (fresh) o.portaOff = true;
+          began = true;
           lastCv_ = seq_.cv();
           // Ratchet: a NOTE step (fresh) with ratchet r plays r extra evenly
           // spaced hits inside this period; needs a period first.
@@ -1169,17 +1199,23 @@ class NoteEngine {
           if (hit) { --subLeft_; o.portaOff = true; }                        // sub-hit: fresh attack
           else if ((int32_t)(now - (at - gap)) >= 0) o.gate = false;          // gate gap before it
         }
+        // Accented step: fires at the step's start (legato ones too, 303
+        // style) and on each ratchet sub-hit.
+        o.accent = o.gate && (began || o.portaOff) && seq_.accentCur();
         break;
       }
 
       case MODE_SEQ_LOAD: {
-        // record: KEY-TRANSPOSE = rest, HOLD-held = legato, else the note.
-        // (The fn-button mask guard above keeps the LOAD press's own scan
-        // bleed from ever appearing as a fresh key here.)
+        // record: KEY-TRANSPOSE = rest, HOLD-held = legato, U&D-held =
+        // accent (both combine), else the note. (The fn-button mask guard
+        // above keeps the LOAD press's own scan bleed from ever appearing as
+        // a fresh key here.)
         if (b.pressed(controls::BTN_KEYTRANS)) seq_.record(lastCv_, STEP_REST);
+        const StepType t = b.down(controls::BTN_HOLD) ? STEP_LEGATO : STEP_NOTE;
+        const bool acc = b.down(controls::BTN_UD);
         uint32_t fresh = mask & ~prevMask_;
-        if (fresh) { int8_t k = lowestKey(fresh); if (k >= 0) seq_.record(noteCv(k, p), b.down(controls::BTN_HOLD) ? STEP_LEGATO : STEP_NOTE); }
-        if (extCv >= 0 && extCv != prevExtCv_) seq_.record((uint8_t)extCv, b.down(controls::BTN_HOLD) ? STEP_LEGATO : STEP_NOTE);
+        if (fresh) { int8_t k = lowestKey(fresh); if (k >= 0) seq_.record(noteCv(k, p), t, acc); }
+        if (extCv >= 0 && extCv != prevExtCv_) seq_.record((uint8_t)extCv, t, acc);
         // live monitor through the keyboard while recording
         int8_t lk = lowestKey(mask);
         if (lk >= 0) { lastCv_ = noteCv(lk, p); o.cv = lastCv_; o.gate = true; }

@@ -63,11 +63,18 @@ ground, not on difficulty.
 
 ## Shape of the machine, for anyone writing tests
 
-Mono. **No chain, no A/B link, no per-step accent, no slide.** Lanes 1 and 2 of
-the shared edit protocol do not exist here and ack status 2 rather than being
-silently accepted. So the G12 combination axes that apply are length boundary,
-legato/tie, playhead position and edit type; chain and A/B are a *report*, not an
-omission, when you describe coverage.
+Mono. **No chain, no A/B link, no slide.** Lane 2 of the shared edit protocol
+does not exist here and acks status 2 rather than being silently accepted. Lane 1
+(**accent**) exists since 2026-09-30 (the CV DAC mod): 0x16 lane 1 sets it (ack 2
+on a rest), RANDOMIZE still refuses it, and 0x11/0x12 and the flash record carry
+a packed ceil(len/8)-byte accent tail after the ratchet tail (flash: after the 2
+scale bytes). So the G12 combination axes that apply are length boundary,
+legato/tie, accent, playhead position and edit type; chain and A/B are a
+*report*, not an omission, when you describe coverage.
+
+**MIDI OUT vs THRU is a setting, not a cable.** 0x65 id 11 (0x66's 12th field,
+panel menu key 32, saved): THRU mirrors MIDI IN to OUT and suppresses the 101's
+own notes. A host that sees no notes from the 101 should check this first.
 
 `NUM_PATTERNS` 8, `MAX_STEPS` 128, `MIDI_CV_OFFSET` 36 (cv = note - 36, clamped
 0..63). Edit lanes: 0 = note (value is the MIDI note, 0 = rest), 3 = gate (0

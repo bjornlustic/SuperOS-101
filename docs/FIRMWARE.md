@@ -213,10 +213,14 @@ board variants, `hw` in the settings (SysEx 0x25 byte 12, default 1 = bipolar; s
 | `hw` | board | VCF path | cutoff range | VCA path |
 |---|---|---|---|---|
 | 0 | first-batch v1.1 (fabbed 2026-08-20) before rework: R8 100k, R9 4.7k, no bias | additive only, center 0 V, 0.55 throw max | CC 0..127 = 0..+0.55 throw | 4.7k: up to 0.94x envelope |
-| 1 | **bipolar (default)**: current design, or a first-batch board reworked (R8 -> 27k, R9 -> 2.2k, +68k from the -5.3 V rail to the VCF pad) | center ~2105 mV (-5.3 V rail; calibrate), ±1 throw | CC 64 = slider, 0/127 = ∓/±1 throw | 2.2k: up to 2x envelope |
+| 1 | **bipolar (default)**: board v1.2 (R8 27k, R9 2.2k, R10 100k from +15 V), or a v1.1 board with its bias wire on +15 V (R10 68k or 100k) | center = Vref - (V15 - Vref) x 27k / R10: ~2300 mV for 100k at a 5.00 V node, 850 on the first unit (68k, 4.87 V node, measured); -113..+89 % throw with 100k, about -40..+150 % with 68k | CC 64 = slider, 0/127 = ∓/±1 throw | 2.2k: up to 2x envelope |
 
-VOUTA -> R8 -> VCF cutoff summing node (IC18b, virtual ground). VOUTB -> R9 ->
-BA662 pin 1 (VCA current node), parked at 650 mV. Accent depths are the same in
+VOUTA -> R8 -> VCF cutoff summing node (IC18b pin 6, held at the SH-101's +5 V
+D/A reference, not 0 V; the v1.1 -5 V bias pinned it and silenced the synth). VOUTB -> R9 ->
+BA662 pin 1 (VCA current node). At rest VOUTB is shut down (MCP4822 500k
+pull-down) so it takes no envelope current whatever that node's voltage; it is
+driven only during an accent, from `vcaPark` (default 700 mV, measured; SysEx 0x25 bytes
+12-13) upward. Accent depths are the same in
 fader terms on both variants (the unipolar path is scaled by 100/27), clamped
 by the DAC's 0.55-throw ceiling on `hw` 0.
 
@@ -224,13 +228,19 @@ Per main-loop pass: `VOUTA = center + cutoff(CC, one-pole glide tau ~16 ms) +
 vcfAccent(t)`. Cutoff accepts 14-bit CC (MSB on CC 74, LSB on CC 106); a 7-bit
 CC step (32 LSB, ~2 semitones of cutoff) is glided over ~50 ms so sweeps have
 no audible stepping, while a full-range jump still lands in under 100 ms.
-`VOUTA = ... +`, `VOUTB = 650 + env(t) * vcaAmount`. The DAC is only written when
+`VOUTA = ... +`, `VOUTB = vcaPark + env(t) * vcaAmount` (shut down when env = 0). The DAC is only written when
 a code changes (~40 us per channel at 4 MHz, bit-banged).
 
 Accent trigger: a fresh note (gate rising, or a non-legato retrigger flagged by
 the engine's PORTAMENTO-OFF pulse) whose MIDI velocity >= `velThr`
-(default 100). Panel / sequencer notes carry no velocity; the `ACCENT_ALL` flag
-accents every note. Two models, selectable (menu keys 11/12, SysEx 0x25):
+(default 100), or a sequencer step marked accented (it fires as a velocity-127
+note at the step's start, legato steps and each ratchet hit included, and goes
+out on MIDI at velocity 127). Steps are marked in LOAD by holding **U&D** while
+entering the note (U&D is exempt from the scan-bleed guard while held in LOAD;
+its edges still are), with SysEx 0x16 lane 1, or by the editors (the packed
+accent tail on 0x11/0x12, 1 bit a step after the ratchets; the flash record
+carries it after the scale bytes). Other panel notes carry no velocity; the
+`ACCENT_ALL` flag accents every note. Two models, selectable (menu keys 11/12, SysEx 0x25):
 
 | | MC-202 | TB-303 |
 |---|---|---|

@@ -40,6 +40,7 @@ namespace emu101 { bool available(); const uint8_t* ram(); uint8_t romP2(); }
 #include "sysex.h"       // the 0x3E bench-window clock helpers, pinned below
 static const uint8_t SIM_FW_EMU = 1;
 extern uint16_t g_simCvCode[2];   // last MCP4822 code per channel (sim_cvdac_write, below)
+extern bool g_simCvOn[2];         // false = channel shut down (VOUT on the 500k pull-down)
 
 // MIDI-in byte queue, drained by midi::Poll() via sim_midi_pop().
 static std::deque<uint8_t> g_midiQ;
@@ -567,7 +568,7 @@ static int SelfTest() {
   sim::g_buttons = 1u << 0; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // LOAD (save)
   {
     uint8_t buf[101]; uint8_t n = persist::Store().read(persist::FB_PATTERN_BASE + 0, buf, sizeof(buf));
-    CHECK(n == 7 && buf[0] == 3 && buf[5] == 0xFF && buf[6] == 0x0F, "pattern 0 saved to the flash arena (len 3 + ratchet byte + scale off/all)");
+    CHECK(n == 8 && buf[0] == 3 && buf[5] == 0xFF && buf[6] == 0x0F && buf[7] == 0, "pattern 0 saved to the flash arena (len 3 + ratchet byte + scale off/all + accent byte)");
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
   CHECK(sim::g_sh[0] == 17 && GateOn(), "PLAY -> step 1 sounds immediately (CV 17)");
@@ -624,12 +625,12 @@ static int SelfTest() {
   {
     // Unipolar variant (first fabbed boards before rework: R8 100k, no bias): center 0, additive only.
     cvdac::SetHw(cvdac::HW_V11_UNIPOLAR); RunLoops(2500);
-    CHECK(g_simCvCode[0] == 0 && g_simCvCode[1] == cvdac::VCA_PARK, "unipolar board: VOUTA rests at 0 V, VOUTB parked at 650");
+    CHECK(g_simCvCode[0] == 0 && !g_simCvOn[1], "unipolar board: VOUTA rests at 0 V, VOUTB shut down");
     for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)127}) g_midiQ.push_back(b); RunLoops(200);
     CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "unipolar board: CC74=127 -> DAC full scale (0.55 throw, clamped)");
     for (uint8_t b : {(uint8_t)0xB0, (uint8_t)74, (uint8_t)0}) g_midiQ.push_back(b); RunLoops(200);
     CHECK(g_simCvCode[0] == 0, "unipolar board: CC74=0 -> 0 V");
-    // The rest of the block exercises the bipolar variant (R8 27k + R10 68k), the default.
+    // The rest of the block exercises the bipolar variant (R8 27k + R10 100k from +15 V, board v1.2), the default.
     cvdac::SetHw(cvdac::HW_V11_BIPOLAR); RunLoops(15);
     const uint16_t C = cvdac::CENTER_DEFAULT_BY_HW[1], F = cvdac::FADER_LSB_BY_HW[1], P = cvdac::VCA_PARK;
     { cvdac::Settings s3 = cvdac::Get(); s3.vcaAmount = 127; cvdac::Set(s3);
@@ -647,13 +648,13 @@ static int SelfTest() {
     // The MIDI block above played notes at velocity 100 = the accent threshold,
     // so let that accent bleed off fully first (env tail ~8 tau).
     RunLoops(2500);
-    CHECK(g_simCvCode[0] == C && g_simCvCode[1] == P, "rest: VOUTA at center, VOUTB parked at 650");
+    CHECK(g_simCvCode[0] == C && g_simCvOn[0] && !g_simCvOn[1], "rest: VOUTA at center, VOUTB shut down (takes no envelope current)");
     cc(127); RunLoops(150);
-    CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "CC74=127 -> center + one fader throw (2105+2025 clamps at 4095 = +98 %)");
+    CHECK(g_simCvCode[0] == cvdac::DAC_MAX, "CC74=127 -> center + one fader throw (2300+2025 clamps at 4095 = +89 %)");
     cc(64);  RunLoops(150);
     CHECK(g_simCvCode[0] == C, "CC74=64 -> back to center");
     cc(0);   RunLoops(150);
-    CHECK(g_simCvCode[0] == C - F, "CC74=0 -> center - one throw (80 LSB above 0 = -100 %)");
+    CHECK(g_simCvCode[0] == C - F, "CC74=0 -> center - one throw (275 LSB above 0 = -100 %)");
     // smoothness: one 7-bit CC step (32 LSB) must not jump in a single pass
     cc(64);  RunLoops(150); uint16_t before = g_simCvCode[0];
     cc(65);  uint16_t after1 = g_simCvCode[0]; RunLoops(150); uint16_t settled = g_simCvCode[0];
@@ -669,11 +670,11 @@ static int SelfTest() {
     CHECK(pa > C + 550 && pa < C + 700,    "MC-202 accent: VCF peak-only bump (~0.32 throw at amount 100)");
     RunLoops(100);
     uint16_t bMid = g_simCvCode[1];
-    CHECK(bMid < pb && bMid > P, "MC-202 accent decays (300 ms)");
+    CHECK(bMid < pb && bMid > P && g_simCvOn[1], "MC-202 accent decays (300 ms), VOUTB driven while it does");
     noteOff(); RunLoops(2500);
-    CHECK(g_simCvCode[0] == C && g_simCvCode[1] == P, "after the accent both channels return to rest");
+    CHECK(g_simCvCode[0] == C && !g_simCvOn[1], "after the accent both channels return to rest (VOUTB shut down)");
     noteOn(50); RunLoops(10);
-    CHECK(g_simCvCode[1] == P && g_simCvCode[0] == C, "velocity 50 < threshold 100: no accent");
+    CHECK(!g_simCvOn[1] && g_simCvCode[0] == C, "velocity 50 < threshold 100: no accent");
     noteOff(); RunLoops(5);
     // TB-303 model: fixed 200 ms decay, build-up across consecutive accents.
     cvdac::SetMode(cvdac::MODE_TB303);
@@ -684,8 +685,22 @@ static int SelfTest() {
     // default buildup 64 = +0.125 of the full sweep per hit ~= 70 LSB at these amounts
     CHECK(p2 > p1 + 50, "TB-303 accent: second accent 50 ms later sweeps further (C13 build-up)");
     RunLoops(2500);
-    CHECK(g_simCvCode[0] == C && g_simCvCode[1] == P, "TB-303 accent fully bled off");
+    CHECK(g_simCvCode[0] == C && !g_simCvOn[1], "TB-303 accent fully bled off");
     cvdac::SetMode(cvdac::MODE_MC202);
+    // vcaPark calibration (SysEx 0x25 bytes 12-13): VOUTB rests there, a 12-byte body keeps it.
+    auto set25 = [&](std::initializer_list<uint8_t> extra) {
+      uint8_t cfg[cvdac::CFG_LEN]; cvdac::Pack(cvdac::Get(), cfg);
+      g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D); g_midiQ.push_back(0x25);
+      for (uint8_t i = 0; i < 12; ++i) g_midiQ.push_back(cfg[i]);
+      for (uint8_t e : extra) g_midiQ.push_back(e);
+      g_midiQ.push_back(0xF7); RunLoops(3);
+    };
+    set25({1400 & 0x7F, 1400 >> 7}); RunLoops(10);
+    CHECK(cvdac::Get().vcaPark == 1400 && !g_simCvOn[1], "0x25 vcaPark 1400 stored, VOUTB still shut down at rest");
+    set25({}); RunLoops(10);
+    CHECK(cvdac::Get().vcaPark == 1400, "0x25 with the old 12-byte body keeps vcaPark");
+    set25({P & 0x7F, P >> 7}); RunLoops(10);
+    CHECK(cvdac::Get().vcaPark == P && !g_simCvOn[1], "vcaPark back to the default");
   }
   // SysEx: config request, pattern round trip via 0x12/0x10.
   g_midiOut.clear();
@@ -705,13 +720,13 @@ static int SelfTest() {
     g_midiOut.clear();
     for (uint8_t b : {0xF0, 0x7D, 0x10, 5, 0xF7}) g_midiQ.push_back(b); RunLoops(1);
     uint8_t body[8] = {0}; uint8_t m = midi::Unpack7(&g_midiOut[6], (uint8_t)(g_midiOut.size() - 7), body, sizeof(body));
-    // The reply appends the packed ratchet tail (one byte for len 3, all off);
-    // the ratchet-less 0x12 above is the pre-ratchet-host compatibility path.
-    CHECK(g_midiOut[2] == 0x11 && g_midiOut[3] == 5 && m == 5 && memcmp(body, raw, 4) == 0 && body[4] == 0,
-          "SysEx 0x10 -> 0x11 returns the same pattern (+ ratchet tail)");
+    // The reply appends the packed ratchet and accent tails (one byte each for
+    // len 3, all off); the tail-less 0x12 above is the pre-ratchet-host path.
+    CHECK(g_midiOut[2] == 0x11 && g_midiOut[3] == 5 && m == 6 && memcmp(body, raw, 4) == 0 && body[4] == 0 && body[5] == 0,
+          "SysEx 0x10 -> 0x11 returns the same pattern (+ ratchet and accent tails)");
     for (int i = 0; i < 2000; ++i) { delayMicroseconds(1000); RunLoops(1); }   // > 500 ms quiet: deferred flush
     uint8_t buf[101]; uint8_t k = persist::Store().read(persist::FB_PATTERN_BASE + 5, buf, sizeof(buf));
-    CHECK(k == 7 && buf[0] == 3 && buf[3] == (0x80 | 22) && buf[4] == 0, "pattern 5 flushed to the flash arena (+ 2 scale bytes)");
+    CHECK(k == 8 && buf[0] == 3 && buf[3] == (0x80 | 22) && buf[4] == 0, "pattern 5 flushed to the flash arena (+ 2 scale bytes + accent byte)");
   }
 
   // 0x3B -> 0x3C bench probe, SuperOS LED/gate words (gate G12 observability,
@@ -847,7 +862,7 @@ static int SelfTest() {
     readpat(5, st);
     CHECK((st[0] >> 6) == 2, "G4 0x16 lane3 -> legato, cv kept");
     CHECK(edit({0x16, 9, 0, 0, 56}) == 2, "G4 0x16 bad pat -> ack 2");
-    CHECK(edit({0x16, 5, 1, 0, 56}) == 2, "G4 0x16 lane1 (accent absent) -> ack 2");
+    CHECK(edit({0x16, 5, 1, 0, 56}) == 2, "G4 0x16 lane1 accent value > 1 -> ack 2");
     CHECK(edit({0x18, 5, 0}) == 2, "G4 0x18 length 0 -> ack 2");
     uint8_t a[130], b[130];
     edit({0x2E, 5, 0x7F, 64, 57, 96}); int la = readpat(5, a);
@@ -1065,7 +1080,7 @@ static int SelfTest() {
     g_midiOut.clear();
     sx({0x65, 10, 1});
     std::vector<uint8_t> f = features();
-    CHECK(f.size() == 13 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
+    CHECK(f.size() == 14 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
     CHECK(sysex::LoadClockFrom() == midi::CLK_DIN, "DIN only saved to EEPROM");
     sx({0x65, 10, 3});
     CHECK(midi::ClockFrom() == midi::CLK_DIN && sysex::LoadClockFrom() == midi::CLK_DIN, "bad value 3 leaves the source alone");
@@ -1107,6 +1122,16 @@ static int SelfTest() {
     clocks(3, true, true);
     CHECK(sim::g_sh[0] == 19, "DIN and USB: both jacks clocked = double speed (the old behaviour, 3 ticks a step)");
     MidiByte(0xFC); RunLoops(2);
+    {   // MIDI OUT / THRU (0x65 id 11): THRU sends none of the 101's own notes
+      auto noteOns = [&]() { int n = 0; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) n += (g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]; return n; };
+      g_midiOut.clear(); sx({0x65, 11, 1}); std::vector<uint8_t> f = features();
+      CHECK(f.size() == 14 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
+      g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
+      CHECK(noteOns() == 0, "THRU: a panel key sends no note on MIDI OUT");
+      sx({0x65, 11, 0});
+      g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
+      CHECK(!midi::Thru() && !sysex::LoadThru() && noteOns() == 1, "0x65 id 11 = 0 -> OUT: the key's note is sent again");
+    }
   }
   midiclk::SetSync(false);
   ClockTick();
@@ -1758,8 +1783,85 @@ static int SelfTest() {
       sx({0x16, 15, 0, 126, 72});                                  // last step = C5
       for (int i = 0; i < 700; ++i) { delayMicroseconds(1000); RunLoops(1); }   // deferred flush
       uint8_t fb[200]; uint8_t fn = persist::Store().read(persist::FB_PATTERN_BASE + 15, fb, sizeof(fb));
-      CHECK(fn == 1 + 127 + 32 + 2 && fb[0] == 127 && fb[127] == (72 - 36),
-            "pattern 16 saved to flash: 127 steps + ratchets + scale (164 bytes)");
+      CHECK(fn == 1 + 127 + 32 + 2 + 16 && fb[0] == 127 && fb[127] == (72 - 36),
+            "pattern 16 saved to flash: 127 steps + ratchets + scale + accents (178 bytes)");
+      sx({0x1D, 7});
+    }
+
+    // Per-step accent (CV DAC mod): U&D held while a step is entered in LOAD,
+    // SysEx 0x16 lane 1, the 0x11/0x12 accent tail and the flash record.
+    {
+      auto readRaw = [&](uint8_t pat) {           // 0x10 -> unpacked 0x11 payload
+        g_midiOut.clear(); sx({0x10, pat});
+        std::vector<uint8_t> raw;
+        for (size_t i = 0; i + 3 < g_midiOut.size(); ++i)
+          if (g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x11 && g_midiOut[i + 3] == pat) {
+            size_t e = i; while (e < g_midiOut.size() && g_midiOut[e] != 0xF7) ++e;
+            raw.resize(200);
+            raw.resize(midi::Unpack7(&g_midiOut[i + 6], (uint8_t)(e - i - 6), raw.data(), 200));
+            break;
+          }
+        return raw;
+      };
+      auto acc = [&](const std::vector<uint8_t>& r, int i) {   // accent bit i from the tail
+        size_t o = 1 + r[0] + (r[0] + 3) / 4 + (i >> 3);
+        return o < r.size() && ((r[o] >> (i & 7)) & 1);
+      };
+      auto lastAck = [&]() { for (size_t i = g_midiOut.size(); i >= 5; --i) if (g_midiOut[i - 5] == 0xF0 && g_midiOut[i - 3] == 0x14) return (int)g_midiOut[i - 2]; return -1; };
+      sx({0x1D, 6});
+      tap(B_LOAD);                                                   // record a new pattern 7
+      key(0, true); key(0, false);                                   // step 0: plain
+      btn(B_UD, true); key(2, true); key(2, false); btn(B_UD, false);   // step 1: accented
+      btn(B_HOLD, true); btn(B_UD, true); key(4, true); key(4, false);
+      btn(B_UD, false); btn(B_HOLD, false);                          // step 2: accented legato
+      tap(B_KT);                                                     // step 3: rest
+      tap(B_LOAD);                                                   // store
+      std::vector<uint8_t> r = readRaw(6);
+      CHECK(r.size() == 1 + 4 + 1 + 1 && r[0] == 4 && !acc(r, 0) && acc(r, 1) && acc(r, 2) && !acc(r, 3)
+            && (r[3] >> 6) == 2 && (r[4] >> 6) == 1,
+            "LOAD: U&D held + key records an accented step, with HOLD an accented legato one");
+
+      // Playback: accented steps fire the accent envelope (VOUTB driven) and
+      // go out on MIDI at velocity 127; the plain step does not.
+      RunLoops(2500);                                                // any earlier accent bled off
+      g_midiOut.clear();
+      play();
+      bool vcaStep0 = g_simCvOn[1];
+      ClockTick(); bool vcaStep1 = g_simCvOn[1];
+      std::vector<int> vel;
+      for (size_t i = 0; i + 2 < g_midiOut.size(); ++i)
+        if ((g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]) vel.push_back(g_midiOut[i + 2]);
+      tap(B_PLAY); WaitVirtMs(40);
+      CHECK(!vcaStep0 && vcaStep1, "playback: the accented step drives the VCA accent, the plain one does not");
+      CHECK(vel.size() >= 2 && vel[0] == 100 && vel[1] == 127, "playback: MIDI out velocity 100 plain, 127 accented");
+
+      g_midiOut.clear(); sx({0x16, 6, 1, 0, 1});
+      bool ok0 = lastAck() == 0;
+      g_midiOut.clear(); sx({0x16, 6, 1, 1, 0});
+      bool ok1 = lastAck() == 0;
+      g_midiOut.clear(); sx({0x16, 6, 1, 3, 1});
+      bool restRefused = lastAck() == 2;
+      r = readRaw(6);
+      CHECK(ok0 && ok1 && restRefused && acc(r, 0) && !acc(r, 1) && acc(r, 2),
+            "0x16 lane 1 sets / clears accent; refused on a rest (ack 2)");
+
+      // 0x12 with both tails: steps, ratchets (step 1 = 2x), accents 0b101.
+      {
+        std::vector<uint8_t> raw = {3, 20, 21, 22, 0x04, 0x05};
+        uint16_t x = 0; for (uint8_t v : raw) x ^= v;
+        std::vector<uint8_t> b2 = {0x12, 6, (uint8_t)(x & 0x7F), (uint8_t)((x >> 7) & 1)};
+        uint8_t pk[16]; uint8_t pn = midi::Pack7(raw.data(), (uint8_t)raw.size(), pk);
+        b2.insert(b2.end(), pk, pk + pn);
+        g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+        for (uint8_t v : b2) g_midiQ.push_back(v);
+        g_midiQ.push_back(0xF7); RunLoops(3);
+      }
+      r = readRaw(6);
+      CHECK(r.size() == 6 && r[4] == 0x04 && acc(r, 0) && !acc(r, 1) && acc(r, 2),
+            "0x12 with ratchet + accent tails round-trips through 0x11");
+      for (int i = 0; i < 700; ++i) { delayMicroseconds(1000); RunLoops(1); }   // deferred flush
+      uint8_t fb[32]; uint8_t fn = persist::Store().read(persist::FB_PATTERN_BASE + 6, fb, sizeof(fb));
+      CHECK(fn == 1 + 3 + 1 + 2 + 1 && fb[7] == 0x05, "accents persist in the flash record after the scale bytes");
       sx({0x1D, 7});
     }
 
@@ -1997,9 +2099,12 @@ static int SelfTest() {
     sim::g_buttons = 1u << 3; RunLoops(1);    // and back off
     sim::g_buttons = 0; RunLoops(1);
     CHECK(!midiclk::SyncOn(), "menu UP&DOWN toggles MIDI sync off");
+    cvdac::S().codeA = 3000; cvdac::S().codeB = 3000; cvdac::Flush();   // as if mid-accent
     sim::g_buttons = 1u << 0; RunLoops(1);    // LOAD -> SwitchTo(FW_EMU)
     sim::g_buttons = 0; RunLoops(2);          // the pending switch runs next pass
     CHECK(combined_current_fw() == SIM_FW_EMU, "menu LOAD -> switched into the emulator (no reboot)");
+    CHECK(g_simCvCode[0] == cvdac::S().s.center && !g_simCvOn[1],
+          "switch into the emulator parks the CV DAC (cutoff center, VOUTB shut down)");
 
     puts("80C49 emulator (original mask ROM):");
     sim::g_buttons = 0;
@@ -2563,4 +2668,5 @@ int main(int argc, char** argv) {
 
 // --- CV DAC (cvdac.h) host hook: record the last code per channel -----------
 uint16_t g_simCvCode[2] = {0, 0};
-extern "C" void sim_cvdac_write(uint8_t ch, uint16_t code) { g_simCvCode[ch & 1] = code; }
+bool g_simCvOn[2] = {false, false};
+extern "C" void sim_cvdac_write(uint8_t ch, uint16_t code, bool on) { g_simCvCode[ch & 1] = code; g_simCvOn[ch & 1] = on; }

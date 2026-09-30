@@ -13,14 +13,29 @@
 //     15 V / 200k = 75 uA), ADDITIVE only; "center" (no contribution) = 0 V.
 //     VOUTB -> R9 4.7k -> "VCA" pad: up to (4.096-0.65)/4.7k = 0.73 mA =
 //     0.94x the synth's envelope current (~0.78 mA).
-//   HW_V11_BIPOLAR (1, default) = the current design (R8 27k, R9 2.2k, R10 68k from
-//     the synth's -5 V via the "NEG5" pad), or a fabbed board after the rework
-//     (swap R8 -> 27k, R9 -> 2.2k, add 68k from -5 V to the VCF pad):
-//     one throw = 2025 LSB, center = 2105 LSB (the rail is -5.3 V: 78 uA *
-//     27k; calibrate per unit), range -104..+98 % of a throw from any slider
-//     position; VCA up to 1.23 mA = 1.6x envelope at the capped amount 100.
+//   HW_V11_BIPOLAR (1, default) = board v1.2 (R8 27k, R9 2.2k, R10 100k from the
+//     synth's +15 V via the "+15V" pad), or a v1.1 board converted to it (R10
+//     68k -> 100k, its "-5V" pad wired to +15 V instead). The VCF summing node
+//     (IC18b pin 6) idles at the SH-101's +5 V D/A reference, not 0 V: IC18
+//     runs +15 V / GND with pin 5 on that reference. So the bias is
+//     (15 - 5) V / 100k = +100 uA and the center (no contribution) is
+//     5 V - 100 uA * 27k = 2300 LSB; one throw = 2025 LSB (75 uA * 27k);
+//     range -113..+89 % of a throw. Calibrate per unit:
+//     center = Vref - (V15 - Vref) * 27k / R10 (mV).
+//     A v1.1 board with its bias wire moved to +15 V but R10 still 68k is the
+//     same variant with a different center: the first unit (Vref 4.87 V from
+//     the probe, +15 V from C12 on the synth board) runs center 850 =
+//     4.87 - 10.13 * 27 / 68, verified in a recorded CC74 sweep 2026-09-30
+//     (closes fully, opens past the slider, CC 64 returns to the same level).
+//     Its range is about -0.4..+1.5 throws (a dead zone below ~CC 37). The
+//     fader throw (75 uA * 27k) does not depend on R10, so only center moves.
+//     The v1.1 bias (68k from -5 V) assumed a 0 V node: at +5 V it drained
+//     ~250 uA with VOUTA at center, pinned IC18b's output at +12.4 V and
+//     silenced the synth (first install, 2026-09-29). No center code fixes
+//     that (neutral would be ~8.9 V); remove the -5V wire or convert it.
+//     The unipolar variant above has the same 0 V assumption and is unbuilt.
 //   VCA node: TR28 collector = BA662 pin 1, a current input parked at ~0.65 V.
-//   VOUTB idles at 650 LSB so R9 neither sources nor sinks current.
+//   VOUTB is shut down (500k pull-down) at rest, so R9 takes no current; see WriteB.
 //
 // Accent models (selectable, see docs/FIRMWARE.md "CV DAC"):
 //   MC-202  the synth's own envelope, gated by the CPU, scaled by the ACCENT
@@ -53,8 +68,13 @@ namespace cvdac {
 
 // --- electrical constants (LSB = mV) -----------------------------------------
 static const uint16_t DAC_MAX        = 4095;
-static const uint16_t VCA_PARK       = 650;    // BA662 pin-1 node voltage: no current either way
-static const uint16_t VCA_SPAN       = DAC_MAX - VCA_PARK;   // 3445 LSB: 2x envelope (2.2k) / 0.94x (4.7k)
+// VOUTB's rest code: it must equal the TR28-collector / BA662 pin-1 node voltage
+// so R9 neither sources nor sinks envelope current. Measured 0.7 V during a note
+// on the first v1.1 unit (2026-09-30); per-unit calibration is Settings::vcaPark
+// (SysEx 0x25 bytes 12-13). Accent verified in recorded audio: velocity 127 is
+// +9.5 dB over 64, and unaccented notes are unchanged.
+static const uint16_t VCA_PARK       = 700;    // default only; measured 0.7 V on TR28's collector during a note (2026-09-30)
+static const uint16_t VCA_SPAN       = DAC_MAX - VCA_PARK;   // 3395 LSB: 2x envelope (2.2k) / 0.94x (4.7k)
 // BA662 pin 1 is a CA3080-class control-current input rated around 2 mA. The
 // synth's own envelope already puts ~0.78 mA in at its peak, so the accent is
 // capped so that envelope + accent stays near that rating:
@@ -81,7 +101,7 @@ static const uint16_t MC202_THR_Q15  = 4915;   // 0.15 of peak ~= the two-diode 
 enum Hw : uint8_t { HW_V11_UNIPOLAR = 0, HW_V11_BIPOLAR = 1 };
 // Per-variant: LSB per full FREQ-fader throw and the no-contribution center.
 static const uint16_t FADER_LSB_BY_HW[2]  = { 7500, 2025 };   // 75 uA * 100k / 27k
-static const uint16_t CENTER_DEFAULT_BY_HW[2] = { 0, 2105 };  // unipolar: 0 V; bipolar: 5.3 V/68k = 78 uA * 27k (the rail is -5.3 V)
+static const uint16_t CENTER_DEFAULT_BY_HW[2] = { 0, 2300 };  // unipolar: 0 V; bipolar v1.2: 5 V - (15 - 5) V / 100k * 27k
 
 enum Mode : uint8_t { MODE_MC202 = 0, MODE_TB303 = 1 };
 enum Flag : uint8_t {
@@ -93,7 +113,7 @@ enum Flag : uint8_t {
 };
 
 struct Settings {
-  uint16_t center    = 2105;  // LSB; ~2105 on the bipolar board (-5.3 V rail; calibrate), 0 on the unipolar one
+  uint16_t center    = 2300;  // LSB; ~2300 on the v1.2 board (+15 V bias, +5 V node; calibrate), 0 on the unipolar one
   uint8_t  cutoffCc  = 74;
   uint8_t  flags     = F_MIDI_CUTOFF | F_VCF_ACCENT | F_VCA_ACCENT;
   uint8_t  mode      = MODE_MC202;
@@ -104,6 +124,7 @@ struct Settings {
   uint8_t  resDepth  = 64;    // 303: stands in for the RESONANCE slider (0..127)
   uint8_t  buildup   = 64;    // 303: per-accent C13 charge (0..127)
   uint8_t  hw        = HW_V11_BIPOLAR;    // board variant (see header); full-range MIDI cutoff needs the bipolar board
+  uint16_t vcaPark   = VCA_PARK;          // LSB (= mV); VOUTB at rest, calibrate to the pin-1 node
 };
 
 // EEPROM map (combined.h: 0x010.. free).
@@ -112,7 +133,7 @@ static const uint16_t EE_A_CV_BASE  = 0x011;
 #define EE_CV_MAGIC ((uint8_t*)EE_A_CV_MAGIC)
 #define EE_CV_BASE  ((uint8_t*)EE_A_CV_BASE)        // CFG_LEN bytes, Pack() order
 static const uint8_t EE_CV_MAGIC_VAL = 0x5E;   // 0x5C/0x5D = earlier layouts (reset to defaults)
-static const uint8_t CFG_LEN = 12;
+static const uint8_t CFG_LEN = 14;   // 12 + vcaPark; 0x25 still accepts the old 12
 
 // The CV block's own bound, asserted next to the constant that sets it rather
 // than in combined.h, because CFG_LEN is what moves. See the EEPROM map there.
@@ -132,7 +153,7 @@ struct State {
   bool     attacking = false;
   uint16_t build = 0;          // 303 C13 charge, Q15
   // output
-  uint16_t codeA = 2105, codeB = VCA_PARK;
+  uint16_t codeA = 2300, codeB = VCA_PARK;
   uint16_t lastA = 0xFFFF, lastB = 0xFFFF;
   uint32_t lastTickUs = 0;
 };
@@ -140,16 +161,18 @@ inline State& S() { static State s; return s; }
 inline uint16_t FaderLsb() { return FADER_LSB_BY_HW[S().s.hw & 1]; }
 
 // --- settings (EEPROM + SysEx body) -----------------------------------------
-// Body (12 bytes, all 7-bit): center lo7, center hi5, cc, flags, mode,
-// vcfAmount, vcaAmount, decay10ms, velThr, resDepth, buildup, hw.
+// Body (14 bytes, all 7-bit): center lo7, center hi5, cc, flags, mode,
+// vcfAmount, vcaAmount, decay10ms, velThr, resDepth, buildup, hw,
+// vcaPark lo7, vcaPark hi5 (optional on input: a 12-byte body keeps the park).
 inline void Pack(const Settings& s, uint8_t* b) {
   b[0] = s.center & 0x7F; b[1] = (s.center >> 7) & 0x1F;
   b[2] = s.cutoffCc & 0x7F; b[3] = s.flags & 0x7F; b[4] = s.mode & 0x7F;
   b[5] = s.vcfAmount & 0x7F; b[6] = s.vcaAmount & 0x7F; b[7] = s.decay10ms & 0x7F;
   b[8] = s.velThr & 0x7F; b[9] = s.resDepth & 0x7F; b[10] = s.buildup & 0x7F;
   b[11] = s.hw & 0x7F;
+  b[12] = s.vcaPark & 0x7F; b[13] = (s.vcaPark >> 7) & 0x1F;
 }
-inline bool Unpack(const uint8_t* b, Settings& s) {
+inline bool Unpack(const uint8_t* b, Settings& s, uint8_t len = CFG_LEN) {
   uint16_t c = (uint16_t)((b[0] & 0x7F) | ((uint16_t)(b[1] & 0x1F) << 7));
   if (c > DAC_MAX) return false;
   s.center = c; s.cutoffCc = b[2] & 0x7F; s.flags = b[3] & 0x7F;
@@ -160,6 +183,10 @@ inline bool Unpack(const uint8_t* b, Settings& s) {
   s.velThr = (b[8] & 0x7F) ? (b[8] & 0x7F) : 1;
   s.resDepth = b[9] & 0x7F; s.buildup = b[10] & 0x7F;
   s.hw = (b[11] & 0x7F) ? HW_V11_BIPOLAR : HW_V11_UNIPOLAR;
+  if (len >= 14) {   // EEPROM from before the field reads 0xFF here: keep the default
+    uint16_t pk = (uint16_t)((b[12] & 0x7F) | ((uint16_t)(b[13] & 0x1F) << 7));
+    if (b[12] <= 0x7F && b[13] <= 0x1F && pk <= DAC_MAX) s.vcaPark = pk;
+  }
   return true;
 }
 inline void Save() {
@@ -204,12 +231,18 @@ __attribute__((noinline)) inline void Word(uint16_t w) {
   PORTA |= _BV(0);                    // ~CS high: latch (LDAC is tied low)
 }
 #else
-extern "C" void sim_cvdac_write(uint8_t ch, uint16_t code);   // host sim hook
+extern "C" void sim_cvdac_write(uint8_t ch, uint16_t code, bool on);   // host sim hook
 inline void BusInit() {}
-inline void Word(uint16_t w) { sim_cvdac_write((uint8_t)(w >> 15), (uint16_t)(w & 0x0FFF)); }
+inline void Word(uint16_t w) { sim_cvdac_write((uint8_t)(w >> 15), (uint16_t)(w & 0x0FFF), (w & 0x1000) != 0); }
 #endif
 inline void WriteA(uint16_t code) { Word((uint16_t)(0x1000 | (code & 0x0FFF))); }
-inline void WriteB(uint16_t code) { Word((uint16_t)(0x9000 | (code & 0x0FFF))); }
+// VOUTB at rest (code == vcaPark: no accent contribution) is SHUT DOWN, not
+// driven: the MCP4822 then hangs VOUTB on its internal 500k pull-down, so
+// through R9 it moves at most a few uA whatever the TR28-collector node sits
+// at, and a mis-calibrated vcaPark can only affect accents, never plain notes.
+inline void WriteB(uint16_t code) {
+  Word(code == S().s.vcaPark ? (uint16_t)0x8000 : (uint16_t)(0x9000 | (code & 0x0FFF)));
+}
 
 inline void Flush() {
   State& st = S();
@@ -217,14 +250,23 @@ inline void Flush() {
   if (st.codeB != st.lastB) { WriteB(st.codeB); st.lastB = st.codeB; }
 }
 
-inline void Begin() {
-  Load();
+// Outputs to neutral (cutoff at center, VCA parked) with the accent at rest.
+// The MCP4822 holds its codes while powered, so this is what the synth hears
+// wherever this firmware stops driving the DAC: the 80C49 emulator never
+// writes it, and the bootloader leaves PA0-2 floating (no pull-up on ~CS).
+inline void Park() {
   BusInit();
   State& st = S();
-  st.codeA = st.s.center; st.codeB = VCA_PARK;
+  st.env = 0; st.attacking = false; st.build = 0;
+  st.codeA = st.s.center; st.codeB = st.s.vcaPark;
   st.lastA = st.lastB = 0xFFFF;
-  Flush();                            // outputs known before the first note
-  st.lastTickUs = micros();
+  Flush();
+}
+
+inline void Begin() {
+  Load();
+  Park();                             // outputs known before the first note
+  S().lastTickUs = micros();
 }
 
 // --- inputs --------------------------------------------------------------------
@@ -334,8 +376,8 @@ inline void Tick() {
 
   // VCA contribution: bipolar board amount 127 = +2 envelopes, 64 = +1 (MC-202);
   // unipolar board (4.7k) amount 127 = +0.94 envelope
-  int32_t b = VCA_PARK;
-  if (st.s.flags & F_VCA_ACCENT) b += (int32_t)st.env * VCA_SPAN / 32767 * st.s.vcaAmount / 127;
+  int32_t b = st.s.vcaPark;
+  if (st.s.flags & F_VCA_ACCENT) b += (int32_t)st.env * (DAC_MAX - st.s.vcaPark) / 32767 * st.s.vcaAmount / 127;
   st.codeB = b > DAC_MAX ? DAC_MAX : (uint16_t)b;
 
   Flush();

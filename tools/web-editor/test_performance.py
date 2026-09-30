@@ -18,24 +18,30 @@ PAGE = (pathlib.Path(__file__).parent / "index.html").resolve().as_uri()
 FAKE = r"""
 (() => {
   const st = {fw: 0, dir: 0, pedal: 0, tr: 0, tmode: 0, loop: 0, rt: 0, tune: 0, queued: 0x7F,
-              delay: 0, arp: 1, playing: false, keyboard: true, featLen: 10};
+              delay: 0, arp: 1, clk: 0, thru: 0, playing: false, keyboard: true, featLen: 12};
   const sent = []; window.__sent = sent; window.__dev = st;
   const input = {id: 'in1', name: 'SuperOS-101', state: 'connected', onmidimessage: null};
   const reply = body => setTimeout(() => input.onmidimessage &&
     input.onmidimessage({data: new Uint8Array([0xF0, 0x7D, ...body, 0xF7])}), 5);
   window.__reply = reply;
-  const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp].slice(0, 1 + st.featLen);
+  const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp, st.clk, st.thru].slice(0, 1 + st.featLen);
   const NP = 16;   // patterns on the unit (firmware e770f60)
   st.pats = Array.from({length: NP}, (_, p) => p === 0 ? Array.from({length: 16}, (_, i) => [12, 13, 14, 15][i % 4] | (i === 5 ? 1 << 6 : 0) | (i === 9 ? 2 << 6 : 0)) : []);
   st.rats = Array.from({length: NP}, () => []);   // ratchet per step, 0..2
+  st.accs = Array.from({length: NP}, () => []);   // accent per step, 0/1
+  // CV DAC config as src/cvdac.h Pack(): center, cc, flags, mode, vcf, vca, decay, velThr, res, build, hw, park
+  st.cv = {center: 2300, cc: 74, flags: 7, mode: 0, vcf: 64, vca: 64, decay: 30, thr: 100, res: 64, build: 64, hw: 1, park: 700};
+  const cvReply = () => { const c = st.cv; reply([0x24, c.center & 0x7F, c.center >> 7, c.cc, c.flags, c.mode, c.vcf, c.vca, c.decay, c.thr, c.res, c.build, c.hw,
+    c.center & 0x7F, c.center >> 7, c.park & 0x7F, c.park >> 7, c.park & 0x7F, c.park >> 7]); };
   st.scales = Array.from({length: NP}, () => ({mask: 0xFFF, on: 0}));
   st.rnd = [];
   const pack7 = src => { const out = []; for (let i = 0; i < src.length; i += 7) { const ch = src.slice(i, i + 7); let msb = 0;
     ch.forEach((b, k) => { if (b & 0x80) msb |= 1 << k; }); out.push(msb, ...ch.map(b => b & 0x7F)); } return out; };
   const sendPat = p => {
-    const steps = st.pats[p], tail = new Array(Math.ceil(steps.length / 4)).fill(0);
+    const steps = st.pats[p], tail = new Array(Math.ceil(steps.length / 4)).fill(0), acc = new Array(Math.ceil(steps.length / 8)).fill(0);
     steps.forEach((_, i) => tail[i >> 2] |= (st.rats[p][i] || 0) << ((i & 3) * 2));
-    const raw = [steps.length, ...steps, ...tail];
+    steps.forEach((_, i) => acc[i >> 3] |= (st.accs[p][i] || 0) << (i & 7));
+    const raw = [steps.length, ...steps, ...tail, ...acc];
     let x = 0; raw.forEach(v => x ^= v);
     reply([0x11, p, x & 0x7F, (x >> 7) & 1, ...pack7(raw)]);
   };
@@ -58,17 +64,32 @@ FAKE = r"""
       if (id === 6) st.tune = v && st.keyboard ? 1 : 0;
       if (id === 7 && v <= 60) st.delay = v;
       if (id === 8 && v >= 1 && v <= 3) st.arp = v;
+      if (id === 11 && v <= 1) st.thru = v;
       if (id === 9) st.resyncs = (st.resyncs || 0) + 1;
       reply(feats());
     }
-    if (c === 0x67) reply(feats());
+    if (c === 0x67 && !st.quiet) reply(feats());   // quiet: the injected replies below stay the truth
     if (c === 0x13) for (let p = 0; p < NP; ++p) sendPat(p);
     if (c === 0x10 && id < NP) sendPat(id);
     if (c === 0x12 && id < NP) {   // pattern write: steps + packed ratchet tail
       const raw = unpack7(m.slice(6, -1)), len = raw[0];
       st.pats[id] = raw.slice(1, 1 + len);
       st.rats[id] = st.pats[id].map((_, i) => (raw[1 + len + (i >> 2)] >> ((i & 3) * 2)) & 3);
+      st.accs[id] = st.pats[id].map((_, i) => ((raw[1 + len + Math.ceil(len / 4) + (i >> 3)] || 0) >> (i & 7)) & 1);
       reply([0x14, 0]);
+    }
+    if (c === 0x16 && m[4] === 1) {   // accent lane: refused on a rest (ack 2)
+      const [p, , i, val] = m.slice(3, 7);
+      if (p >= NP || i >= st.pats[p].length || (st.pats[p][i] >> 6) === 1 || val > 1) { reply([0x14, 2]); return; }
+      st.accs[p][i] = val; reply([0x14, 0]);
+    }
+    if (c === 0x23) cvReply();
+    if (c === 0x25) {
+      const b = m.slice(3, -1);
+      Object.assign(st.cv, {center: b[0] | b[1] << 7, cc: b[2], flags: b[3], mode: b[4], vcf: b[5], vca: Math.min(100, b[6]), decay: b[7],
+                            thr: b[8], res: b[9], build: b[10], hw: b[11]});
+      if (b.length >= 14) st.cv.park = b[12] | b[13] << 7;
+      st.cv25 = b; cvReply();
     }
     if (c === 0x69) {   // nudge: rotate the notes, ratchets move with their steps
       const [p, dir, n] = m.slice(3, 6);
@@ -125,6 +146,10 @@ with sync_playwright() as p:
         fn(); page.wait_for_timeout(settle)
         check(last65(page) == want, f"{label}: sent 65 {want} (got {last65(page)})")
 
+    check(vis("[data-f='11']") and page.input_value("#selThru") == "0", "MIDI OUT/THRU shown, OUT")
+    act(lambda: page.select_option("#selThru", "1"), [11, 1], "MIDI THRU")
+    check(page.input_value("#selThru") == "1" and "MIDI THRU" in page.inner_text("#perfStatus"), "THRU renders from the 0x66 reply")
+    act(lambda: page.select_option("#selThru", "0"), [11, 0], "MIDI OUT")
     act(lambda: page.click("#dirGrid .div-btn[data-idx='2']"), [0, 2], "direction ping-pong")
     check("is-on" in page.get_attribute("#dirGrid .div-btn[data-idx='2']", "class"), "direction renders P-P")
     act(lambda: page.click("#arpGrid .div-btn[data-idx='3']"), [8, 3], "arp range 3")
@@ -261,7 +286,7 @@ with sync_playwright() as p:
     check(page.inner_text("#steps .step-card[data-i='3'] .step-name") != "" and "is-tie" in page.get_attribute("#steps .step-card[data-i='3']", "class"),
           "the legato step moved from 3 to 4 on screen")
     check("is-dirty" not in page.get_attribute(".pat-pill:nth-child(1)", "class"), "nudged pattern is not dirty (the unit holds it)")
-    raw = [8] + orig + [orats[0] | orats[1] << 2 | orats[2] << 4 | orats[3] << 6, orats[4] | orats[5] << 2 | orats[6] << 4 | orats[7] << 6]
+    raw = [8] + orig + [orats[0] | orats[1] << 2 | orats[2] << 4 | orats[3] << 6, orats[4] | orats[5] << 2 | orats[6] << 4 | orats[7] << 6, 0]
     x = 0
     for v in raw: x ^= v
     pk = []
@@ -299,6 +324,41 @@ with sync_playwright() as p:
     check("HOLD + UP / DOWN" in page.inner_text("#perfBody") and "nudges right / left" in page.inner_text("#perfBody"), "panel gestures mention HOLD + UP / DOWN nudge")
     check(page.get_attribute("#btnNudgeR", "title").startswith("Moves the notes, not the timing; on the unit it lands between notes"), "nudge tooltip")
 
+    # ---- Per-step accent: ACC button / A key -> 0x16 lane 1; the 0x11 accent tail renders
+    page.evaluate("window.__dev.pats[0] = [12, 13, 1 << 6, 15]; window.__dev.rats[0] = [0, 0, 0, 0]; window.__dev.accs[0] = [0, 1, 0, 0]; window.__sendPat(0)")
+    page.wait_for_timeout(150)
+    card = lambda i: page.get_attribute(f"#steps .step-card[data-i='{i}']", "class")
+    check("is-acc" in card(1) and "is-acc" not in card(0), "0x11 accent tail: step 2 shows accented")
+    k = mark(); page.click("#steps .step-card[data-i='0'] [data-a='acc']"); page.wait_for_timeout(250)
+    check([0x16, 0, 1, 0, 1] in sent_since(k) and page.evaluate("window.__dev.accs[0][0]") == 1, f"ACC on step 1 sends 16 00 01 00 01 ({sent_since(k)})")
+    check("is-acc" in card(0), "step 1 renders accented")
+    k = mark(); page.keyboard.press("a"); page.wait_for_timeout(250)
+    check([0x16, 0, 1, 0, 0] in sent_since(k) and page.evaluate("window.__dev.accs[0][0]") == 0, "A key toggles the accent off on the unit")
+    check(not page.is_visible("#steps .step-card[data-i='2'] [data-a='acc']"), "a rest has no ACC button")
+    page.click("#btnLive")
+    page.click("#steps .step-card[data-i='3'] [data-a='acc']")
+    k = mark(); page.click("#btnWrite"); page.wait_for_timeout(200)
+    check(page.evaluate("window.__dev.accs[0]") == [0, 1, 0, 1], f"Write carries the accent tail on 0x12 ({page.evaluate('window.__dev.accs[0]')})")
+    page.click("#btnLive")
+
+    # ---- Filter CV / accent panel (0x23 on connect -> 0x24; edits -> 0x25)
+    check(vis("#cvPanel") and page.input_value("#inCenter") == "2300", "CV panel shows the unit's filter CV offset (2300)")
+    check("offset 2300 mV" in page.inner_text("#cvStatus"), "CV status line")
+    page.fill("#inCenter", "2250"); page.press("#inCenter", "Tab"); page.wait_for_timeout(150)
+    b25 = page.evaluate("window.__dev.cv25")
+    check(b25 and len(b25) == 14 and (b25[0] | b25[1] << 7) == 2250 and (b25[12] | b25[13] << 7) == 700,
+          f"offset 2250 -> 0x25 with 14 bytes, park kept ({b25})")
+    check(page.input_value("#rngCenter") == "2250", "slider follows the 0x24 reply")
+    page.click("#btnCal"); page.wait_for_timeout(150)
+    check(page.evaluate("window.__dev.cv.center") == 848, "calculator: 4870 / 15000 mV with 68k -> 848")
+    page.click("#btnVcaAcc"); page.wait_for_timeout(150)
+    check(page.evaluate("window.__dev.cv.flags") == 3, "VCA accent toggle clears flag bit 2")
+    page.select_option("#selCvMode", "1"); page.wait_for_timeout(150)
+    check(page.evaluate("window.__dev.cv.mode") == 1, "accent model TB-303")
+    k = mark(); page.fill("#rngCutoff", "100"); page.dispatch_event("#rngCutoff", "input"); page.wait_for_timeout(50)
+    check([0xB0, 74, 100] in page.evaluate('window.__sent')[k:], "cutoff slider sends CC 74 on the unit's channel")
+
+    page.evaluate("window.__dev.quiet = true")
     # Replies captured from the real unit on 2026-09-28 (read-only session): its
     # 0x11 for pattern 1 (8 steps + ratchet tail), 0x2A (all notes, off), 10-field 0x66.
     page.evaluate("window.__reply([0x11, 0, 39, 0, 68, 8, 18, 37, 27, 22, 20, 30, 0, 17, 15, 0, 1])"); page.wait_for_timeout(100)

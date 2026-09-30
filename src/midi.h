@@ -48,7 +48,11 @@
 //                           0=entropy else deterministic                   -> 0x14
 //                           NOT 0x38: that is CMD_FRAM_PROBE on the 606.
 //   0x16 <p><lane><step><value>  SET STEP (gate G4): lane 0 note (value=MIDI note,
-//                           0=rest), lane 3 gate (0 normal/1 legato); 1/2 absent -> 0x14
+//                           0=rest), lane 1 accent (0/1, not on a rest), lane 3
+//                           gate (0 normal/1 legato); lane 2 absent       -> 0x14
+//                           Accent also travels as a packed tail on 0x11/0x12
+//                           after the ratchet tail (1 bit per step, bit i&7 of
+//                           byte i>>3; absent = all off) and in the flash record.
 //   0x18 <p><length>      SET LENGTH (gate G4), 1..127 over SysEx            -> 0x14
 //                           NOT 1..MAX_STEPS: MAX_STEPS is 128 and setLength
 //                           accepts it, but this field is ONE 7-bit data byte,
@@ -133,7 +137,7 @@ namespace midi {
 
 static const uint8_t RX_CAP  = 64;    // power of two
 static const uint8_t TX_CAP  = 128;   // power of two
-static const uint8_t SX_MAX  = 192;   // largest inbound SysEx body (0x12 with the ratchet tail = 188)
+static const uint8_t SX_MAX  = 208;   // largest inbound SysEx body (0x12 with the ratchet and accent tails = 207)
 
 // Port bitmask (Send / reply routing).
 enum : uint8_t { PORT_DIN = 0x01, PORT_USB = 0x02, PORT_ALL = 0x03 };
