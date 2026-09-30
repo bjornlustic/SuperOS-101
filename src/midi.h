@@ -171,6 +171,7 @@ struct State {
 #endif
   uint8_t  hostPorts = 0;           // ports an editor has spoken SysEx on (sticky)
   bool     thru = false;            // soft thru: mirror channel messages + realtime
+  uint8_t  clkFrom = PORT_ALL;      // ports whose realtime (clock, start, stop) drives the machine
 };
 inline State& S() { static State s; return s; }
 
@@ -359,6 +360,14 @@ inline bool HostSeen() { return S().hostPorts != 0; }
 // echo while this is on (main.cpp MidiOut, emu101.cpp), or OUT carries both.
 inline bool Thru() { return S().thru; }
 inline void SetThru(bool on) { S().thru = on; }
+// Clock source: 0 = DIN and USB (as before), 1 = DIN only, 2 = USB only.
+// Realtime from the other port is not acted on (still forwarded by thru), so
+// a host that clocks both jacks does not step the machine twice per tick.
+enum : uint8_t { CLK_ANY = 0, CLK_DIN = 1, CLK_USB = 2 };
+inline uint8_t ClockFrom() { return S().clkFrom == PORT_DIN ? CLK_DIN : S().clkFrom == PORT_USB ? CLK_USB : CLK_ANY; }
+inline void SetClockFrom(uint8_t v) {
+  if (v <= CLK_USB) S().clkFrom = v == CLK_DIN ? PORT_DIN : v == CLK_USB ? PORT_USB : PORT_ALL;
+}
 // A forwarded message is dropped whole, never blocked on, when the DIN ring
 // cannot take it: HalWrite spins on a full ring and this runs mid-parse.
 inline void ThruSend(uint8_t port, const uint8_t* msg, uint8_t n) {
@@ -384,7 +393,7 @@ inline void Feed(Parser& p, uint8_t port, uint8_t b) {
   State& s = S();
   if (b >= 0xF8) {                                                // realtime: transparent
     if (s.thru) ThruSend(port, &b, 1);
-    if (s.h.realtime) s.h.realtime(b);
+    if (s.h.realtime && (port & s.clkFrom)) s.h.realtime(b);
     return;
   }
   if (b == 0xF0) { p.inSx = true; p.sxDrop = false; p.sxLen = 0; p.status = 0; return; }

@@ -107,14 +107,14 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[11] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[12] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
                   (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
-                  midiclk::SyncDelayMs(), engine::ArpRange()};
+                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendScale(uint8_t p) {
@@ -230,7 +230,8 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     // 4 loop length (0 = full pattern), 5 real-time record 0/1 (while
     // playing), 6 tune mode 0/1 (from keyboard mode), 7 sync delay in ms
     // (0..60: the slaved machine plays that much later), 8 arp octave range
-    // 1..3, 9 resync: the sequence back on the one (value ignored). 0x67 =
+    // 1..3, 9 resync: the sequence back on the one (value ignored), 10 clock
+    // source (0 DIN and USB, 1 DIN only, 2 USB only; saved). 0x67 =
     // read only.
     // Out-of-range values leave the setting alone; the 0x66 reply shows the
     // applied state either way.
@@ -248,6 +249,7 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           case 7: midiclk::SetSyncDelay(v); break;
           case 8: if (v >= 1 && v <= 3) { engine::ArpRange() = v; engine::FeatDirty() = true; } break;
           case 9: g_engine.resync(); break;   // back on the one (value ignored)
+          case 10: if (v <= midi::CLK_USB) { midi::SetClockFrom(v); sysex::SaveClockFrom(v); } break;
           default: break;
         }
       }

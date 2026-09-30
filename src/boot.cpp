@@ -267,6 +267,7 @@ void setup() {
   hw::Init();
   midi::Begin(sysex::LoadChannel());   // UART1 rings + ISRs (both firmwares)
   midi::SetThru(sysex::LoadThru());
+  midi::SetClockFrom(sysex::LoadClockFrom());
   midiclk::Begin();                    // saved sync/division settings
   uint8_t sel = eeprom_read_byte(EE_FW_SELECT);
   g_fw = (sel == FW_EMU && emu101::available()) ? FW_EMU : FW_SUPEROS;

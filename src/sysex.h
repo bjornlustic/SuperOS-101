@@ -38,6 +38,9 @@ inline void SaveChannel(uint8_t c) {
 // reads 0xFF here, which is off, and the byte is only ever written as 0 or 1.
 inline bool LoadThru() { return eeprom_read_byte(EE_CFG_THRU) == 1; }
 inline void SaveThru(bool on) { eeprom_update_byte(EE_CFG_THRU, on ? 1 : 0); }
+// Clock source (midi.h CLK_*). Same rule: an older image's 0xFF reads as both.
+inline uint8_t LoadClockFrom() { uint8_t v = eeprom_read_byte(EE_CFG_CLKSRC); return v <= 2 ? v : 0; }
+inline void SaveClockFrom(uint8_t v) { eeprom_update_byte(EE_CFG_CLKSRC, v); }
 
 // 0x34 -> 0x35 build identity: "<version> <sha>[*]" in 7-bit ASCII, e.g.
 // "0.2 0642b7f" clean or "0.2 0642b7f*" dirty. Same opcode pair and same

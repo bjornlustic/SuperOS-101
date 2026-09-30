@@ -73,6 +73,10 @@ SH-1oh1 conventions where it has the same feature, so SH-1oh1 players feel at ho
 - **Resync**: SysEx 0x65 id 9 (the editor's Resync) puts the sequence back on the one.
   Direction, loop length, pattern switches and clock-division changes never move it off the
   grid; ping-pong repeats its end steps so a round trip stays on the bar.
+- **Clock source**: SysEx 0x65 id 10 (saved; 0x66's 11th field): 0 DIN and USB (the default),
+  1 DIN only, 2 USB only. Realtime bytes (clock, Start, Stop, Continue) from the other jack are
+  not acted on (soft thru still forwards them). A host that clocks both jacks, such as an MPC
+  with its clock on the USB port and on the DIN cable, otherwise steps the machine twice a tick.
 - **Arp octave range**: in arp mode, **KEY TRANSPOSE + UP / DOWN** = one octave more / less
   (1 to 3). UP climbs octave by octave, DOWN starts at the top, U&D bounces across the whole
   span, random picks an octave too. Persists. (Our addition; the SH-1oh1 has no range.)

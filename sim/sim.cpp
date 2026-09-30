@@ -1029,6 +1029,85 @@ static int SelfTest() {
   MidiByte(0xFC);                                // Stop
   MidiClocks(12);
   CHECK(sim::g_sh[0] == 19, "after Stop, clocks are ignored");
+
+  // Clock source (0x65 id 10). What must not happen: a host clocking both
+  // jacks steps the machine twice a tick; the ignored port's Start or Stop
+  // still moves the transport; the choice is lost over a restart; an older
+  // image's 0xFF EEPROM byte (or a bad value) leaves the machine deaf to one port.
+  puts("clock source:");
+  {
+    midi::Parser usbP;
+    auto usbByte = [&](uint8_t v) { midi::Feed(usbP, midi::PORT_USB, v); RunLoops(1); };
+    auto clocks = [&](int n, bool usb, bool din) {   // one tick at a time, at tempo, on USB, DIN or both
+      while (n-- > 0) {
+        uint32_t until = micros() + SIM_TICK_US;
+        if (usb) usbByte(0xF8);
+        if (din) MidiByte(0xF8);
+        while ((int32_t)(until - micros()) > 0) RunLoops(1);
+      }
+    };
+    auto sx = [&](std::initializer_list<uint8_t> v) {
+      g_midiQ.push_back(0xF0); g_midiQ.push_back(0x7D);
+      for (uint8_t x : v) g_midiQ.push_back(x);
+      g_midiQ.push_back(0xF7); RunLoops(3);
+    };
+    auto features = [&]() {   // the last 0x66 on MIDI OUT
+      std::vector<uint8_t> last, cur; bool in = false;
+      for (uint8_t v : g_midiOut) {
+        if (v == 0xF0) { in = true; cur.clear(); continue; }
+        if (v == 0xF7 && in) { in = false; if (cur.size() >= 2 && cur[0] == 0x7D && cur[1] == 0x66) last = cur; continue; }
+        if (in) cur.push_back(v);
+      }
+      return last;
+    };
+    eeprom_update_byte(EE_CFG_CLKSRC, 0xFF);
+    CHECK(sysex::LoadClockFrom() == midi::CLK_ANY, "0xFF (older image) reads as DIN and USB");
+    g_midiOut.clear();
+    sx({0x65, 10, 1});
+    std::vector<uint8_t> f = features();
+    CHECK(f.size() == 13 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
+    CHECK(sysex::LoadClockFrom() == midi::CLK_DIN, "DIN only saved to EEPROM");
+    sx({0x65, 10, 3});
+    CHECK(midi::ClockFrom() == midi::CLK_DIN && sysex::LoadClockFrom() == midi::CLK_DIN, "bad value 3 leaves the source alone");
+
+    usbByte(0xFA); clocks(1, true, false);
+    CHECK(sim::g_sh[0] == 19, "DIN only: USB Start + clock do nothing");
+    MidiByte(0xFA); clocks(1, true, true);
+    CHECK(sim::g_sh[0] == 17 && GateOn(), "DIN only: DIN Start + clock -> step 0");
+    clocks(6, true, true);
+    CHECK(sim::g_sh[0] == 19, "DIN only, both jacks clocked: 6 ticks = one 1/16 step, not two");
+    auto steps = [&]() {   // 0x15 step reports on MIDI OUT (one a step change)
+      int n = 0;
+      for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) n += g_midiOut[i] == 0xF0 && g_midiOut[i + 1] == 0x7D && g_midiOut[i + 2] == 0x15;
+      return n;
+    };
+    g_midiOut.clear();
+    usbByte(0xFC); clocks(6, false, true);
+    CHECK(steps() == 1, "DIN only: USB Stop ignored, DIN keeps stepping");
+    MidiByte(0xFC);
+
+    sx({0x65, 10, 2});
+    CHECK(midi::ClockFrom() == midi::CLK_USB && sysex::LoadClockFrom() == midi::CLK_USB, "USB only set and saved");
+    MidiByte(0xFA); clocks(1, false, true);
+    uint8_t held = sim::g_sh[0];
+    clocks(6, false, true);
+    CHECK(sim::g_sh[0] == held, "USB only: DIN Start + clocks do nothing");
+    usbByte(0xFA); clocks(1, true, true);
+    CHECK(sim::g_sh[0] == 17 && GateOn(), "USB only: USB Start + clock -> step 0");
+    clocks(6, true, true);
+    CHECK(sim::g_sh[0] == 19, "USB only, both jacks clocked: one step per 6 ticks");
+    usbByte(0xFC);
+
+    midi::SetClockFrom(midi::CLK_ANY);
+    midi::SetClockFrom(sysex::LoadClockFrom());
+    CHECK(midi::ClockFrom() == midi::CLK_USB, "restart: USB only comes back from EEPROM (boot.cpp's load)");
+    sx({0x65, 10, 0});
+    CHECK(midi::ClockFrom() == midi::CLK_ANY && sysex::LoadClockFrom() == midi::CLK_ANY, "0 = DIN and USB again (as before)");
+    MidiByte(0xFA); clocks(1, false, true);
+    clocks(3, true, true);
+    CHECK(sim::g_sh[0] == 19, "DIN and USB: both jacks clocked = double speed (the old behaviour, 3 ticks a step)");
+    MidiByte(0xFC); RunLoops(2);
+  }
   midiclk::SetSync(false);
   ClockTick();
   CHECK(!GateOn(), "sync off: T1 clock works again (rest step -> gate off)");
