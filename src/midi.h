@@ -101,6 +101,11 @@
 //                           press arms it for the moment the clock speaks.
 //                           In 80C49 mode Start/Stop tap the ROM's PLAY
 //                           button, keyed on the function-LED readback.
+//                           Start mode (0x65 id 15, 0x66's 16th field,
+//                           saved): 1 ARMED makes a local PLAY queue the
+//                           sequence for the host's Start; Start leaves an
+//                           idle 101 idle, Stop rewinds an armed one and
+//                           keeps it armed. 0 HOST (default) is the above.
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
 //   (CC cutoffCc, default 74, moves the filter; CC cutoffCc+32 = 106 is its

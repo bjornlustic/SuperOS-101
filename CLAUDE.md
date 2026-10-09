@@ -19,7 +19,9 @@ stops it, and with sync ON nothing but the divided clock ever steps the machine
 ARMS it). The old trap survives in two forms: with sync OFF, `0xFA` still only
 rewinds (finding 13 behaviour), and `0xFA` never interrupts an active arp or
 LOAD mode. `timing/sync_test.py` still sends `F0 7D 1E 01 F7`, which remains
-correct in every mode.
+correct in every mode. With start mode ARMED (`0x65 id 15`, saved) Start never
+starts an idle 101: only a local PLAY queues it, and Stop rewinds it and keeps
+it armed (docs/FIRMWARE.md "Start mode").
 
 **`0x15` is directional, and `EDIT_OPCODES.md` is wrong about it.** The shared
 spec lists `0x15` as free for RANDOMIZE. On the 101 it is a get/set pair:

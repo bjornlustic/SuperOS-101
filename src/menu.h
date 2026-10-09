@@ -12,6 +12,9 @@
 //   LOAD          -> reboot into the 80C49 emulator (original mask ROM)
 //   PLAY          -> reboot into SuperOS
 //   UP&DOWN       -> toggle MIDI clock sync
+//   HOLD          -> toggle start mode HOST / ARMED (0x65 id 15; no LED, read
+//                    it in 0x66): ARMED, PLAY queues the sequence for the
+//                    host's Start (midiclock.h)
 //   UP / DOWN     -> next / previous MIDI clock division
 //   keys 1-10     -> MIDI clock division direct: 1/4 1/4d 1/4t 1/8 1/8d 1/8t
 //                    1/16 1/16d 1/16t 1/32 (lowest key = 1/4)
@@ -99,6 +102,7 @@ inline void Poll() {
   // MIDI clock sync: UP&DOWN toggles; UP/DOWN cycle the division; the 10
   // lowest keys select it directly (table in midiclock.h).
   if (rise & (1u << controls::BTN_UD)) midiclk::SetSync(!midiclk::SyncOn());
+  if (rise & (1u << controls::BTN_HOLD)) { midiclk::SetArmedStart(!midiclk::ArmedStart()); sysex::SaveArmedStart(midiclk::ArmedStart()); }
   if (rise & (1u << controls::BTN_UP))
     midiclk::SetDiv((uint8_t)((midiclk::DivIdx() + 1) % midiclk::DIV_COUNT));
   if (rise & (1u << controls::BTN_DOWN))

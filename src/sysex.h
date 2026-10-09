@@ -49,6 +49,9 @@ inline bool LoadKeysOnly() { return eeprom_read_byte(EE_CFG_KEYS) == 1; }
 inline void SaveKeysOnly(bool on) { eeprom_update_byte(EE_CFG_KEYS, on ? 1 : 0); }
 inline bool LoadLocalOff() { return eeprom_read_byte(EE_CFG_LOCAL) == 1; }
 inline void SaveLocalOff(bool off) { eeprom_update_byte(EE_CFG_LOCAL, off ? 1 : 0); }
+// Start mode (0x65 id 15, midiclock.h): 0 host, 1 armed. An erased byte (0xFF) is host, the old behaviour.
+inline bool LoadArmedStart() { return eeprom_read_byte(EE_CFG_START) == 1; }
+inline void SaveArmedStart(bool on) { eeprom_update_byte(EE_CFG_START, on ? 1 : 0); }
 
 // 0x34 -> 0x35 build identity: "<version> <sha>[*]" in 7-bit ASCII, e.g.
 // "0.2 0642b7f" clean or "0.2 0642b7f*" dirty. Same opcode pair and same

@@ -1112,7 +1112,7 @@ static int SelfTest() {
     g_midiOut.clear();
     sx({0x65, 10, 1});
     std::vector<uint8_t> f = features();
-    CHECK(f.size() == 17 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
+    CHECK(f.size() == 18 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
     CHECK(sysex::LoadClockFrom() == midi::CLK_DIN, "DIN only saved to EEPROM");
     sx({0x65, 10, 3});
     CHECK(midi::ClockFrom() == midi::CLK_DIN && sysex::LoadClockFrom() == midi::CLK_DIN, "bad value 3 leaves the source alone");
@@ -1157,7 +1157,7 @@ static int SelfTest() {
     {   // MIDI OUT / THRU (0x65 id 11): THRU sends none of the 101's own notes
       auto noteOns = [&]() { int n = 0; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) n += (g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]; return n; };
       g_midiOut.clear(); sx({0x65, 11, 1}); std::vector<uint8_t> f = features();
-      CHECK(f.size() == 17 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
+      CHECK(f.size() == 18 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
       CHECK(noteOns() == 0, "THRU: a panel key sends no note on MIDI OUT");
       sx({0x65, 11, 0});
@@ -1165,7 +1165,7 @@ static int SelfTest() {
       CHECK(!midi::Thru() && !sysex::LoadThru() && noteOns() == 1, "0x65 id 11 = 0 -> OUT: the key's note is sent again");
       // Note output (0x65 id 12): off sends no notes, SysEx still flows; back to both.
       g_midiOut.clear(); sx({0x65, 12, 3}); f = features();
-      CHECK(f.size() == 17 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
+      CHECK(f.size() == 18 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5); sx({0x20});
       bool cfg = false; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) cfg |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x21;
       CHECK(noteOns() == 0 && cfg, "notes off: a panel key sends no note, SysEx replies still go out");
@@ -1179,7 +1179,7 @@ static int SelfTest() {
       auto outNotes = [&](uint8_t status) { std::vector<int> n; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i)
           if ((g_midiOut[i] & 0xF0) == status && (status == 0x80 || g_midiOut[i + 2])) n.push_back(g_midiOut[i + 1]); return n; };
       g_midiOut.clear(); sx({0x65, 13, 1}); f = features();
-      CHECK(f.size() == 17 && f[15] == 1 && f[16] == 0 && midi::KeysOnly() && sysex::LoadKeysOnly(), "0x65 id 13 = 1 -> key notes on, saved, 0x66 15th field");
+      CHECK(f.size() == 18 && f[15] == 1 && f[16] == 0 && midi::KeysOnly() && sysex::LoadKeysOnly(), "0x65 id 13 = 1 -> key notes on, saved, 0x66 15th field");
       g_midiOut.clear(); for (uint8_t b : {0x90, 60, 100}) g_midiQ.push_back(b); RunLoops(5);
       CHECK(GateOn() && noteOns() == 0, "key notes: a MIDI-in note plays the voice and is not sent back out");
       for (uint8_t b : {0x80, 60, 0}) g_midiQ.push_back(b); RunLoops(5);
@@ -1188,7 +1188,7 @@ static int SelfTest() {
       g_midiOut.clear(); sim::g_keys = 0; RunLoops(5);
       CHECK(outNotes(0x80) == std::vector<int>({58, 62}), "key notes: released, two note-offs");
       g_midiOut.clear(); sx({0x65, 14, 1}); f = features();
-      CHECK(f.size() == 17 && f[16] == 1 && midi::LocalOff() && sysex::LoadLocalOff(), "0x65 id 14 = 1 -> local off, saved, 0x66 16th field");
+      CHECK(f.size() == 18 && f[16] == 1 && midi::LocalOff() && sysex::LoadLocalOff(), "0x65 id 14 = 1 -> local off, saved, 0x66 16th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5);
       CHECK(!GateOn() && outNotes(0x90) == std::vector<int>({58}), "local off: a key sounds nothing here and goes out as its note");
       for (uint8_t b : {0x90, 58, 100}) g_midiQ.push_back(b); RunLoops(5);
@@ -1315,6 +1315,70 @@ static int SelfTest() {
     MidiClocks(6);
     CHECK(sim::g_sh[0] == 19, "resumed Start-less stream: steps follow the division, not the LFO");
     sxPlay(0);
+    // (6) Start mode ARMED (0x65 id 15): PLAY here queues the sequence, only
+    // the host's Start plays it, Stop rewinds it and keeps it armed.
+    {
+      auto sx65 = [&](uint8_t id, uint8_t v) {
+        for (uint8_t x : {(uint8_t)0xF0, (uint8_t)0x7D, (uint8_t)0x65, id, v, (uint8_t)0xF7}) g_midiQ.push_back(x);
+        RunLoops(3);
+      };
+      auto pressPlay = [&]() { sim::g_buttons = 1u << 1; RunLoops(2); sim::g_buttons = 0; RunLoops(3); };
+      auto features = [&]() {   // the last 0x66 on MIDI OUT
+        std::vector<uint8_t> last, cur; bool in = false;
+        for (uint8_t v : g_midiOut) {
+          if (v == 0xF0) { in = true; cur.clear(); continue; }
+          if (v == 0xF7 && in) { in = false; if (cur.size() >= 2 && cur[0] == 0x7D && cur[1] == 0x66) last = cur; continue; }
+          if (in) cur.push_back(v);
+        }
+        return last;
+      };
+      eeprom_update_byte(EE_CFG_START, 0xFF);
+      CHECK(!sysex::LoadArmedStart(), "start mode: an erased EEPROM byte reads as HOST");
+      g_midiOut.clear(); sx65(15, 1); std::vector<uint8_t> f = features();
+      CHECK(midiclk::ArmedStart() && sysex::LoadArmedStart() && f.size() == 18 && f[17] == 1,
+            "0x65 id 15 = 1 -> start mode ARMED, saved, 0x66 16th field");
+      sx65(15, 2);
+      CHECK(midiclk::ArmedStart(), "0x65 id 15 = 2 (bad value) leaves the start mode alone");
+      MidiByte(0xFC); waitMs(320);           // host stopped, wire dead
+      MidiByte(0xFA); MidiClocks(7);
+      CHECK(!GateOn() && (sim_portf & 7) == 0, "armed mode: an idle 101 stays idle on the host's Start");
+      MidiByte(0xFC); waitMs(320);
+      pressPlay();
+      CHECK(!GateOn() && (sim_portf & 7) == 2, "armed mode: PLAY with no clock arms silently (PLAY LED lit)");
+      waitMs(8); ClockTick();
+      CHECK(!GateOn(), "armed mode: the LFO steps nothing");
+      MidiClocks(7);                         // a Start-less stream (a host clocking while stopped)
+      CHECK(!GateOn() && (sim_portf & 7) == 2, "armed mode: a clock without the host's Start steps nothing");
+      MidiByte(0xFA); MidiClocks(1);
+      CHECK(GateOn() && sim::g_sh[0] == 17, "armed mode: Start + 1st clock -> step 1 on the downbeat (CV 17)");
+      MidiClocks(6);
+      CHECK(sim::g_sh[0] == 19, "armed mode: it steps on the host's divisions");
+      MidiByte(0xFC); RunLoops(2);
+      CHECK(!GateOn() && (sim_portf & 7) == 2, "armed mode: Stop drops the gate and stays armed (PLAY LED lit)");
+      waitMs(320); MidiClocks(7);
+      CHECK(!GateOn(), "armed mode: after Stop, a Start-less clock steps nothing");
+      MidiByte(0xFA); MidiClocks(1);
+      CHECK(GateOn() && sim::g_sh[0] == 17, "armed mode: a second Start plays again from step 1");
+      MidiClocks(6);
+      MidiByte(0xFC); RunLoops(2);
+      MidiByte(0xFB); MidiClocks(6);         // Continue keeps the host's grid: step 1 on its next boundary
+      CHECK(GateOn() && sim::g_sh[0] == 17, "armed mode: Continue resumes the armed sequence (rewound at Stop)");
+      MidiByte(0xFC); RunLoops(2);
+      pressPlay();
+      CHECK((sim_portf & 7) == 0, "armed mode: PLAY again disarms (keyboard)");
+      MidiByte(0xFA); MidiClocks(7);
+      CHECK(!GateOn() && (sim_portf & 7) == 0, "armed mode: disarmed, the host's Start leaves it idle");
+      MidiByte(0xFB); MidiClocks(7);
+      CHECK(!GateOn() && (sim_portf & 7) == 0, "armed mode: disarmed, Continue leaves it idle");
+      MidiByte(0xFC); RunLoops(2);
+      g_midiOut.clear(); sx65(15, 0); f = features();
+      CHECK(!midiclk::ArmedStart() && !sysex::LoadArmedStart() && f.size() == 18 && f[17] == 0,
+            "0x65 id 15 = 0 -> start mode HOST, saved");
+      MidiByte(0xFA); MidiClocks(1);
+      CHECK(GateOn() && sim::g_sh[0] == 17, "host mode again: 0xFA starts an idle 101");
+      MidiByte(0xFC); RunLoops(2);
+      CHECK((sim_portf & 7) == 0, "host mode again: 0xFC stops it");
+    }
     midiclk::SetSync(false); RunLoops(2);
   }
 
@@ -2288,6 +2352,10 @@ static int SelfTest() {
     sim::g_buttons = 1u << 3; RunLoops(1);    // and back off
     sim::g_buttons = 0; RunLoops(1);
     CHECK(!midiclk::SyncOn(), "menu UP&DOWN toggles MIDI sync off");
+    sim::g_buttons = 1u << 5; RunLoops(1); sim::g_buttons = 0; RunLoops(1);   // HOLD: start mode
+    CHECK(midiclk::ArmedStart() && sysex::LoadArmedStart(), "menu HOLD toggles start mode ARMED (saved)");
+    sim::g_buttons = 1u << 5; RunLoops(1); sim::g_buttons = 0; RunLoops(1);
+    CHECK(!midiclk::ArmedStart() && !sysex::LoadArmedStart(), "menu HOLD toggles start mode back to HOST");
     cvdac::S().codeA = 3000; cvdac::S().codeB = 3000; cvdac::Flush();   // as if mid-accent
     sim::g_buttons = 1u << 0; RunLoops(1);    // LOAD -> SwitchTo(FW_EMU)
     sim::g_buttons = 0; RunLoops(2);          // the pending switch runs next pass
@@ -2363,6 +2431,33 @@ static int SelfTest() {
       CHECK((emu101::romP2() & 0x07) == 2, "ROM + sync on: 0xFA starts the ROM's sequencer (PLAY LED)");
       g_midiQ.push_back(0xFC); RunLoops(400);
       CHECK((emu101::romP2() & 0x07) != 2, "ROM + sync on: 0xFC stops it");
+      // Start mode ARMED: Start taps nothing from idle, a tapped PLAY waits
+      // for the host's transport, Stop rewinds it (PLAY off, then on).
+      auto fn = [&]() { return (uint8_t)(emu101::romP2() & 0x07); };
+      auto tapPlay = [&]() { sim::g_buttons = 1u << 1; RunLoops(40); sim::g_buttons = 0; RunLoops(40); };
+      auto ticks = [&](int n) { while (n-- > 0) { g_midiQ.push_back(0xF8); RunLoops(10); } };
+      midiclk::SetArmedStart(true);
+      RunLoops(700);                                    // the wire goes dead
+      g_midiQ.push_back(0xFA); RunLoops(10); ticks(12);
+      CHECK(fn() != 2 && !GateOn(), "ROM + armed: the host's Start leaves an idle ROM idle");
+      g_midiQ.push_back(0xFC); RunLoops(700);
+      tapPlay();
+      CHECK(fn() == 2 && !GateOn(), "ROM + armed: PLAY arms silently (PLAY LED lit)");
+      ticks(24);                                        // a host clocking while stopped
+      CHECK(fn() == 2 && !GateOn(), "ROM + armed: a clock without the host's Start steps nothing");
+      g_midiQ.push_back(0xFA); RunLoops(10); ticks(5);
+      CHECK(GateOn() && sim::g_sh[0] == 17, "ROM + armed: Start plays step 1 (CV 17)");
+      ticks(1);   // the 6th clock after Start closes the division
+      CHECK(sim::g_sh[0] == 21, "ROM + armed: then step 2 on the next division (CV 21)");
+      ticks(6);   // back on step 1: a Start that did not rewind would play step 2 next
+      g_midiQ.push_back(0xFC); RunLoops(1000);
+      CHECK(fn() == 2 && !GateOn(), "ROM + armed: Stop drops the gate and stays armed (PLAY off, on)");
+      g_midiQ.push_back(0xFA); RunLoops(10); ticks(3);
+      CHECK(GateOn() && sim::g_sh[0] == 17, "ROM + armed: a second Start plays from step 1 again");
+      g_midiQ.push_back(0xFC); RunLoops(1000);
+      tapPlay();
+      CHECK(fn() != 2, "ROM + armed: PLAY again disarms");
+      midiclk::SetArmedStart(false);
       midiclk::SetSync(false); RunLoops(30);
     }
 

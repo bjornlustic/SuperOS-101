@@ -136,15 +136,15 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut, keysOnly, localOff]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut, keysOnly, localOff, armedStart]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[16] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[17] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
                   (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
                   midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru(), midi::NoteOut(),
-                  (uint8_t)midi::KeysOnly(), (uint8_t)midi::LocalOff()};
+                  (uint8_t)midi::KeysOnly(), (uint8_t)midi::LocalOff(), (uint8_t)midiclk::ArmedStart()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendScale(uint8_t p) {
@@ -274,7 +274,8 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     // playing), 6 tune mode 0/1 (from keyboard mode), 7 sync delay in ms
     // (0..60: the slaved machine plays that much later), 8 arp octave range
     // 1..3, 9 resync: the sequence back on the one (value ignored), 10 clock
-    // source (0 DIN and USB, 1 DIN only, 2 USB only; saved). 0x67 =
+    // source (0 DIN and USB, 1 DIN only, 2 USB only; saved), 11..15 at
+    // their cases below (15 start mode: 0 host, 1 armed; saved). 0x67 =
     // read only.
     // Out-of-range values leave the setting alone; the 0x66 reply shows the
     // applied state either way.
@@ -304,6 +305,9 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           case 13: if (v <= 1) { midi::SetKeysOnly(v); sysex::SaveKeysOnly(v); } break;
           // Local control: 0 on, 1 off (the keys only go out; MIDI in plays the voice). Saved.
           case 14: if (v <= 1) { midi::SetLocalOff(v); sysex::SaveLocalOff(v); } break;
+          // Start mode: 0 host (its Start starts an idle 101), 1 armed (PLAY here queues, the
+          // host's Start plays it, Stop rewinds and keeps it armed; midiclock.h). Saved.
+          case 15: if (v <= 1) { midiclk::SetArmedStart(v); sysex::SaveArmedStart(v); } break;
           default: break;
         }
       }
@@ -434,11 +438,18 @@ void superos_loop() {
   // the sequencer (play in the DAW and the machine plays; nobody has to
   // also press PLAY here or send 0x1E), and Stop stops it. Sync OFF keeps
   // the old behaviour: Start only aligns an already-playing sequencer.
+  // Start mode ARMED (0x65 id 15): Start never starts an idle 101, only a
+  // queued (PLAY pressed) one plays, and Stop rewinds it to step 1 with the
+  // gate off and leaves it armed for the next Start (stepping waits for the
+  // host's transport: ArmedHold below).
   if (midiclk::ConsumeStart()) {
     g_engine.restart();
-    if (midiclk::SyncOn()) g_engine.playFromHost();   // step 0 sounds on the downbeat tick
+    if (midiclk::SyncOn() && !midiclk::ArmedStart()) g_engine.playFromHost();   // step 0 sounds on the downbeat tick
   }
-  if (midiclk::ConsumeStop() && midiclk::SyncOn()) g_engine.setPlaying(false);
+  if (midiclk::ConsumeStop() && midiclk::SyncOn()) {
+    if (!midiclk::ArmedStart()) g_engine.setPlaying(false);
+    else if (g_engine.mode() == engine::MODE_SEQ_PLAY) g_engine.restart();
+  }
   // Sync ON only rules while the host's clock is actually on the wire
   // (midiclock.h Driving); otherwise the LFO/EXT-CLK steps the machine so a
   // PLAY press is never silent.
@@ -535,6 +546,8 @@ void superos_loop() {
     // open (the "CPU hum" regression).
     clockEdge = driving ? divEdge : false;
     halfEdge = driving ? midiclk::ConsumeHalfEdge() : false;
+    // Armed start: a queued sequence steps only while the host's transport runs.
+    if (midiclk::ArmedHold() && g_engine.mode() == engine::MODE_SEQ_PLAY) { clockEdge = false; halfEdge = false; }
     if (driving && divEdge) g_rndHeld = random;
     random = g_rndHeld;
   }

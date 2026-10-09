@@ -320,3 +320,21 @@ KEYBOARD and the arps, PLAY and KEY TRANSPOSE up, not tuning. Pattern select,
 LOAD, transpose and the sequencer's keys are the panel's whatever the settings.
 An erased byte (0xFF) reads as the old behaviour. SuperOS firmware only (not the
 80C49 emulator). Self-test: `sim/sim.cpp`, "key notes" and "local off".
+
+## Start mode (armed start)
+
+`0x65 id 15` start mode (EEPROM 0x00C, 0x66's 16th field; config menu HOLD
+toggles it, no LED): 0 host (default; an erased byte 0xFF reads as host), 1
+armed. Only acts with sync ON. Host: the host's Start (0xFA) starts an idle 101
+and Stop (0xFC) returns it to the keyboard. Armed: PLAY on the 101 queues the
+sequence (PLAY LED lit, nothing steps or sounds, no LFO fallback) until the
+host's transport runs: its Start rewinds and plays step 1 on the downbeat, or
+its Continue (0xFB) resumes on the host's grid. A clock without Start or
+Continue (a host that clocks while stopped, or a stream after a dead gap) steps
+nothing in sequencer play. Start leaves an idle 101 idle. Stop drops the gate,
+rewinds to step 1 and keeps it armed, so the next Start plays it again; PLAY on
+the 101 again disarms. Arps and LOAD are not affected. In the 80C49 emulator
+Start taps nothing, a queued PLAY holds T1 high until Start (so Start is the
+falling edge for step 1, the host-mode grid), and Stop taps PLAY off and, once
+the ROM shows idle, on again (about 120 ms) to rewind and re-arm. Self-test:
+`sim/sim.cpp`, "armed mode" and "ROM + armed".

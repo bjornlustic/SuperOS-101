@@ -456,8 +456,16 @@ static inline void T1Qualify() {}
 // Sync ON is STRICT: T1 is the divided MIDI clock, full stop. When the host's
 // ticks stop, the divider freezes and so does the ROM's sequencer; the LFO pin
 // never steps a synced machine (the player asked for a slave, not a fallback).
+// Armed start (midiclock.h ArmedHold): a queued PLAY holds T1 HIGH until the
+// host's transport runs, so a host that clocks while stopped steps nothing, and
+// the host's Start (division tick 0, T1 low) is the falling edge that plays
+// step 1: the same grid as a Start that taps PLAY from idle.
 static inline bool T1Source() {
-  if (midiclk::SyncOn()) { midiclk::Service(); return midiclk::T1Level(); }
+  if (midiclk::SyncOn()) {
+    midiclk::Service();
+    if (midiclk::ArmedHold() && (g_cpu.ram[0x15] & 0x02)) return true;
+    return midiclk::T1Level();
+  }
   return (PIND & (1u << T1_CLOCK_BIT)) != 0;
 }
 static inline void T1Watch() {
@@ -767,17 +775,30 @@ void loop() {
   // the PLAY LED is lit (the ROM's own button toggles, and the function-LED
   // select is the mode readback). An active arp or LOAD mode is left alone:
   // Start must not stomp a clock-driven performance into sequencer play.
+  // Start mode ARMED (0x65 id 15): Start taps nothing (an idle ROM stays
+  // idle, a queued one plays from the held T1), and Stop taps PLAY off and,
+  // once the ROM shows idle, on again: rewound to step 1, gate off, still
+  // armed for the next Start.
   {
+    static uint32_t s_rearmMs = 0;   // armed Stop: re-tap PLAY from here (0 = none)
     bool started = midiclk::ConsumeStart(), stopped = midiclk::ConsumeStop();
+    // Function select: 1 LOAD, 2 PLAY, 3-5 arps; 0/6/7 light nothing (the
+    // 4556 only wires 1-5, and the ROM's idle image uses select 7).
+    uint8_t fn = (uint8_t)(g_p2Rom & 0x07);
+    bool idle = (fn == 0 || fn > 5);
     if (midiclk::SyncOn()) {
-      // Function select: 1 LOAD, 2 PLAY, 3-5 arps; 0/6/7 light nothing (the
-      // 4556 only wires 1-5, and the ROM's idle image uses select 7).
-      uint8_t fn = (uint8_t)(g_p2Rom & 0x07);
-      bool idle = (fn == 0 || fn > 5);
-      if ((started && idle) || (stopped && fn == 2)) {
+      const bool armed = midiclk::ArmedStart();
+      if ((started && idle && !armed) || (stopped && fn == 2)) {
         g_virtButtons |= (1u << 1);
         g_virtUntilMs = ms + 60;
+        if (stopped && armed) s_rearmMs = (ms + 120) | 1;   // 60 ms held, 60 ms released
       }
+    }
+    if (s_rearmMs && !g_virtButtons && (int32_t)(ms - s_rearmMs) >= 0) {
+      if (idle && midiclk::SyncOn() && midiclk::ArmedStart()) {
+        g_virtButtons |= (1u << 1); g_virtUntilMs = ms + 60; s_rearmMs = 0;
+      } else if (!idle && (int32_t)(ms - s_rearmMs) > 500) s_rearmMs = 0;   // the ROM never went idle: leave it
+      else if (idle) s_rearmMs = 0;   // sync or armed turned off meanwhile
     }
   }
   T1Watch();      // sync-clock edge right after Poll advanced it

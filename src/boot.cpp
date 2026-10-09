@@ -274,6 +274,7 @@ void setup() {
   midi::SetKeysOnly(sysex::LoadKeysOnly());
   midi::SetLocalOff(sysex::LoadLocalOff());
   midiclk::Begin();                    // saved sync/division settings
+  midiclk::SetArmedStart(sysex::LoadArmedStart());
   cvdac::Begin();                      // CV DAC neutral in both firmwares (the emulator never writes it)
   uint8_t sel = eeprom_read_byte(EE_FW_SELECT);
   g_fw = (sel == FW_EMU && emu101::available()) ? FW_EMU : FW_SUPEROS;

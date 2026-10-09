@@ -14,6 +14,12 @@
 // starts the moment the host's clock speaks). The LFO/EXT-CLK steps the
 // machine only with sync OFF.
 //
+// Start mode (0x65 id 15, saved): 0 HOST, the host's Start starts an idle
+// machine (above). 1 ARMED: PLAY on the 101 queues the sequence and only the
+// host's Start (or Continue) lets it step; a Start never starts an idle
+// machine, and a Stop rewinds an armed one and leaves it armed (main.cpp,
+// emu101.cpp). Only acts with sync ON.
+//
 // All divisions are integer tick counts at 24 ppqn, so there is no drift.
 #pragma once
 #include <Arduino.h>
@@ -92,6 +98,8 @@ struct State {
   uint8_t  delayMs = 0;     // 0..SYNC_DELAY_MAX
   uint32_t dq[16];          // release times + delay, in us (ring)
   uint8_t  dqHead = 0, dqN = 0;
+  bool     armedStart  = false; // Start mode ARMED (sysex.h LoadStartMode)
+  bool     hostPlaying = false; // 0xFA/0xFB seen, no 0xFC since (and no sync toggle)
 };
 
 inline State& S() { static State s; return s; }
@@ -135,7 +143,7 @@ inline uint8_t LfoDivEff() { return S().lfoDiv == LFO_DIV_AUTO ? S().autoIdx : S
 // lock, the channel), and resending the same value must not throw the pattern off the host's beat.
 inline void SetSync(bool on) {
   if (on == S().sync) return;
-  S().sync = on; S().running = true; S().hostStopped = false; S().anchored = false;
+  S().sync = on; S().running = true; S().hostStopped = false; S().anchored = false; S().hostPlaying = false;
   S().tick = 0; S().lfoTick = 0; S().abs = 0; DropTicks(); Save();
 }
 inline void SetDiv(uint8_t i) {
@@ -153,6 +161,13 @@ inline void SetLfoDiv(uint8_t i) {
     Save();
   }
 }
+
+inline bool ArmedStart() { return S().armedStart; }
+inline void SetArmedStart(bool on) { S().armedStart = on; }
+// ARMED start, sync on: the sequencer may step only while the host's transport
+// runs (its Start or Continue, no Stop since). A Start-less stream, or a host
+// that clocks while stopped, steps nothing in sequencer play.
+inline bool ArmedHold() { return S().sync && S().armedStart && !S().hostPlaying; }
 
 // --- clock liveness ---------------------------------------------------------
 inline bool TickAlive(uint32_t nowMs) {
@@ -209,11 +224,11 @@ inline void OnRealtime(uint8_t b) {
     }
     case 0xFA:
       s.running = true; s.hostStopped = false; s.anchored = true;
-      s.tick = 0; s.lfoTick = 0; s.abs = 0; s.started = true;
+      s.tick = 0; s.lfoTick = 0; s.abs = 0; s.started = true; s.hostPlaying = true;
       DropTicks();
       break;
-    case 0xFB: s.running = true; s.hostStopped = false; DropTicks(); break;
-    case 0xFC: s.running = false; s.hostStopped = true; s.stopped = true; DropTicks(); break;
+    case 0xFB: s.running = true; s.hostStopped = false; s.hostPlaying = true; DropTicks(); break;
+    case 0xFC: s.running = false; s.hostStopped = true; s.stopped = true; s.hostPlaying = false; DropTicks(); break;
     default: break;
   }
 }
