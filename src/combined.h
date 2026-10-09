@@ -52,7 +52,9 @@ static const uint16_t EE_A_CFG_SYNCDLY = 0x006; // sync delay in ms (midiclock.h
 static const uint16_t EE_A_CFG_THRU = 0x007;    // soft MIDI thru on/off (sysex.h)
 static const uint16_t EE_A_CFG_CLKSRC = 0x008;  // clock source (sysex.h)
 static const uint16_t EE_A_CFG_NOTEOUT = 0x009; // note output ports (sysex.h)
-static const uint16_t EE_CFG_END     = 0x00A;   // one past EE_A_CFG_NOTEOUT
+static const uint16_t EE_A_CFG_KEYS = 0x00A;    // key notes: 1 = the keys as pressed (sysex.h)
+static const uint16_t EE_A_CFG_LOCAL = 0x00B;   // local control: 1 = off (sysex.h; erased = on)
+static const uint16_t EE_CFG_END     = 0x00C;   // one past EE_A_CFG_LOCAL
 static const uint16_t EE_CV_FIRST    = 0x010;   // cvdac.h's EE_CV_MAGIC
 static const uint16_t EE_A_FEAT_MAGIC = 0x020;  // SuperOS performance settings (main.cpp)
 static const uint16_t EE_A_FEAT_DIR   = 0x021;  // sequencer direction (engine.h SeqDir)
@@ -80,6 +82,8 @@ static const uint16_t EE_TOTAL_BYTES = 0x1000;  // E2END + 1, AT90USB1286
 #define EE_CFG_THRU  ((uint8_t*)EE_A_CFG_THRU)
 #define EE_CFG_CLKSRC ((uint8_t*)EE_A_CFG_CLKSRC)
 #define EE_CFG_NOTEOUT ((uint8_t*)EE_A_CFG_NOTEOUT)
+#define EE_CFG_KEYS ((uint8_t*)EE_A_CFG_KEYS)
+#define EE_CFG_LOCAL ((uint8_t*)EE_A_CFG_LOCAL)
 
 static const uint8_t EE_EMU_MAGIC_VAL = 0x49;   // '8049'
 static const uint8_t EMU_RAM_FIRST    = 0x1C;   // first persisted 80C49 RAM byte
@@ -88,7 +92,8 @@ static const uint8_t EE_CFG_MAGIC_VAL = 0x4D;   // 'M'
 static const uint8_t EE_FEAT_MAGIC_VAL = 0x46;  // 'F'
 static_assert(EE_FEAT_END <= EE_FREE_FIRST, "the feature block runs into the free arena");
 
-static_assert(EE_A_CFG_SYNCDLY + 1 == EE_A_CFG_THRU && EE_A_CFG_THRU + 1 == EE_A_CFG_CLKSRC && EE_A_CFG_CLKSRC + 1 == EE_A_CFG_NOTEOUT && EE_A_CFG_NOTEOUT + 1 == EE_CFG_END,
+static_assert(EE_A_CFG_SYNCDLY + 1 == EE_A_CFG_THRU && EE_A_CFG_THRU + 1 == EE_A_CFG_CLKSRC && EE_A_CFG_CLKSRC + 1 == EE_A_CFG_NOTEOUT && EE_A_CFG_NOTEOUT + 1 == EE_A_CFG_KEYS &&
+              EE_A_CFG_KEYS + 1 == EE_A_CFG_LOCAL && EE_A_CFG_LOCAL + 1 == EE_CFG_END,
               "the CFG block moved");
 static_assert(EE_CFG_END <= EE_CV_FIRST, "the CFG block runs into the CV block");
 static_assert(EE_FREE_FIRST <= EE_A_EMU_MAGIC,

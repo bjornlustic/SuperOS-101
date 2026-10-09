@@ -43,6 +43,12 @@ inline uint8_t LoadClockFrom() { uint8_t v = eeprom_read_byte(EE_CFG_CLKSRC); re
 inline void SaveClockFrom(uint8_t v) { eeprom_update_byte(EE_CFG_CLKSRC, v); }
 inline uint8_t LoadNoteOut() { uint8_t v = eeprom_read_byte(EE_CFG_NOTEOUT); return v <= 3 ? v : 0; }
 inline void SaveNoteOut(uint8_t v) { eeprom_update_byte(EE_CFG_NOTEOUT, v); }
+// Key notes and local control (0x65 id 13, 14). An erased byte (0xFF) is the old behaviour: the
+// notes it plays, local on.
+inline bool LoadKeysOnly() { return eeprom_read_byte(EE_CFG_KEYS) == 1; }
+inline void SaveKeysOnly(bool on) { eeprom_update_byte(EE_CFG_KEYS, on ? 1 : 0); }
+inline bool LoadLocalOff() { return eeprom_read_byte(EE_CFG_LOCAL) == 1; }
+inline void SaveLocalOff(bool off) { eeprom_update_byte(EE_CFG_LOCAL, off ? 1 : 0); }
 
 // 0x34 -> 0x35 build identity: "<version> <sha>[*]" in 7-bit ASCII, e.g.
 // "0.2 0642b7f" clean or "0.2 0642b7f*" dirty. Same opcode pair and same

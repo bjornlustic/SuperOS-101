@@ -304,3 +304,19 @@ plays go, 0 DIN and USB (default), 1 DIN only, 2 USB only, 3 off. SysEx and
 soft thru are not affected, so an editor on USB keeps full sync with the notes
 off its port (an MPC whose pads would otherwise play them). Changing it releases
 a sounding note on the old ports first.
+
+## Key notes and local control
+
+`0x65 id 13` key notes (EEPROM 0x00A, 0x66's 14th field): 0 the notes the 101
+plays go out (keys, sequencer, arpeggiator, MIDI in; default), 1 the keyboard's
+keys as pressed: one note each, polyphonic, velocity 100, at the number MIDI in
+plays that key with (53 + key, F3 = key 0), so a host that records them and sends
+them back plays the same keys. Sequencer, arp and MIDI-in notes are not sent.
+
+`0x65 id 14` local control (EEPROM 0x00B, 0x66's 15th field): 0 on (default),
+1 off: the keys play nothing here and go out as key notes (implied); MIDI in
+still plays the voice, arp included. Both act only where the keys are notes:
+KEYBOARD and the arps, PLAY and KEY TRANSPOSE up, not tuning. Pattern select,
+LOAD, transpose and the sequencer's keys are the panel's whatever the settings.
+An erased byte (0xFF) reads as the old behaviour. SuperOS firmware only (not the
+80C49 emulator). Self-test: `sim/sim.cpp`, "key notes" and "local off".

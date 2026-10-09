@@ -1112,7 +1112,7 @@ static int SelfTest() {
     g_midiOut.clear();
     sx({0x65, 10, 1});
     std::vector<uint8_t> f = features();
-    CHECK(f.size() == 15 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
+    CHECK(f.size() == 17 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
     CHECK(sysex::LoadClockFrom() == midi::CLK_DIN, "DIN only saved to EEPROM");
     sx({0x65, 10, 3});
     CHECK(midi::ClockFrom() == midi::CLK_DIN && sysex::LoadClockFrom() == midi::CLK_DIN, "bad value 3 leaves the source alone");
@@ -1157,7 +1157,7 @@ static int SelfTest() {
     {   // MIDI OUT / THRU (0x65 id 11): THRU sends none of the 101's own notes
       auto noteOns = [&]() { int n = 0; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) n += (g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]; return n; };
       g_midiOut.clear(); sx({0x65, 11, 1}); std::vector<uint8_t> f = features();
-      CHECK(f.size() == 15 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
+      CHECK(f.size() == 17 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
       CHECK(noteOns() == 0, "THRU: a panel key sends no note on MIDI OUT");
       sx({0x65, 11, 0});
@@ -1165,7 +1165,7 @@ static int SelfTest() {
       CHECK(!midi::Thru() && !sysex::LoadThru() && noteOns() == 1, "0x65 id 11 = 0 -> OUT: the key's note is sent again");
       // Note output (0x65 id 12): off sends no notes, SysEx still flows; back to both.
       g_midiOut.clear(); sx({0x65, 12, 3}); f = features();
-      CHECK(f.size() == 15 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
+      CHECK(f.size() == 17 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5); sx({0x20});
       bool cfg = false; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) cfg |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x21;
       CHECK(noteOns() == 0 && cfg, "notes off: a panel key sends no note, SysEx replies still go out");
@@ -1174,6 +1174,34 @@ static int SelfTest() {
       sx({0x65, 12, 0});
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
       CHECK(midi::NoteOut() == 0 && sysex::LoadNoteOut() == 0 && noteOns() == 1, "0x65 id 12 = 0 -> notes on DIN and USB again");
+      // Key notes (0x65 id 13) and local control (0x65 id 14): a host recording the player gets the
+      // keys as pressed, not the notes the machine plays (MIDI in, sequencer, arp).
+      auto outNotes = [&](uint8_t status) { std::vector<int> n; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i)
+          if ((g_midiOut[i] & 0xF0) == status && (status == 0x80 || g_midiOut[i + 2])) n.push_back(g_midiOut[i + 1]); return n; };
+      g_midiOut.clear(); sx({0x65, 13, 1}); f = features();
+      CHECK(f.size() == 17 && f[15] == 1 && f[16] == 0 && midi::KeysOnly() && sysex::LoadKeysOnly(), "0x65 id 13 = 1 -> key notes on, saved, 0x66 15th field");
+      g_midiOut.clear(); for (uint8_t b : {0x90, 60, 100}) g_midiQ.push_back(b); RunLoops(5);
+      CHECK(GateOn() && noteOns() == 0, "key notes: a MIDI-in note plays the voice and is not sent back out");
+      for (uint8_t b : {0x80, 60, 0}) g_midiQ.push_back(b); RunLoops(5);
+      g_midiOut.clear(); sim::g_keys = (1UL << 5) | (1UL << 9); RunLoops(5);
+      CHECK(outNotes(0x90) == std::vector<int>({58, 62}) && GateOn(), "key notes: two held keys are two notes (53 + key), the voice plays");
+      g_midiOut.clear(); sim::g_keys = 0; RunLoops(5);
+      CHECK(outNotes(0x80) == std::vector<int>({58, 62}), "key notes: released, two note-offs");
+      g_midiOut.clear(); sx({0x65, 14, 1}); f = features();
+      CHECK(f.size() == 17 && f[16] == 1 && midi::LocalOff() && sysex::LoadLocalOff(), "0x65 id 14 = 1 -> local off, saved, 0x66 16th field");
+      g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5);
+      CHECK(!GateOn() && outNotes(0x90) == std::vector<int>({58}), "local off: a key sounds nothing here and goes out as its note");
+      for (uint8_t b : {0x90, 58, 100}) g_midiQ.push_back(b); RunLoops(5);
+      CHECK(GateOn(), "local off: the host sending it back plays the voice");
+      for (uint8_t b : {0x80, 58, 0}) g_midiQ.push_back(b); sim::g_keys = 0; RunLoops(5);
+      CHECK(!GateOn(), "local off: released, silent");
+      g_midiOut.clear(); sx({0x65, 13, 0}); sim::g_keys = 1UL << 5; RunLoops(5);
+      CHECK(!GateOn() && outNotes(0x90) == std::vector<int>({58}), "local off alone still sends the keys (key notes implied)");
+      sim::g_keys = 0; RunLoops(5);
+      sx({0x65, 14, 0});
+      g_midiOut.clear(); for (uint8_t b : {0x90, 60, 100}) g_midiQ.push_back(b); RunLoops(5);
+      CHECK(GateOn() && noteOns() == 1 && !sysex::LoadKeysOnly() && !sysex::LoadLocalOff(), "both off: the notes it plays go out again (MIDI in echoed), local on");
+      for (uint8_t b : {0x80, 60, 0}) g_midiQ.push_back(b); RunLoops(5);
     }
   }
   midiclk::SetSync(false);

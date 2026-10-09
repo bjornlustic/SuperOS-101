@@ -186,6 +186,8 @@ struct State {
   bool     thru = false;            // soft thru: mirror channel messages + realtime
   uint8_t  clkFrom = PORT_ALL;      // ports whose realtime (clock, start, stop) drives the machine
   uint8_t  notePorts = PORT_ALL;    // ports the notes it plays go out on (SysEx and thru are not affected)
+  bool     keysOnly = false;        // key notes: the keyboard's keys as pressed, not what the machine plays
+  bool     localOff = false;        // local control off: the keys do not play the voice (main.cpp)
 };
 inline State& S() { static State s; return s; }
 
@@ -381,6 +383,15 @@ inline bool HostSeen() { return S().hostPorts != 0; }
 // is this machine's editor protocol. The caller mutes the machine's own note
 // echo while this is on (main.cpp MidiOut, emu101.cpp), or OUT carries both.
 inline bool Thru() { return S().thru; }
+// Key notes (0x65 id 13, saved): 0 the notes it plays (sequencer, arp, MIDI in, keys), 1 the keys as
+// pressed: a host recording the player gets only them. Local control (0x65 id 14, saved): off, the
+// keys play nothing here and go out as notes (key notes implied); MIDI in still plays the voice.
+// Both act where the keys are notes: KEYBOARD and the arps, PLAY and KEY TRANSPOSE up (main.cpp).
+inline bool KeysOnly() { return S().keysOnly; }
+inline void SetKeysOnly(bool on) { S().keysOnly = on; }
+inline bool LocalOff() { return S().localOff; }
+inline void SetLocalOff(bool off) { S().localOff = off; }
+inline bool KeyNotes() { return S().keysOnly || S().localOff; }
 inline void SetThru(bool on) { S().thru = on; }
 // Clock source: 0 = DIN and USB (as before), 1 = DIN only, 2 = USB only.
 // Realtime from the other port is not acted on (still forwarded by thru), so

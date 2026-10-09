@@ -65,11 +65,28 @@ static void MidiCC(uint8_t num, uint8_t val) { cvdac::OnCc(num, val); }   // fil
 // --- MIDI note output --------------------------------------------------------
 static int16_t g_outNote = -1;
 static void MidiOut(uint8_t cv, bool gate, bool accent) {
-  int16_t note = (gate && !midi::Thru()) ? (int16_t)cv + engine::MIDI_CV_OFFSET : -1;   // thru: OUT is the input, not our notes
+  // thru: OUT is the input, not our notes; key notes: the keys go out instead (KeyNotesOut)
+  int16_t note = (gate && !midi::Thru() && !midi::KeyNotes()) ? (int16_t)cv + engine::MIDI_CV_OFFSET : -1;
   if (note == g_outNote) return;
   if (note >= 0) midi::NoteOn((uint8_t)note, accent ? 127 : 100);   // accented step = velocity 127          // new note first: legato-friendly
   if (g_outNote >= 0) midi::NoteOff((uint8_t)g_outNote);
   g_outNote = note;
+}
+
+// Key notes / local off (midi.h KeyNotes): the keys that are notes go out as pressed, one note each
+// (polyphonic, velocity 100), at the number MIDI in plays that key with (MidiNoteOn's map), so a host
+// sending them back plays the same keys. Turning it off (or THRU on) releases what is held.
+static uint32_t g_keyOut = 0;
+static void KeyNotesOut(uint32_t noteKeys) {
+  const uint32_t want = (midi::KeyNotes() && !midi::Thru()) ? noteKeys : 0;
+  const uint32_t diff = want ^ g_keyOut;
+  if (!diff) return;
+  for (uint8_t k = 0; k < 32; ++k) {
+    if (!(diff >> k & 1)) continue;
+    const uint8_t note = (uint8_t)(k + engine::MIDI_CV_OFFSET + 0x0C + engine::CV_BASE);
+    if (want >> k & 1) midi::NoteOn(note, 100); else midi::NoteOff(note);
+  }
+  g_keyOut = want;
 }
 
 // --- SysEx (editor protocol, see midi.h) -----------------------------------
@@ -119,14 +136,15 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut, keysOnly, localOff]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[14] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[16] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
                   (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
-                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru(), midi::NoteOut()};
+                  midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru(), midi::NoteOut(),
+                  (uint8_t)midi::KeysOnly(), (uint8_t)midi::LocalOff()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendScale(uint8_t p) {
@@ -282,6 +300,10 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           // note is released where it was sent first, then replays on the new ports.
           case 12: if (v <= 3) { if (g_outNote >= 0) midi::NoteOff((uint8_t)g_outNote); g_outNote = -1;
                                  midi::SetNoteOut(v); sysex::SaveNoteOut(v); } break;
+          // Key notes: 0 the notes it plays, 1 the keys as pressed (midi.h). Saved.
+          case 13: if (v <= 1) { midi::SetKeysOnly(v); sysex::SaveKeysOnly(v); } break;
+          // Local control: 0 on, 1 off (the keys only go out; MIDI in plays the voice). Saved.
+          case 14: if (v <= 1) { midi::SetLocalOff(v); sysex::SaveLocalOff(v); } break;
           default: break;
         }
       }
@@ -455,7 +477,14 @@ void superos_loop() {
     if ((int32_t)(g_btnQuietMs - nowMs) > 0) panelKeys &= g_prevPanelKeys;
     g_prevPanelKeys = panelKeys;
   }
-  uint32_t keys = panelKeys | g_midiMask;
+  // Where the keys are notes (KEYBOARD and the arps, PLAY and KEY TRANSPOSE up, not tuning) they go
+  // out as pressed with key notes on, and local off keeps them from the voice. Elsewhere they are the
+  // panel's (pattern select, LOAD, transpose, the sequencer's keys) whatever the settings.
+  const engine::Mode md = g_engine.mode();
+  const bool keysAreNotes = (md == engine::MODE_KEYBOARD || engine::IsArp(md)) && !g_engine.tuning() &&
+                            !g_buttons.down(controls::BTN_PLAY) && !g_buttons.down(controls::BTN_KEYTRANS);
+  KeyNotesOut(keysAreNotes ? panelKeys : 0);
+  uint32_t keys = ((midi::LocalOff() && keysAreNotes) ? 0 : panelKeys) | g_midiMask;
 
   // 6/7. CLOCK CHECK + RANDOM DATA OUTPUT -> RANDOM sample/hold
   // Sync ON: the divided MIDI clock replaces the T1 (LFO/EXT-CLK) edge, and
