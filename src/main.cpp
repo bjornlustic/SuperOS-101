@@ -659,7 +659,11 @@ void superos_loop() {
   // and pulses it low; holding it low freezes the LFO).
   uint8_t p2 = (uint8_t)(P2_IDLE | g_engine.ledSelect());
   if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
-  if (g_engine.ktLed()) p2 |= (uint8_t)(1u << P2_LED_KTRANS); // 1 -> KEY-TRANSPOSE lit
+  // G10: while the host's clock drives the 101, KEY-TRANSPOSE blinks on the
+  // beat (the LFO LED is analog and cannot follow a tempo faster than its
+  // RATE slider). Transpose mode's own fast blink keeps priority.
+  const bool ktLit = (driving && !g_engine.transposeLatched()) ? midiclk::BeatLed() : g_engine.ktLed();
+  if (ktLit) p2 |= (uint8_t)(1u << P2_LED_KTRANS); // 1 -> KEY-TRANSPOSE lit
   if (out.gate)        p2 &= (uint8_t)~(1u << P2_GATE);      // bit=0 -> gate ON
   if ((int32_t)(g_rstUntilMs - millis()) > 0)
     p2 &= (uint8_t)~(1u << P2_CLOCK_RST);                    // pulse LOW

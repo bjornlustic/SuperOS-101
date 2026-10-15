@@ -285,6 +285,9 @@ inline uint16_t DivisionsSinceStart() {
   return a ? (uint16_t)((a - 1) / n + 1) : 0;
 }
 inline uint8_t DivTicks() { return DIV_TICKS[S().divIdx]; }
+// G10 tempo blink: lit for the first half of each beat (24 ppqn), phase from
+// the fired-tick count, so it is aligned to 0xFA and follows the sync delay.
+inline bool BeatLed() { const uint32_t a = S().abs; return a && (a - 1) % 24 < 12; }
 // 24 ppqn ticks since Start (the performance modes' fixed grid).
 inline uint32_t AbsTicks() { return S().abs; }
 // One division in microseconds at the smoothed tempo (ratchet spacing).

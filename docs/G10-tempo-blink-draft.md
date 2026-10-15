@@ -1,4 +1,9 @@
-# G10 tempo-LED phase-lock: 101 implementation draft (NOT YET APPLIED)
+# G10 tempo-LED phase-lock: 101 implementation draft
+
+**APPLIED 2026-10-15**, in a simpler form than below: no new state; `midiclk::BeatLed()`
+derives the phase from the fired-tick count `abs` (so it follows the sync delay and
+0xFA alignment), gated on `Driving` rather than `SyncOn && Running`, and transpose
+mode's fast blink keeps priority. Sim check: "G10: KEY-TRANSPOSE blinks on the beat".
 
 Shared design: SuperOS-USBC/docs/G9_INVENTORY.md 6a (claim-022). One phase
 accumulator mod 48 (48 half-ticks/beat), advanced +2 per MIDI 0xF8 when slaved,

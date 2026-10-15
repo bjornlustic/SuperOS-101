@@ -1300,6 +1300,19 @@ static int SelfTest() {
     MidiByte(0xFC); RunLoops(2);
     waitMs(20); ClockTick();
     CHECK(sim::g_sh[0] == 19 && !GateOn(), "sync on: 0xFC stops it (keyboard mode, T1 steps nothing)");
+    {
+      // G10: KEY-TRANSPOSE (P26 = 0x40) blinks on the beat while driven:
+      // lit for ticks 0..11 of each 24, aligned to 0xFA; off once stopped.
+      auto kt = [] { return (sim_portf & 0x40) != 0; };
+      waitMs(320);
+      MidiByte(0xFA); MidiClocks(1);
+      bool on1 = kt();  MidiClocks(11); bool on12 = kt();
+      MidiClocks(1);    bool off13 = !kt(); MidiClocks(11); bool off24 = !kt();
+      MidiClocks(1);    bool on25 = kt();
+      CHECK(on1 && on12 && off13 && off24 && on25, "G10: KEY-TRANSPOSE blinks on the beat, half duty, from 0xFA");
+      MidiByte(0xFC); RunLoops(2);
+      CHECK(!kt(), "G10: KEY-TRANSPOSE off after the host's Stop");
+    }
     // sync OFF keeps the old semantics: 0xFA never force-starts
     midiclk::SetSync(false); RunLoops(2);
     MidiByte(0xFA); MidiClocks(1); RunLoops(2);
