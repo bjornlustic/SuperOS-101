@@ -47,7 +47,7 @@ python3 -m http.server 3101 --directory tools/web-editor   # editor (Chrome/Edge
 python3 docs/shortcut-guide/build_guide.py   # regenerates the shortcut PDF (needs Chrome)
 ```
 
-Field updates: send `F0 7D 4A F7`, then `tools/sendsyx "SuperOS-101 Bootloader" app-update.syx` (or the editor's Update OS). Panel fallback: hold LOAD + PLAY at power-on. The bootloader itself is ISP-only. On the bench, flash over DIN, not through the MPC's USB (it drops bootloader messages): `~/Desktop/Projects/AkaiMPCLIVE2/tools/device/sh101_update.py --din` (fails unless the build identity 0x35 changed). Check `git status` before building an image to flash: a flash carries the whole tree.
+Field updates: send `F0 7D 4A F7`, then `tools/sendsyx "SuperOS-101 Bootloader" app-update.syx` (or the editor's Update OS). Panel fallback: hold LOAD + PLAY at power-on. The bootloader itself is ISP-only. On the bench, flash the 101 over its USB-C through the MPC Live II (Ethernet link host 169.254.55.1): `~/Desktop/Projects/AkaiMPCLIVE2/tools/device/sh101_update.py --host 169.254.55.1 app-update.syx`. The script resends every page until a pass has no USB endpoint halts, then starts the app; it fails unless the build identity 0x35 changed. If the 101 drops off USB (no app, no bootloader in the MPC's `dmesg`): hold LOAD + PLAY at power-on and run the script again. `--din` (MPC MIDI Port A cabled to the 101's MIDI IN) is a fallback only; that cable is not normally connected. Check `git status` before building an image to flash: a flash carries the whole tree.
 
 ## Key technical facts and findings
 
