@@ -338,3 +338,53 @@ Start taps nothing, a queued PLAY holds T1 high until Start (so Start is the
 falling edge for step 1, the host-mode grid), and Stop taps PLAY off and, once
 the ROM shows idle, on again (about 120 ms) to rewind and re-arm. Self-test:
 `sim/sim.cpp`, "armed mode" and "ROM + armed".
+
+## Performance modes (keyboard overlay)
+
+While the sequencer plays (not recording, no function button held, not in
+transpose mode), the 32 keys are the overlay strip printed above them and the
+TRANSPOSE switch picks the row: L = 1 Global, M = 2 Pitch, H = 3 Time. In
+keyboard, arp and LOAD the switch and keys work as before (a playing sequence
+never used the octave switch: its notes are stored with their octave). Keys
+below are 1-based from the lowest F.
+
+| row | keys | function |
+|---|---|---|
+| 1 | 1-12 | transpose, C (key 8) = none (stock reference) |
+| 1 | 13-19 | octave variation 1-7 (6 fixed per-step patterns, 7 random) |
+| 1 | 20-24 | LFO/S&H sync: 1/16 1/8 1/4 1/2 1/1 |
+| 1 | 25-32 | patterns 1-8, switched now at the same position |
+| 2 | 1-7 | reorder notes: as written, reverse, cycle even, cycle odd, prime (stride 3, 5, 7 ... coprime to the note count), one forward, one back |
+| 2 | 8-19 | quantizer root C..B (major until a type is chosen) |
+| 2 | 20-26 | quantizer type: major minor dorian mixolydian lydian phrygian locrian |
+| 2 | 27-31 | combine pitch with the other sequence: add subtract multiply divide difference |
+| 3 | 1-7 | shift time: 1/4 R, 1/4 L, 1/8 R, 1/8 L, 1/16 R, 1/16 L, 3/16 R |
+| 3 | 8-12 | skip every 4th, every 8th, even, odd, every 5th clock (the pattern waits) |
+| 3 | 13-17 | add/delete time grid: 1/4 1/8 1/16 1/4T 1/16T |
+| 3 | 18-21 | add/delete logic: NOR OR AND XOR (grid alone = OR, logic alone = 1/4) |
+| 3 | 22-26 | ratchet while held (not latched): 1/32 1/16 1/16T 3x 7x per step |
+| 3 | 27-31 | combine rhythm with the other sequence: AND OR NOR XOR NAND |
+| 2, 3 | 32 | reset: alone clears the row, held + a key turns that function off |
+
+A latched choice pressed again turns off. Everything acts at playback; the
+pattern is never written. Details:
+
+- The other sequence is the next pattern number (pattern 16 pairs with 1).
+- Combine pitch works on intervals above each pattern's first note, then folds
+  by octaves into the DAC range. Combine rhythm: a step the logic fills takes
+  the other pattern's pitch (NOR: the last pitch).
+- Time values count one step as a 16th (the 1/16 division).
+- Add/delete time puts the step clock (high from its edge to its half-step)
+  through the logic gate with the grid clock; the result's rising edge steps.
+  The grid is the MIDI clock's 24 ppqn when it drives the 101, otherwise 24
+  ppqn derived from the measured step period, which follows a rhythmic EXT CLK
+  rather than holding a fixed grid.
+- LFO/S&H sync with the MIDI clock sets the LFO hard-sync division live (not
+  saved; turned off it restores the saved one). Without it, CLOCK RESET fires
+  every 1/2/4/8/16 steps.
+- Ratchet repeats the note sounding at the press; the pattern runs on and
+  release returns to where it would be.
+
+`0x65 id 16` turns the overlay off (0) or on (1, default), saved at EEPROM
+0x024 (erased = on), 0x66's 17th field. Self-test: `sim/sim.cpp`, "Performance
+modes" and "add/delete time".

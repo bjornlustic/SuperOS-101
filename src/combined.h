@@ -61,7 +61,8 @@ static const uint16_t EE_A_FEAT_MAGIC = 0x020;  // SuperOS performance settings 
 static const uint16_t EE_A_FEAT_DIR   = 0x021;  // sequencer direction (engine.h SeqDir)
 static const uint16_t EE_A_FEAT_PEDAL = 0x022;  // pedal route (controls.h PedalMode)
 static const uint16_t EE_A_FEAT_ARPRANGE = 0x023;  // arp octave range 1..3
-static const uint16_t EE_FEAT_END     = 0x024;
+static const uint16_t EE_A_FEAT_PERF  = 0x024;  // performance modes on/off (engine.h PerfOn; erased = on)
+static const uint16_t EE_FEAT_END     = 0x025;
 static const uint16_t EE_A_CV_ATTACK  = 0x030;  // cvdac.h: the MC-202 accent's attack (the CV block is full)
 static const uint16_t EE_FREE_FIRST  = 0x031;
 static const uint16_t EE_A_EMU_MAGIC = 0x100;

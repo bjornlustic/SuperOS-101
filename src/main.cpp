@@ -136,15 +136,15 @@ static void SendConfig() {
   for (const char* v = SUPEROS_VERSION; *v && n < sizeof(body); ++v) body[n++] = (uint8_t)(*v & 0x7F);
   midi::SendSysex(body, n);
 }
-// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut, keysOnly, localOff, armedStart]
+// 0x66 FEATURES: [dir, pedal, transpose+64, tmode, loopLen, rtRec, tune, queued(0x7F none), syncDelayMs, arpRange, clockFrom, thru, noteOut, keysOnly, localOff, armedStart, perfModes]
 static void SendFeatures() {
   engine::Sequencer& sq = g_engine.seq();
-  uint8_t b[17] = {0x66, engine::DirSetting(), controls::PedalRoute(),
+  uint8_t b[18] = {0x66, engine::DirSetting(), controls::PedalRoute(),
                   (uint8_t)(g_engine.transpose() + 64), (uint8_t)g_engine.transposeLatched(),
                   sq.loopLength(), (uint8_t)g_engine.rtRecording(), (uint8_t)g_engine.tuning(),
                   (uint8_t)(sq.queued() < engine::NUM_PATTERNS ? sq.queued() : 0x7F),
                   midiclk::SyncDelayMs(), engine::ArpRange(), midi::ClockFrom(), (uint8_t)midi::Thru(), midi::NoteOut(),
-                  (uint8_t)midi::KeysOnly(), (uint8_t)midi::LocalOff(), (uint8_t)midiclk::ArmedStart()};
+                  (uint8_t)midi::KeysOnly(), (uint8_t)midi::LocalOff(), (uint8_t)midiclk::ArmedStart(), (uint8_t)engine::PerfOn()};
   midi::SendSysex(b, sizeof(b));
 }
 static void SendScale(uint8_t p) {
@@ -308,6 +308,8 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
           // Start mode: 0 host (its Start starts an idle 101), 1 armed (PLAY here queues, the
           // host's Start plays it, Stop rewinds and keeps it armed; midiclock.h). Saved.
           case 15: if (v <= 1) { midiclk::SetArmedStart(v); sysex::SaveArmedStart(v); } break;
+          // Performance modes: 1 on (the keys are the overlay while the sequencer plays), 0 off. Saved.
+          case 16: if (v <= 1) { engine::PerfOn() = v; engine::FeatDirty() = true; } break;
           default: break;
         }
       }

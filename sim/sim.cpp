@@ -1112,7 +1112,7 @@ static int SelfTest() {
     g_midiOut.clear();
     sx({0x65, 10, 1});
     std::vector<uint8_t> f = features();
-    CHECK(f.size() == 18 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
+    CHECK(f.size() == 19 && f[12] == 1, "0x65 id 10 = 1 -> 0x66 reports DIN only (11th field)");
     CHECK(sysex::LoadClockFrom() == midi::CLK_DIN, "DIN only saved to EEPROM");
     sx({0x65, 10, 3});
     CHECK(midi::ClockFrom() == midi::CLK_DIN && sysex::LoadClockFrom() == midi::CLK_DIN, "bad value 3 leaves the source alone");
@@ -1157,7 +1157,7 @@ static int SelfTest() {
     {   // MIDI OUT / THRU (0x65 id 11): THRU sends none of the 101's own notes
       auto noteOns = [&]() { int n = 0; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) n += (g_midiOut[i] & 0xF0) == 0x90 && g_midiOut[i + 2]; return n; };
       g_midiOut.clear(); sx({0x65, 11, 1}); std::vector<uint8_t> f = features();
-      CHECK(f.size() == 18 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
+      CHECK(f.size() == 19 && f[13] == 1 && midi::Thru() && sysex::LoadThru(), "0x65 id 11 = 1 -> THRU on, saved, 0x66 12th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5);
       CHECK(noteOns() == 0, "THRU: a panel key sends no note on MIDI OUT");
       sx({0x65, 11, 0});
@@ -1165,7 +1165,7 @@ static int SelfTest() {
       CHECK(!midi::Thru() && !sysex::LoadThru() && noteOns() == 1, "0x65 id 11 = 0 -> OUT: the key's note is sent again");
       // Note output (0x65 id 12): off sends no notes, SysEx still flows; back to both.
       g_midiOut.clear(); sx({0x65, 12, 3}); f = features();
-      CHECK(f.size() == 18 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
+      CHECK(f.size() == 19 && f[14] == 3 && sysex::LoadNoteOut() == 3, "0x65 id 12 = 3 -> notes off, saved, 0x66 13th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5); sim::g_keys = 0; RunLoops(5); sx({0x20});
       bool cfg = false; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i) cfg |= g_midiOut[i] == 0xF0 && g_midiOut[i + 2] == 0x21;
       CHECK(noteOns() == 0 && cfg, "notes off: a panel key sends no note, SysEx replies still go out");
@@ -1179,7 +1179,7 @@ static int SelfTest() {
       auto outNotes = [&](uint8_t status) { std::vector<int> n; for (size_t i = 0; i + 2 < g_midiOut.size(); ++i)
           if ((g_midiOut[i] & 0xF0) == status && (status == 0x80 || g_midiOut[i + 2])) n.push_back(g_midiOut[i + 1]); return n; };
       g_midiOut.clear(); sx({0x65, 13, 1}); f = features();
-      CHECK(f.size() == 18 && f[15] == 1 && f[16] == 0 && midi::KeysOnly() && sysex::LoadKeysOnly(), "0x65 id 13 = 1 -> key notes on, saved, 0x66 15th field");
+      CHECK(f.size() == 19 && f[15] == 1 && f[16] == 0 && midi::KeysOnly() && sysex::LoadKeysOnly(), "0x65 id 13 = 1 -> key notes on, saved, 0x66 15th field");
       g_midiOut.clear(); for (uint8_t b : {0x90, 60, 100}) g_midiQ.push_back(b); RunLoops(5);
       CHECK(GateOn() && noteOns() == 0, "key notes: a MIDI-in note plays the voice and is not sent back out");
       for (uint8_t b : {0x80, 60, 0}) g_midiQ.push_back(b); RunLoops(5);
@@ -1188,7 +1188,7 @@ static int SelfTest() {
       g_midiOut.clear(); sim::g_keys = 0; RunLoops(5);
       CHECK(outNotes(0x80) == std::vector<int>({58, 62}), "key notes: released, two note-offs");
       g_midiOut.clear(); sx({0x65, 14, 1}); f = features();
-      CHECK(f.size() == 18 && f[16] == 1 && midi::LocalOff() && sysex::LoadLocalOff(), "0x65 id 14 = 1 -> local off, saved, 0x66 16th field");
+      CHECK(f.size() == 19 && f[16] == 1 && midi::LocalOff() && sysex::LoadLocalOff(), "0x65 id 14 = 1 -> local off, saved, 0x66 16th field");
       g_midiOut.clear(); sim::g_keys = 1UL << 5; RunLoops(5);
       CHECK(!GateOn() && outNotes(0x90) == std::vector<int>({58}), "local off: a key sounds nothing here and goes out as its note");
       for (uint8_t b : {0x90, 58, 100}) g_midiQ.push_back(b); RunLoops(5);
@@ -1335,7 +1335,7 @@ static int SelfTest() {
       eeprom_update_byte(EE_CFG_START, 0xFF);
       CHECK(!sysex::LoadArmedStart(), "start mode: an erased EEPROM byte reads as HOST");
       g_midiOut.clear(); sx65(15, 1); std::vector<uint8_t> f = features();
-      CHECK(midiclk::ArmedStart() && sysex::LoadArmedStart() && f.size() == 18 && f[17] == 1,
+      CHECK(midiclk::ArmedStart() && sysex::LoadArmedStart() && f.size() == 19 && f[17] == 1,
             "0x65 id 15 = 1 -> start mode ARMED, saved, 0x66 16th field");
       sx65(15, 2);
       CHECK(midiclk::ArmedStart(), "0x65 id 15 = 2 (bad value) leaves the start mode alone");
@@ -1372,7 +1372,7 @@ static int SelfTest() {
       CHECK(!GateOn() && (sim_portf & 7) == 0, "armed mode: disarmed, Continue leaves it idle");
       MidiByte(0xFC); RunLoops(2);
       g_midiOut.clear(); sx65(15, 0); f = features();
-      CHECK(!midiclk::ArmedStart() && !sysex::LoadArmedStart() && f.size() == 18 && f[17] == 0,
+      CHECK(!midiclk::ArmedStart() && !sysex::LoadArmedStart() && f.size() == 19 && f[17] == 0,
             "0x65 id 15 = 0 -> start mode HOST, saved");
       MidiByte(0xFA); MidiClocks(1);
       CHECK(GateOn() && sim::g_sh[0] == 17, "host mode again: 0xFA starts an idle 101");
@@ -1656,6 +1656,21 @@ static int SelfTest() {
         CHECK(ok, "ratchet 3x under MIDI clock: each hit on its clock tick (+/-1.5 ms)");
         for (uint8_t v : {0xF0, 0x7D, 0x1D, 6, 0xF7}) g_midiQ.push_back(v); RunLoops(3);
       }
+      // Performance mode, add/delete time (row 3: key 14 = 1/8 grid, key 20 =
+      // AND): the 1/16 steps AND a 1/8 grid step once per 1/8, on the ticks.
+      {
+        const int oct = sim::g_octave; sim::g_octave = 1; RunLoops(2);
+        auto tapKey = [&](int k) { sim::g_keys = 1UL << k; RunLoops(3); sim::g_keys = 0; RunLoops(3); };
+        startAt(); r.clear(); std::vector<uint8_t> cc;
+        tapKey(13); tapKey(19);
+        ticksTo(0, 30, r, &cc);
+        MidiByte(0xFC); RunLoops(2);
+        std::string s, sc; for (size_t i = 0; i < r.size() && i < cc.size(); ++i) { s += std::to_string((r[i] + T / 2) / T) + " "; sc += std::to_string(cc[i]) + " "; }
+        printf("  (1/16 steps AND a 1/8 grid: onsets at ticks %s, cv %s)\n", s.c_str(), sc.c_str());
+        CHECK(s == "0 12 24 " && cc.size() == 3 && cc[0] != cc[1] && cc[1] != cc[2], "performance add/delete time: 1/16 steps AND a 1/8 grid = one step (the next) every 12th tick");
+        startAt(); tapKey(31); MidiByte(0xFC); RunLoops(2);   // reset alone clears row 3
+        sim::g_octave = oct; RunLoops(2);
+      }
       // Nudge while playing: sent in the FIRST half of step 1 (21 sounding).
       // The sounding note is untouched, it lands at the half-step, and from
       // step 2 on the rotated pattern plays on the same grid. One gate rise
@@ -1726,6 +1741,7 @@ static int SelfTest() {
     auto first = [&]() { return (GateOn() ? std::to_string(sim::g_sh[0]) : std::string("-")) + " "; };
     const int B_LOAD = 0, B_PLAY = 1, B_DOWN = 2, B_UD = 3, B_UP = 4, B_HOLD = 5, B_KT = 7;
     midiclk::SetSync(false); RunLoops(2);
+    sx({0x65, 16, 0});            // the overlay (performance modes, tested below) off: plain keys keep their old roles
     WaitVirtMs(40);
     push(7, {10, 11, 12, 13});
     push(4, {30, 31});
@@ -2166,6 +2182,85 @@ static int SelfTest() {
       CHECK(readScale(5) == engine::ScalePreset(1, 2), "panel PLAY + KT tap: scale off (mask kept)");
       CHECK(!(sim_portf & 0x40) && (sim_portf & 7) == 0, "scale gestures neither transpose nor start play");
       sx({0x1D, 7}); WaitVirtMs(40);
+    }
+
+    // Performance modes: while the sequencer plays, the keys are the overlay
+    // and the TRANSPOSE switch picks the row (DOWN 1, MIDDLE 2, UP 3).
+    // Pattern 8 = 10 11 12 13; the other sequence (pattern 9) = 20 - 22 -.
+    {
+      sx({0x65, 16, 1});
+      push(8, {20, 0x40, 22, 0x40});
+      sx({0x1D, 7});
+      auto restart = [&]() { tap(B_PLAY); WaitVirtMs(40); play(); first(); WaitVirtMs(40); };
+      auto tapK = [&](int k) { key(k, true); key(k, false); };
+      auto cvs = [&](int n) {          // the S/H CV after each step, gate or not
+        std::string out;
+        for (int i = 0; i < n; ++i) { ClockTick(); out += std::to_string(sim::g_sh[0]) + " "; }
+        return out;
+      };
+      sim::g_octave = 0; RunLoops(2);                    // row 2: pitch
+      play(); std::string pr = first(); WaitVirtMs(40);
+      tapK(1); pr += run(4);                             // reverse
+      printf("  (reverse: %s)\n", pr.c_str()); CHECK(pr == "10 12 11 10 13 ", "row 2 key 2: notes in reverse order, rhythm kept");
+      tapK(1);                                           // again: off
+      CHECK(run(4) == "11 12 13 10 ", "the same key again: notes as written");
+      tapK(4);                                           // prime order (stride 3 of 4 notes)
+      CHECK(run(4) == "13 12 11 10 ", "row 2 key 5: prime order (stride 3 through the notes)");
+      tapK(4);
+      tapK(7);                                           // root C, major by default
+      std::string q = run(4);
+      CHECK(q == "11 12 12 9 ", "row 2 key 8: quantize to C (major), non-destructive");
+      tapK(20);                                          // C minor: A# stays, B -> C, C# -> C
+      q = run(4);
+      CHECK(q == "10 12 12 10 ", "row 2 key 21: C minor (ties snap down)");
+      tapK(31);                                          // reset alone: row 2 off
+      CHECK(run(4) == "11 12 13 10 ", "row 2 reset alone clears the row");
+      tapK(26);                                          // combine pitch, add (pattern 9 intervals 0 - 2 -)
+      q = run(4);
+      CHECK(q == "11 14 13 10 ", "row 2 key 27: add the other sequence's intervals");
+      key(31, true); tapK(26); key(31, false);           // reset + key: that function off
+      CHECK(run(4) == "11 12 13 10 " && engine::PerfOn(), "row 2 reset + key turns that function off");
+
+      sim::g_octave = 1; RunLoops(2);                    // row 3: time
+      tapK(4);                                           // shift 1/16 right
+      CHECK(run(4) == "10 11 12 13 ", "row 3 key 5: shift time one 16th later");
+      tapK(4);
+      restart(); tapK(26);                               // combine rhythm: AND
+      CHECK(run(4) == "- 12 - 10 ", "row 3 key 27: AND with the other sequence's rhythm");
+      tapK(26); restart(); tapK(29);                     // XOR
+      CHECK(run(4) == "11 - 13 - ", "row 3 key 30: XOR with the other sequence's rhythm");
+      tapK(29); restart(); tapK(9);                      // skip even clocks
+      std::string sk = run(6);
+      printf("  (skip even: %s)\n", sk.c_str());
+      CHECK(sk == "11 - 12 - 13 - ", "row 3 key 10: every even clock is skipped, the pattern waits");
+      tapK(9); restart();
+      std::string plain = cvs(3);
+      key(22, true); std::string roll = cvs(3); key(22, false);   // ratchet 1/16, held
+      printf("  (ratchet held: %s, plain %s)\n", roll.c_str(), plain.c_str());
+      CHECK(roll == "10 10 10 " || roll == "13 13 13 ", "row 3 key 23 held: the note repeats, the pattern runs on underneath");
+      CHECK(cvs(1) == "13 ", "released: back on the pattern where it would be");
+
+      sim::g_octave = -1; RunLoops(2);                   // row 1: global
+      tapK(9);                                           // transpose D = +2
+      std::string tr = run(2); printf("  (transpose +2: %s)\n", tr.c_str());
+      CHECK(tr == "12 13 ", "row 1 key 10: transpose +2");
+      tapK(28);                                          // pattern 5 (30 31) now
+      std::string ps = run(2);
+      CHECK(ps == "32 33 " || ps == "33 32 ", "row 1 key 29: pattern 5 now, transposed");
+      tapK(7); tapK(31);                                 // C: no transpose; key 32: pattern 8
+      std::string back = run(2);
+      CHECK(back == "10 11 " || back == "12 13 " || back == "11 12 " || back == "13 10 ", "row 1: transpose off, pattern 8 back");
+      tapK(13);                                          // octave variation 2: +1 octave every 4th step
+      std::string ov = run(4);
+      printf("  (octave variation 2: %s)\n", ov.c_str());
+      CHECK(ov.find("25 ") != std::string::npos, "row 1 key 14: octave variation lifts every 4th step");
+      tapK(13);
+      tap(B_PLAY); WaitVirtMs(40);
+      key(0, true);
+      CHECK(GateOn() && sim::g_sh[0] == 17 - 12, "stopped: the keys play notes again");
+      key(0, false);
+      sim::g_octave = 0; RunLoops(2);
+      sx({0x65, 16, 0});
     }
 
     // Tune mode: KEY TRANSPOSE + LOAD from keyboard mode holds A (440 Hz at 8').

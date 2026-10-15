@@ -52,6 +52,10 @@ inline uint8_t Rnd8() { static uint16_t st = 0xACE1; st ^= st << 7; st ^= st >> 
 // (an EEPROM byte write stalls ~3.4 ms; main.cpp defers it).
 inline uint8_t& DirSetting() { static uint8_t d = DIR_FWD; return d; }
 inline uint8_t& ArpRange() { static uint8_t r = 1; return r; }   // arp octave range 1..3
+// Performance modes (NoteEngine::perfKeys): while the sequencer plays, the
+// keys are the overlay strip and the TRANSPOSE switch picks its row. Saved;
+// on unless turned off (0x65 id 16), erased EEPROM reads as on.
+inline bool& PerfOn() { static bool on = true; return on; }
 inline bool& FeatDirty() { static bool d = false; return d; }
 inline void LoadFeatures() {
   if (eeprom_read_byte((uint8_t*)EE_A_FEAT_MAGIC) != EE_FEAT_MAGIC_VAL) return;
@@ -61,12 +65,14 @@ inline void LoadFeatures() {
   controls::PedalRoute() = pm <= controls::PEDAL_TRANSPOSE ? pm : controls::PEDAL_HOLD;
   uint8_t ar = eeprom_read_byte((uint8_t*)EE_A_FEAT_ARPRANGE);   // 0xFF before it existed
   ArpRange() = (ar >= 1 && ar <= 3) ? ar : 1;
+  PerfOn() = eeprom_read_byte((uint8_t*)EE_A_FEAT_PERF) != 0;   // 0xFF before it existed = on
 }
 inline void SaveFeatures() {
   eeprom_update_byte((uint8_t*)EE_A_FEAT_MAGIC, EE_FEAT_MAGIC_VAL);
   eeprom_update_byte((uint8_t*)EE_A_FEAT_DIR, DirSetting());
   eeprom_update_byte((uint8_t*)EE_A_FEAT_PEDAL, controls::PedalRoute());
   eeprom_update_byte((uint8_t*)EE_A_FEAT_ARPRANGE, ArpRange());
+  eeprom_update_byte((uint8_t*)EE_A_FEAT_PERF, PerfOn() ? 1 : 0);
   FeatDirty() = false;
 }
 // Scales, the SuperOS-303's 35 presets in the same order (bit 0 = C). A
@@ -84,6 +90,11 @@ inline uint16_t ScalePreset(uint8_t i, uint8_t root) {
 }
 // KEY TRANSPOSE reference: key 7 (C4, MIDI 60) plays the sequence as written.
 static const uint8_t TRANSPOSE_REF_KEY = 7;
+// Performance octave variations 1..6 (7 = a random octave per step): octaves
+// added to a note by its step index mod 8.
+static const int8_t OCT_VAR[6][8] = {
+  {0, 1, 0, 1, 0, 1, 0, 1}, {0, 0, 0, 1, 0, 0, 0, 1}, {0, -1, 0, -1, 0, -1, 0, -1},
+  {0, 1, 0, -1, 0, 1, 0, -1}, {0, 0, 1, 1, 0, 0, 1, 1}, {0, 0, 0, 0, 1, 1, 1, 1} };
 // Legato (2): this step's note starts WITHOUT the gate dropping after the
 // previous step: no envelope retrigger, and (portamento AUTO) a glide into it.
 enum StepType : uint8_t { STEP_NOTE = 0, STEP_REST = 1, STEP_LEGATO = 2 };
@@ -255,12 +266,16 @@ class Sequencer {
   uint8_t stepAt(uint8_t i) const {
     uint8_t l = effLen();
     if (!l) return 0;
+    uint8_t s;
     switch (DirSetting()) {
-      case DIR_BWD:      return (uint8_t)(l - 1 - i % l);
-      case DIR_PINGPONG: return i < l ? i : (uint8_t)(2 * l - 1 - i);
-      case DIR_RANDOM:   return rndNext_ < l ? rndNext_ : 0;
-      default:           return (uint8_t)(i % l);
+      case DIR_BWD:      s = (uint8_t)(l - 1 - i % l); break;
+      case DIR_PINGPONG: s = i < l ? i : (uint8_t)(2 * l - 1 - i); break;
+      case DIR_RANDOM:   s = rndNext_ < l ? rndNext_ : 0; break;
+      default:           s = (uint8_t)(i % l); break;
     }
+    if (!perf.shift) return s;
+    int16_t j = (int16_t)(((int16_t)s - perf.shift) % l);   // shift time: later (+) plays an earlier step
+    return (uint8_t)(j < 0 ? j + l : j);
   }
   // The step the next advance() will play, without moving.
   uint8_t peekNext() const {
@@ -269,7 +284,100 @@ class Sequencer {
     if (started_ && queued_ != 0xFF && cycle_ == 0) return 0;   // switching: unknown pattern, treat as a fresh attack
     return stepAt((uint8_t)(cycle_ % cl));
   }
+  // --- performance transforms, applied at playback (the pattern is never written) ---
+  // The other sequence for the Combine functions: the next pattern number.
+  uint8_t other() const { return (uint8_t)((cur_ + 1) % NUM_PATTERNS); }
+  uint8_t firstNoteCv(uint8_t p) const {
+    for (uint8_t k = 0; k < len_[p]; ++k) if (StepKind(step_[p][k]) != STEP_REST) return StepCv(step_[p][k]);
+    return 0;
+  }
+  // Reorder notes: the pitch of note number r (rests keep their places) comes
+  // from note number t.
+  uint8_t reorderSrc(uint8_t i) const {
+    const uint8_t l = effLen(); const uint8_t* st = step_[cur_];
+    uint8_t n = 0, r = 0;
+    for (uint8_t k = 0; k < l; ++k) if (StepKind(st[k]) != STEP_REST) { if (k < i) ++r; ++n; }
+    if (n < 2) return i;
+    uint8_t t;
+    switch (perf.reorder) {
+      case 1:  t = (uint8_t)(n - 1 - r); break;                                         // reverse
+      case 2:  { uint8_t h = (uint8_t)((n + 1) / 2); t = r < h ? 2 * r : 2 * (r - h) + 1; break; }   // cycle even: 0 2 4 .. 1 3 5
+      case 3:  { uint8_t h = (uint8_t)(n / 2); t = r < h ? 2 * r + 1 : 2 * (r - h); break; }         // cycle odd: 1 3 5 .. 0 2 4
+      case 4:  {                                                                        // prime order: a prime stride
+        static const uint8_t PR[] = {3, 5, 7, 11, 13};
+        uint8_t p = 1;
+        for (uint8_t q : PR) if (n % q) { p = q; break; }
+        t = (uint8_t)((uint16_t)r * p % n); break;
+      }
+      case 5:  t = (uint8_t)((r + 1) % n); break;                                       // start one forward
+      default: t = (uint8_t)((r + n - 1) % n); break;                                   // start one back
+    }
+    for (uint8_t k = 0; k < l; ++k) if (StepKind(st[k]) != STEP_REST && t-- == 0) return k;
+    return i;
+  }
+  // Combine pitch with the other sequence: intervals above each pattern's
+  // first note, combined, folded by octaves into the DAC range.
+  uint8_t combinePitch(uint8_t cv, uint8_t i) const {
+    const uint8_t o = other(), ol = len_[o];
+    if (!ol) return cv;
+    const uint8_t os = step_[o][i % ol];
+    if (StepKind(os) == STEP_REST) return cv;
+    const int16_t base = firstNoteCv(cur_), a = (int16_t)cv - base, b = (int16_t)StepCv(os) - firstNoteCv(o);
+    int16_t v;
+    switch (perf.pcomb) {
+      case 1:  v = a + b; break;
+      case 2:  v = a - b; break;
+      case 3:  v = a * b; break;
+      case 4:  v = b ? a / b : a; break;
+      default: v = a > b ? a - b : b - a; break;
+    }
+    v += base;
+    if (v < 0) v = (int16_t)((v % 12 + 12) % 12);
+    else if (v > CV_MAX) v = (int16_t)(CV_MAX - 11 + (v - (CV_MAX - 11)) % 12);
+    return (uint8_t)v;
+  }
+  // Step i as it plays: rhythm combined with the other sequence, then the
+  // pitch reordered, combined and octave-varied.
+  uint8_t playByte(uint8_t i) const {
+    const uint8_t s = step_[cur_][i];
+    const bool note = StepKind(s) != STEP_REST;
+    if (perf.tcomb && len_[other()]) {
+      const uint8_t os = step_[other()][i % len_[other()]];
+      const bool on = StepKind(os) != STEP_REST;
+      bool r;
+      switch (perf.tcomb) {
+        case 1:  r = note && on; break;
+        case 2:  r = note || on; break;
+        case 3:  r = !(note || on); break;
+        case 4:  r = note != on; break;
+        default: r = !(note && on); break;
+      }
+      if (!r) return StepByte(StepCv(s), STEP_REST);
+      if (!note) return StepByte(on ? StepCv(os) : curCv_, STEP_NOTE);   // a step the logic filled
+    }
+    if (!note) return s;
+    uint8_t cv = StepCv(s);
+    if (perf.reorder) cv = StepCv(step_[cur_][reorderSrc(i)]);
+    if (perf.pcomb) cv = combinePitch(cv, i);
+    if (perf.octVar) {
+      int8_t o = perf.octVar <= 6 ? OCT_VAR[perf.octVar - 1][i & 7] : (int8_t)(Rnd8() % 3) - 1;
+      int16_t v = (int16_t)cv + 12 * o;
+      if (v >= 0 && v <= CV_MAX) cv = (uint8_t)v;
+    }
+    return StepByte(cv, StepKind(s));
+  }
  public:
+  // Performance state (NoteEngine::perfKeys sets it; 0 / -1 = off).
+  struct Perf {
+    uint8_t reorder = 0;  // 1 reverse, 2 cycle even, 3 cycle odd, 4 prime, 5 one forward, 6 one back
+    int8_t  root = -1;    // quantizer root 0..11 (C = 0)
+    int8_t  type = -1;    // quantizer scale: SCALE_MASKS 0..6 (major minor dorian mixolydian lydian phrygian locrian)
+    uint8_t pcomb = 0;    // pitch with the other sequence: 1 add 2 subtract 3 multiply 4 divide 5 difference
+    uint8_t octVar = 0;   // octave variation 1..7
+    int8_t  shift = 0;    // shift time, steps later (+) / earlier (-)
+    uint8_t tcomb = 0;    // rhythm with the other sequence: 1 AND 2 OR 3 NOR 4 XOR 5 NAND
+  } perf;
+  void mute() { curGate_ = false; }       // a skipped clock slot sounds nothing
   uint8_t direction() const { return DirSetting(); }
   void setDirection(uint8_t d) {
     if (d >= DIR_COUNT) return;
@@ -355,7 +463,7 @@ class Sequencer {
     lane_[0].pat = lane_[1].pat = 0xFF; lane_[0].dirty = lane_[1].dirty = false; laneChanged_ = 0;
     stepChanged_ = false; selChanged_ = false; edited_ = 0;
     started_ = false; halfSeen_ = false; loopLen_ = 0; queued_ = 0xFF; cycle_ = 0; steps_ = 0; rotPending_ = 0;
-    chainN_ = 0; chainPos_ = 0; wcur_ = 0;
+    chainN_ = 0; chainPos_ = 0; wcur_ = 0; perf = Perf();
   }
   Sequencer() { memset(len_, 0, sizeof(len_)); for (uint8_t i = 0; i < NUM_PATTERNS; ++i) scale_[i] = 0x0FFF; }
   uint8_t current() const { return cur_; }
@@ -638,7 +746,7 @@ class Sequencer {
     cycle_ = (uint8_t)((cycle_ + 1) % cl); ++steps_;
     if (DirSetting() == DIR_RANDOM) rndNext_ = (uint8_t)(Rnd8() % len);
     stepChanged_ = true;
-    uint8_t s = step_[cur_][pos_];
+    uint8_t s = playByte(pos_);
     switch (StepKind(s)) {
       case STEP_REST:   curGate_ = false; return false;
       case STEP_LEGATO: curCv_ = StepCv(s); curGate_ = true; return false;   // gate already on: no retrigger, glide
@@ -689,10 +797,14 @@ class Sequencer {
     halfSeen_ = true;
     uint8_t len = effLen();
     if (!len || !curGate_) return;
-    uint8_t next = step_[cur_][peekNext()];
+    uint8_t next = playByte(peekNext());
     if (StepKind(next) != STEP_LEGATO) curGate_ = false;
   }
-  uint8_t cv()   const { return quantize(curCv_); }
+  // A performance root or scale type overrides the pattern's own scale.
+  uint8_t cv()   const {
+    if (perf.root < 0 && perf.type < 0) return quantize(curCv_);
+    return Snap(curCv_, ScalePreset(perf.type < 0 ? 0 : (uint8_t)perf.type, perf.root < 0 ? 0 : (uint8_t)perf.root));
+  }
   // --- scale ---
   uint16_t scale(uint8_t p) const { return scale_[p < NUM_PATTERNS ? p : 0]; }
   bool scaleOn() const { return (scale_[cur_] & 0x8000) && (scale_[cur_] & 0xFFF); }
@@ -707,7 +819,9 @@ class Sequencer {
   uint8_t quantize(uint8_t cv, uint8_t p = 0xFF) const {
     uint16_t sc = scale_[p < NUM_PATTERNS ? p : cur_];
     if (!(sc & 0x8000)) return cv;
-    uint16_t m = sc & 0xFFF;
+    return Snap(cv, sc & 0xFFF);
+  }
+  static uint8_t Snap(uint8_t cv, uint16_t m) {
     if (!m || ((m >> (cv % 12)) & 1)) return cv;
     for (int8_t d = 1; d <= 12; ++d) {
       int16_t lo = (int16_t)cv - d, hi = (int16_t)cv + d;
@@ -1049,6 +1163,118 @@ class NoteEngine {
       else { rtRec_ = false; seq_.clear(); mode_ = MODE_SEQ_LOAD; }
     }
   }
+  // --- performance modes -------------------------------------------------
+  // While the sequencer plays (not recording, no function button held, not in
+  // transpose mode) the keys are the overlay strip above them and the
+  // TRANSPOSE switch picks the row: L = 1 Global, M = 2 Pitch, H = 3 Time.
+  //   1  keys 1-12 transpose (C = none) | 13-19 octave variation 1-7 |
+  //      20-24 LFO/S&H sync 1/16 1/8 1/4 1/2 1/1 | 25-32 patterns 1-8 (now)
+  //   2  1-7 reorder notes (as written, reverse, cycle even, cycle odd,
+  //      prime, one forward, one back) | 8-19 quantizer root C..B |
+  //      20-26 scale major minor dorian mixolydian lydian phrygian locrian |
+  //      27-31 combine pitch with the next pattern: add sub mul div diff | 32 reset
+  //   3  1-7 shift time 1/4 R, 1/4 L, 1/8 R, 1/8 L, 1/16 R, 1/16 L, 3/16 R |
+  //      8-12 skip every 4th, every 8th, even, odd, every 5th clock |
+  //      13-17 add/delete grid 1/4 1/8 1/16 1/4T 1/16T, 18-21 its logic NOR OR
+  //      AND XOR | 22-26 ratchet while held: 1/32 1/16 1/16T 3x 7x |
+  //      27-31 combine rhythm with the next pattern: AND OR NOR XOR NAND | 32 reset
+  // A latched choice pressed again turns off; reset + a key turns that
+  // function off; reset alone clears the row. Time values count one step as
+  // a 16th; the add/delete grid is the MIDI clock when it drives the 101,
+  // else 24 ppqn derived from the measured step period.
+  uint32_t perfKeys_ = 0;          // keys consumed by the overlay, until released
+  bool     pResetUsed_ = false;    // reset key combined with another key
+  uint8_t  pSkip_ = 0, pGrid_ = 0, pLogic_ = 0, pRoll_ = 0, pLfo_ = 0;
+  uint8_t  pLfoPrevDiv_ = 0; bool pLfoPrevSync_ = true;
+  uint16_t pClk_ = 0;              // step clock edges since play start (skip)
+  bool     pA_ = false, pC_ = false;   // add/delete: step clock level, combined level
+  uint32_t pAnchorUs_ = 0;         // derived grid origin (play start)
+  bool     rollOn_ = false; uint8_t rollCv_ = 0; uint32_t rollNextUs_ = 0, rollHitUs_ = 0;
+
+  static uint8_t perfRow(const controls::Panel& p) { return p.octaveOffset == 0x00 ? 1 : (p.octaveOffset == 0x0C ? 2 : 3); }
+  void setPerfLfo(uint8_t v) {
+    static const uint8_t DIV[5] = {6, 3, 0, 10, 11};   // midiclock LFO divisions 1/16 1/8 1/4 1/2 1/1
+    if (v && !pLfo_) { pLfoPrevDiv_ = midiclk::LfoDivIdx(); pLfoPrevSync_ = midiclk::LfoSyncOn(); }
+    if (v) { midiclk::SetLfoDiv(DIV[v - 1], false); midiclk::SetLfoSync(true, false); }
+    else if (pLfo_) { midiclk::SetLfoDiv(pLfoPrevDiv_, false); midiclk::SetLfoSync(pLfoPrevSync_, false); }
+    pLfo_ = v;
+  }
+  void perfResetRow(uint8_t row) {
+    Sequencer::Perf& f = seq_.perf;
+    if (row == 2) { f.reorder = 0; f.root = -1; f.type = -1; f.pcomb = 0; }
+    if (row == 3) { f.shift = 0; pSkip_ = 0; pGrid_ = 0; pLogic_ = 0; f.tcomb = 0; }
+  }
+  void perfKeys(uint32_t mask, const controls::Panel& p) {
+    static const int8_t SHIFT[7] = {4, -4, 2, -2, 1, -1, 3};
+    const uint8_t row = perfRow(p);
+    Sequencer::Perf& f = seq_.perf;
+    const uint32_t fresh = mask & ~prevMask_ & ~perfKeys_;
+    perfKeys_ |= fresh;
+    const bool rst = row > 1 && (mask & (1UL << 31));
+    if (fresh & (1UL << 31)) pResetUsed_ = false;
+    // A latched option: the same again (or reset + it) = off.
+    auto pick = [rst](uint8_t cur, uint8_t v) -> uint8_t { return (rst || cur == v) ? 0 : v; };
+    auto pickS = [rst](int8_t cur, int8_t v) -> int8_t { return (rst || cur == v) ? -1 : v; };
+    for (uint8_t k = 0; k < 32; ++k) {
+      if (!(fresh & (1UL << k)) || (row > 1 && k == 31)) continue;
+      if (rst) pResetUsed_ = true;
+      if (row == 1) {
+        if (k < 12)       transpose_ = (int8_t)(k - TRANSPOSE_REF_KEY);
+        else if (k < 19)  f.octVar = pick(f.octVar, (uint8_t)(k - 11));
+        else if (k < 24)  setPerfLfo(pick(pLfo_, (uint8_t)(k - 18)));
+        else              seq_.switchNow((uint8_t)(k - 24));
+      } else if (row == 2) {
+        if (k < 7)        f.reorder = pick(f.reorder, k);
+        else if (k < 19)  f.root = pickS(f.root, (int8_t)((k + 5) % 12));    // key 1 = F
+        else if (k < 26)  f.type = pickS(f.type, (int8_t)(k - 19));
+        else              f.pcomb = pick(f.pcomb, (uint8_t)(k - 25));
+      } else {
+        if (k < 7)        f.shift = (rst || f.shift == SHIFT[k]) ? 0 : SHIFT[k];
+        else if (k < 12)  pSkip_ = pick(pSkip_, (uint8_t)(k - 6));
+        else if (k < 17)  pGrid_ = pick(pGrid_, (uint8_t)(k - 11));
+        else if (k < 21)  pLogic_ = pick(pLogic_, (uint8_t)(k - 16));
+        else if (k < 26)  {}                                                 // ratchet: held, below
+        else              f.tcomb = pick(f.tcomb, (uint8_t)(k - 25));
+      }
+    }
+    const uint32_t rk = row == 3 ? (mask & (0x1FUL << 21)) : 0;
+    pRoll_ = rk ? (uint8_t)(lowestKey(rk) - 20) : 0;
+  }
+  // Skip and add/delete rewrite the step clock before the sequencer sees it.
+  void perfClock(bool& edge, bool& half, bool clocked) {
+    if (pGrid_ || pLogic_) {
+      // The step clock as a square (high from its edge to its half-step)
+      // through a logic gate with a fixed grid clock; the result's rising
+      // edge steps, its falling edge is the half-step.
+      static const uint8_t GRID[5] = {24, 12, 6, 16, 4};   // 1/4 1/8 1/16 1/4T 1/16T at 24 ppqn
+      if (edge) pA_ = true;
+      if (half) pA_ = false;
+      const uint8_t g = GRID[(pGrid_ ? pGrid_ : 1) - 1];
+      bool b = false;
+      if (clocked) { uint32_t t = midiclk::AbsTicks(); b = t && ((t - 1) % g) < g / 2; }
+      else if (periodUs_ >= 6) b = ((micros() - pAnchorUs_) / (periodUs_ / 6)) % g < g / 2u;
+      bool c;
+      switch (pLogic_ ? pLogic_ : 2) {
+        case 1:  c = !(pA_ || b); break;
+        case 2:  c = pA_ || b; break;
+        case 3:  c = pA_ && b; break;
+        default: c = pA_ != b; break;
+      }
+      edge = c && !pC_; half = !c && pC_; pC_ = c;
+    }
+    if (edge && pSkip_) {
+      const uint16_t n = pClk_++;
+      bool skip;
+      switch (pSkip_) {
+        case 1:  skip = n % 4 == 3; break;
+        case 2:  skip = n % 8 == 7; break;
+        case 3:  skip = n % 2 == 1; break;
+        case 4:  skip = n % 2 == 0; break;
+        default: skip = n % 5 == 4; break;
+      }
+      if (skip) { edge = false; seq_.mute(); subLeft_ = 0; }
+    }
+  }
   int8_t nudge_ = 0;
   uint8_t scaleRoot_ = 0, scalePreset_ = 0;
   bool scaleKeyUsed_ = false;
@@ -1068,6 +1294,8 @@ class NoteEngine {
     tune_ = false; rtRec_ = false; rtKey_ = -1; nudge_ = 0; songN_ = 0;
     playHeldUsed_ = false; playStart_ = false; playNow_ = false; prevExtCv_ = -1;
     lastEdgeUs_ = 0; periodUs_ = 0; stepStartUs_ = 0; subTotal_ = 1; subLeft_ = 0; subOnTicks_ = false;
+    setPerfLfo(0); perfKeys_ = 0; pResetUsed_ = false; pSkip_ = pGrid_ = pLogic_ = pRoll_ = 0;
+    pClk_ = 0; pA_ = pC_ = false; rollOn_ = false;
   }
   // MIDI Start: align the sequence and arpeggiator to the incoming downbeat.
   void restart() { seq_.rewind(); arp_.reset(); playStart_ = true; }
@@ -1159,6 +1387,15 @@ class NoteEngine {
       mask &= ~0xFFFFUL;                                // pattern keys 1-16 are not notes
       if (b.down(controls::BTN_KEYTRANS)) mask = 0;     // scale-root keys are not notes either
     }
+    // Performance modes: the keys are the overlay while the sequencer plays.
+    {
+      const bool on = PerfOn() && mode_ == MODE_SEQ_PLAY && !rtRec_ && !b.now && !ktLatched_;
+      if (on && perfRow(p) > 1 && (perfKeys_ & (1UL << 31)) && !(mask & (1UL << 31)) && !pResetUsed_)
+        perfResetRow(perfRow(p));                       // reset tapped alone
+      if (on) perfKeys(mask, p); else pRoll_ = 0;
+      perfKeys_ &= mask;
+      mask &= ~perfKeys_;
+    }
     // KEY TRANSPOSE held (any mode but LOAD / real-time record): a fresh key
     // sets the transpose instead of playing. In transpose mode (double tap),
     // plain keys do the same in sequencer play and in a HOLD-latched arp.
@@ -1230,6 +1467,7 @@ class NoteEngine {
         if (playStart_) {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
           subTotal_ = 1; subLeft_ = 0; lastEdgeUs_ = 0;   // no stale ratchet state into a new run
+          pClk_ = 0; pA_ = pC_ = false; pAnchorUs_ = micros();
           // Panel/editor PLAY (playNow_), internal clock only: step 1 sounds
           // NOW, the LFO hard-reset gives step 2 one period later. With sync
           // ON the press only ARMS: step 1 lands on the next division edge
@@ -1258,11 +1496,15 @@ class NoteEngine {
         uint8_t tickIdx = 0;
         const bool tickNow = midiclk::ConsumeTick(tickIdx);    // consumed every pass: never stale
         const bool clocked = midiclk::Driving(millis());
-        if (clockEdge) {
+        if (clockEdge) {   // the step period, from the step clock itself
           const uint32_t now = micros();
           if (clocked) periodUs_ = midiclk::DivPeriodUs();
           else if (lastEdgeUs_) { uint32_t d = now - lastEdgeUs_; if (d > 0 && d < 4000000UL) periodUs_ = d; }
           lastEdgeUs_ = now;
+        }
+        perfClock(clockEdge, halfEdge, clocked);
+        if (clockEdge) {
+          const uint32_t now = micros();
           bool fresh = seq_.advance();
           if (fresh) o.portaOff = true;
           began = true;
@@ -1317,6 +1559,27 @@ class NoteEngine {
               : (int32_t)(now - at) >= 0;
           if (hit) { --subLeft_; o.portaOff = true; }                        // sub-hit: fresh attack
           else if ((int32_t)(now - (at - gap)) >= 0) o.gate = false;          // gate gap before it
+        }
+        // Performance ratchet (held): the note sounding at the press repeats
+        // at the chosen rate while the pattern runs on underneath.
+        if (pRoll_ && periodUs_) {
+          static const uint8_t RN[5] = {1, 1, 2, 1, 1}, RD[5] = {2, 1, 3, 3, 7};   // of a step: 1/32 1/16 1/16T 3x 7x
+          const uint32_t iv = periodUs_ * RN[pRoll_ - 1] / RD[pRoll_ - 1];
+          const uint32_t now = micros();
+          if (!rollOn_) { rollOn_ = true; rollCv_ = o.cv; rollNextUs_ = now; }
+          if ((int32_t)(now - rollNextUs_) >= 0) {
+            rollHitUs_ = now; rollNextUs_ += iv;
+            if ((int32_t)(now - rollNextUs_) >= 0) rollNextUs_ = now + iv;   // fell behind: no burst
+            o.portaOff = true;
+          }
+          o.cv = rollCv_;
+          o.gate = (uint32_t)(now - rollHitUs_) < iv / 2;
+        } else rollOn_ = false;
+        // LFO/S&H sync without the MIDI clock: CLOCK RESET every n steps
+        // (with it, midiclock's own LFO division does this on the ticks).
+        if (began && pLfo_ && !clocked) {
+          static const uint8_t N[5] = {1, 2, 4, 8, 16};
+          if ((uint16_t)(seq_.stepsPlayed() - 1) % N[pLfo_ - 1] == 0) o.clockReset = true;
         }
         // Accented step: fires at the step's start (legato ones too, 303
         // style) and on each ratchet sub-hit.

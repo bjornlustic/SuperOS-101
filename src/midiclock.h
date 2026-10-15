@@ -153,12 +153,13 @@ inline void SetDiv(uint8_t i) {
 }
 inline uint8_t SyncDelayMs() { return S().delayMs; }
 inline void SetSyncDelay(uint8_t ms) { if (ms <= SYNC_DELAY_MAX && ms != S().delayMs) { S().delayMs = ms; S().dqN = 0; Save(); } }
-inline void SetLfoSync(bool on) { S().lfoSync = on; Save(); }
-inline void SetLfoDiv(uint8_t i) {
+// save false: a live change (performance mode) that is not written to EEPROM.
+inline void SetLfoSync(bool on, bool save = true) { S().lfoSync = on; if (save) Save(); }
+inline void SetLfoDiv(uint8_t i, bool save = true) {
   if (i < LFO_DIV_COUNT || i == LFO_DIV_AUTO) {
     S().lfoDiv = i; S().lfoTick = (uint8_t)(S().abs % LfoTicks(LfoDivEff()));
     if (i == LFO_DIV_AUTO) { S().autoVote = 0; S().lfoPerMs = 0; }
-    Save();
+    if (save) Save();
   }
 }
 
@@ -284,6 +285,8 @@ inline uint16_t DivisionsSinceStart() {
   return a ? (uint16_t)((a - 1) / n + 1) : 0;
 }
 inline uint8_t DivTicks() { return DIV_TICKS[S().divIdx]; }
+// 24 ppqn ticks since Start (the performance modes' fixed grid).
+inline uint32_t AbsTicks() { return S().abs; }
 // One division in microseconds at the smoothed tempo (ratchet spacing).
 inline uint32_t DivPeriodUs() { return (uint32_t)DIV_TICKS[S().divIdx] * uclk::S().perUs; }
 inline bool ConsumeTick(uint8_t& idx) { if (!S().tickEv) return false; S().tickEv = false; idx = S().lastTick; return true; }
