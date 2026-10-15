@@ -18,13 +18,13 @@ PAGE = (pathlib.Path(__file__).parent / "index.html").resolve().as_uri()
 FAKE = r"""
 (() => {
   const st = {fw: 0, dir: 0, pedal: 0, tr: 0, tmode: 0, loop: 0, rt: 0, tune: 0, queued: 0x7F,
-              delay: 0, arp: 1, clk: 0, thru: 0, nout: 0, playing: false, keyboard: true, featLen: 13};
+              delay: 0, arp: 1, clk: 0, thru: 0, nout: 0, keys: 0, local: 0, armed: 0, perf: 1, playing: false, keyboard: true, featLen: 17};
   const sent = []; window.__sent = sent; window.__dev = st;
   const input = {id: 'in1', name: 'SuperOS-101', state: 'connected', onmidimessage: null};
   const reply = body => setTimeout(() => input.onmidimessage &&
     input.onmidimessage({data: new Uint8Array([0xF0, 0x7D, ...body, 0xF7])}), 5);
   window.__reply = reply;
-  const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp, st.clk, st.thru, st.nout].slice(0, 1 + st.featLen);
+  const feats = () => [0x66, st.dir, st.pedal, st.tr + 64, st.tmode, st.loop, st.rt, st.tune, st.queued, st.delay, st.arp, st.clk, st.thru, st.nout, st.keys, st.local, st.armed, st.perf].slice(0, 1 + st.featLen);
   const NP = 16;   // patterns on the unit (firmware e770f60)
   st.pats = Array.from({length: NP}, (_, p) => p === 0 ? Array.from({length: 16}, (_, i) => [12, 13, 14, 15][i % 4] | (i === 5 ? 1 << 6 : 0) | (i === 9 ? 2 << 6 : 0)) : []);
   st.rats = Array.from({length: NP}, () => []);   // ratchet per step, 0..2
@@ -69,6 +69,7 @@ FAKE = r"""
       if (id === 8 && v >= 1 && v <= 3) st.arp = v;
       if (id === 11 && v <= 1) st.thru = v;
       if (id === 12 && v <= 3) st.nout = v;
+      if (id === 16 && v <= 1) st.perf = v;
       if (id === 9) st.resyncs = (st.resyncs || 0) + 1;
       reply(feats());
     }
@@ -177,6 +178,10 @@ with sync_playwright() as p:
     act(lambda: (page.fill("#inTr", "99"), page.press("#inTr", "Tab")), [2, 100], "transpose clamps to +36")
     act(lambda: page.click("#btnTrReset"), [2, 64], "transpose reset")
     check(page.input_value("#inTr") == "0", "transpose renders 0")
+    check(vis("[data-f='16']") and page.text_content("#btnPerfModes") == "On", "performance modes shown, On (17-field 0x66)")
+    act(lambda: page.click("#btnPerfModes"), [16, 0], "performance modes off")
+    check(page.text_content("#btnPerfModes") == "Off" and "overlay off" in page.inner_text("#perfStatus"), "performance modes render Off from the reply")
+    act(lambda: page.click("#btnPerfModes"), [16, 1], "performance modes on")
     act(lambda: page.click("#btnTrMode"), [3, 1], "transpose mode on")
     check(page.text_content("#btnTrMode") == "On", "transpose mode renders On")
     act(lambda: page.select_option("#selLoop", "8"), [4, 8], "loop 8")
@@ -407,6 +412,7 @@ with sync_playwright() as p:
     page.evaluate("window.__reply([0x66, 0, 0, 64, 0, 0, 0, 0, 127, 0])")
     page.wait_for_timeout(100)
     check(not vis("[data-f='9']") and vis("[data-f='8']") and vis("[data-f='7']"), "9-field reply: arp range hidden, sync delay shown")
+    check(not vis("[data-f='16']"), "9-field reply: performance modes hidden (firmware without them)")
 
     # Older firmware: a short 0x66 hides the controls whose bytes are missing.
     page.evaluate("window.__reply([0x66, 1, 0, 64])")

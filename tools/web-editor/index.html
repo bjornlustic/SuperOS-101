@@ -479,6 +479,11 @@
           <label>Transpose mode</label>
           <button class="btn" id="btnTrMode" title="ON: while the sequencer plays (or a HOLD-latched arp runs) plain key presses transpose. Panel: double-tap KEY TRANSPOSE.">Off</button>
         </div>
+        <div class="config-field" data-f="16">
+          <label>Performance modes (key overlay)</label>
+          <button class="btn" id="btnPerfModes" title="ON: while the sequencer plays, the keys are the overlay strip and the TRANSPOSE switch picks its row (L Global, M Pitch, H Time). OFF: plain keys 1-16 switch patterns while playing, as before.">Off</button>
+          <div class="config-note">While playing, TRANSPOSE <b>L</b> = Global (transpose, octave variations, LFO/S&amp;H sync, patterns 1&#8211;8), <b>M</b> = Pitch (reorder, root, scale, combine), <b>H</b> = Time (shift, skip, add/delete, ratchet, combine). The top key resets rows M and H. See the manual.</div>
+        </div>
         <div class="config-field" data-f="4">
           <label>Loop length</label>
           <select id="selLoop" title="Play only the first n steps; the pattern itself is untouched. Panel: while playing, HOLD + key n."></select>
@@ -1123,7 +1128,7 @@ buildDivGrid($('lfoDivGrid'), 'lfoDiv', false, LFO_DIV_IDX);
 // ---------------------------------------------------------------------------
 // Performance features (SuperOS only): 0x65 <id> <value> sets, 0x67 reads,
 // both answered by 0x66 <dir><pedal><transpose+64><tmode><loopLen><rtRec>
-// <tune><queued|0x7F><syncDelayMs><arpRange>. Older firmware sends fewer
+// <tune><queued|0x7F><syncDelayMs><arpRange> ... <armedStart><perfModes>. Older firmware sends fewer
 // bytes; controls whose byte is missing stay hidden. The UI only ever shows
 // the 0x66 reply, so a refused value (tune outside keyboard mode, real-time
 // record while stopped) snaps back to what the unit applied.
@@ -1157,6 +1162,7 @@ function featSummary() {
   add(7, () => 'queued ' + (f[7] === 0x7F ? 'none' : 'P' + (f[7] + 1)));
   add(11, () => f[11] ? 'MIDI THRU' : 'MIDI OUT');
   add(12, () => 'notes ' + ['DIN+USB', 'DIN only', 'USB only', 'off'][f[12]]);
+  add(16, () => 'overlay ' + (f[16] ? 'on' : 'off'));
   return parts.join(', ');
 }
 function renderFeatures() {
@@ -1176,6 +1182,7 @@ function renderFeatures() {
     $('selLoop').value = f[4];
   }
   tog('btnRtRec', f[5]); tog('btnTune', f[6]);
+  if (f.length > 16) tog('btnPerfModes', f[16]);
   $('queued').textContent = f.length > 7 ? (f[7] === 0x7F ? 'none' : 'Pattern ' + (f[7] + 1) + ' (next, at the end of this pass)') : '';
   $('selPedal').value = f[1];
   if (f.length > 11) $('selThru').value = f[11];
@@ -1210,6 +1217,7 @@ $('btnTrReset').onclick = () => setTransposeUi(0);
 $('inTr').onchange = () => setTransposeUi(+$('inTr').value);
 $('btnTrMode').onclick = () => sendFeature(3, feat[3] ? 0 : 1, 'transpose mode ' + (feat[3] ? 'off' : 'on'));
 $('btnRtRec').onclick = () => sendFeature(5, feat[5] ? 0 : 1, 'real-time record ' + (feat[5] ? 'off' : 'on'));
+$('btnPerfModes').onclick = () => sendFeature(16, feat[16] ? 0 : 1, 'performance modes ' + (feat[16] ? 'off' : 'on'));
 $('btnTune').onclick = () => sendFeature(6, feat[6] ? 0 : 1, 'tune ' + (feat[6] ? 'off' : 'on'));
 $('selNoteOut').onchange = () => sendFeature(12, +$('selNoteOut').value, 'notes out: ' + $('selNoteOut').selectedOptions[0].textContent);
 $('selThru').onchange = () => sendFeature(11, +$('selThru').value, $('selThru').value === '1' ? 'MIDI THRU (its own notes not sent)' : 'MIDI OUT');
