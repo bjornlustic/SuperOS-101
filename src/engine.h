@@ -1190,6 +1190,7 @@ class NoteEngine {
   bool     pA_ = false, pC_ = false;   // add/delete: step clock level, combined level
   uint32_t pAnchorUs_ = 0;         // derived grid origin (play start)
   bool     rollOn_ = false; uint8_t rollCv_ = 0; uint32_t rollNextUs_ = 0, rollHitUs_ = 0;
+  uint8_t  rRoll_ = 0;              // ratchet held from the host (0x6A row 3)
 
   static uint8_t perfRow(const controls::Panel& p) { return p.octaveOffset == 0x00 ? 1 : (p.octaveOffset == 0x0C ? 2 : 3); }
   void setPerfLfo(uint8_t v) {
@@ -1204,14 +1205,10 @@ class NoteEngine {
     if (row == 2) { f.reorder = 0; f.root = -1; f.type = -1; f.pcomb = 0; }
     if (row == 3) { f.shift = 0; pSkip_ = 0; pGrid_ = 0; pLogic_ = 0; f.tcomb = 0; }
   }
-  void perfKeys(uint32_t mask, const controls::Panel& p) {
+  // The latched choices for the keys freshly down in a row; rst: the row's reset key is held with them.
+  void perfApply(uint32_t fresh, uint8_t row, bool rst) {
     static const int8_t SHIFT[7] = {4, -4, 2, -2, 1, -1, 3};
-    const uint8_t row = perfRow(p);
     Sequencer::Perf& f = seq_.perf;
-    const uint32_t fresh = mask & ~prevMask_ & ~perfKeys_;
-    perfKeys_ |= fresh;
-    const bool rst = row > 1 && (mask & (1UL << 31));
-    if (fresh & (1UL << 31)) pResetUsed_ = false;
     // A latched option: the same again (or reset + it) = off.
     auto pick = [rst](uint8_t cur, uint8_t v) -> uint8_t { return (rst || cur == v) ? 0 : v; };
     auto pickS = [rst](int8_t cur, int8_t v) -> int8_t { return (rst || cur == v) ? -1 : v; };
@@ -1237,8 +1234,18 @@ class NoteEngine {
         else              f.tcomb = pick(f.tcomb, (uint8_t)(k - 25));
       }
     }
-    const uint32_t rk = row == 3 ? (mask & (0x1FUL << 21)) : 0;
-    pRoll_ = rk ? (uint8_t)(lowestKey(rk) - 20) : 0;
+  }
+  static uint8_t rollOf(uint32_t held) {
+    const uint32_t rk = held & (0x1FUL << 21);
+    return rk ? (uint8_t)(lowestKey(rk) - 20) : 0;
+  }
+  void perfKeys(uint32_t mask, const controls::Panel& p) {
+    const uint8_t row = perfRow(p);
+    const uint32_t fresh = mask & ~prevMask_ & ~perfKeys_;
+    perfKeys_ |= fresh;
+    if (fresh & (1UL << 31)) pResetUsed_ = false;
+    perfApply(fresh, row, row > 1 && (mask & (1UL << 31)));
+    pRoll_ = row == 3 ? rollOf(mask) : 0;
   }
   // Skip and add/delete rewrite the step clock before the sequencer sees it.
   void perfClock(bool& edge, bool& half, bool clocked) {
@@ -1294,8 +1301,25 @@ class NoteEngine {
     tune_ = false; rtRec_ = false; rtKey_ = -1; nudge_ = 0; songN_ = 0;
     playHeldUsed_ = false; playStart_ = false; playNow_ = false; prevExtCv_ = -1;
     lastEdgeUs_ = 0; periodUs_ = 0; stepStartUs_ = 0; subTotal_ = 1; subLeft_ = 0; subOnTicks_ = false;
-    setPerfLfo(0); perfKeys_ = 0; pResetUsed_ = false; pSkip_ = pGrid_ = pLogic_ = pRoll_ = 0;
+    setPerfLfo(0); perfKeys_ = 0; pResetUsed_ = false; pSkip_ = pGrid_ = pLogic_ = pRoll_ = rRoll_ = 0;
     pClk_ = 0; pA_ = pC_ = false; rollOn_ = false;
+  }
+  // The overlay from the host (SysEx 0x6A): a key of row 1..3 pressed or released, as the panel's
+  // key with the TRANSPOSE switch at that row, whether or not the sequencer plays (the choices
+  // latch until it does). Row 2 / 3 key 32 resets the row; row 3 keys 22-26 ratchet while held.
+  void perfRemote(uint8_t row, uint8_t k, bool down) {
+    if (row < 1 || row > 3 || k > 31) return;
+    if (row == 3 && k >= 21 && k < 26) { rRoll_ = down ? (uint8_t)(k - 20) : (rRoll_ == k - 20 ? 0 : rRoll_); return; }
+    if (!down) return;
+    if (row > 1 && k == 31) { perfResetRow(row); return; }
+    perfApply(1UL << k, row, false);
+  }
+  // 0x6B's fields: octVar, lfo, reorder, root+1, type+1, pcomb, shift+8, skip, grid, logic, tcomb, ratchet.
+  void perfState(uint8_t* o) const {
+    const Sequencer::Perf& f = seq_.perf;
+    o[0] = f.octVar; o[1] = pLfo_; o[2] = f.reorder; o[3] = (uint8_t)(f.root + 1); o[4] = (uint8_t)(f.type + 1);
+    o[5] = f.pcomb; o[6] = (uint8_t)(f.shift + 8); o[7] = pSkip_; o[8] = pGrid_; o[9] = pLogic_; o[10] = f.tcomb;
+    o[11] = pRoll_ ? pRoll_ : rRoll_;
   }
   // MIDI Start: align the sequence and arpeggiator to the incoming downbeat.
   void restart() { seq_.rewind(); arp_.reset(); playStart_ = true; }
@@ -1562,9 +1586,10 @@ class NoteEngine {
         }
         // Performance ratchet (held): the note sounding at the press repeats
         // at the chosen rate while the pattern runs on underneath.
-        if (pRoll_ && periodUs_) {
+        const uint8_t roll = pRoll_ ? pRoll_ : rRoll_;   // the panel's held key, else the host's
+        if (roll && periodUs_) {
           static const uint8_t RN[5] = {1, 1, 2, 1, 1}, RD[5] = {2, 1, 3, 3, 7};   // of a step: 1/32 1/16 1/16T 3x 7x
-          const uint32_t iv = periodUs_ * RN[pRoll_ - 1] / RD[pRoll_ - 1];
+          const uint32_t iv = periodUs_ * RN[roll - 1] / RD[roll - 1];
           const uint32_t now = micros();
           if (!rollOn_) { rollOn_ = true; rollCv_ = o.cv; rollNextUs_ = now; }
           if ((int32_t)(now - rollNextUs_) >= 0) {

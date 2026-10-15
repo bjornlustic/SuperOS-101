@@ -2252,6 +2252,24 @@ static int SelfTest() {
       printf("  (ratchet held: %s, plain %s)\n", roll.c_str(), plain.c_str());
       CHECK(roll == "10 10 10 " || roll == "13 13 13 ", "row 3 key 23 held: the note repeats, the pattern runs on underneath");
       CHECK(cvs(1) == "13 ", "released: back on the pattern where it would be");
+      // The overlay from the host (0x6A), whatever the TRANSPOSE switch says; 0x6B answers.
+      auto reorder = [&]() {                                     // field 3 of the last 0x6B
+        int r = -1;
+        for (size_t i = 0; i + 5 < g_midiOut.size(); ++i)
+          if (g_midiOut[i] == 0xF0 && g_midiOut[i + 1] == 0x7D && g_midiOut[i + 2] == 0x6B) r = g_midiOut[i + 5];
+        g_midiOut.clear();
+        return r;
+      };
+      g_midiOut.clear();
+      sx({0x6A, 2, 1, 1}); sx({0x6A, 2, 1, 0});                  // row 2 key 2: reverse
+      CHECK(reorder() == 1, "0x6A row 2 key 2: reverse latched from the host, 0x6B says so");
+      sx({0x6A, 2, 31, 1});                                      // row 2 reset
+      CHECK(reorder() == 0, "0x6A row 2 key 32: the row reset");
+      restart(); plain = cvs(3);
+      sx({0x6A, 3, 22, 1}); roll = cvs(3); sx({0x6A, 3, 22, 0});
+      printf("  (host ratchet: %s)\n", roll.c_str());
+      CHECK(roll == "10 10 10 " || roll == "13 13 13 ", "0x6A row 3 key 23 down: ratchet until up");
+      CHECK(cvs(1) == "13 ", "0x6A key up: back on the pattern");
 
       sim::g_octave = -1; RunLoops(2);                   // row 1: global
       tapK(9);                                           // transpose D = +2

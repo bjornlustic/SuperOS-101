@@ -109,6 +109,11 @@
 //                           Performance modes (0x65 id 16, 0x66's 17th
 //                           field, saved): 1 (default) the keys are the
 //                           overlay while the sequencer plays (engine.h).
+//   0x6A <row 1..3> <key 0..31> <down>  an overlay key from the host
+//                           (row 2/3 key 31 resets the row; row 3 keys 21-25
+//                           ratchet while down); answered with 0x6B.
+//   0x6B  read the performance state; 0x6B <octVar lfo reorder root+1 type+1
+//                           pcomb shift+8 skip grid logic tcomb ratchet>.
 //   0x21 <fw> <chan> <sync> <div> <pat> <version ascii...>   fw: 0 SuperOS
 //   0x22 <chan> <sync> <div>  set config (chan 0..15, sync 0/1, div index)
 //   (CC cutoffCc, default 74, moves the filter; CC cutoffCc+32 = 106 is its

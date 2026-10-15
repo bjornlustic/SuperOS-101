@@ -316,6 +316,18 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
       SendFeatures();
       break;
     case 0x67: SendFeatures(); break;
+    // 0x6A PERFORM [row 1..3, key 0..31, down 0/1]: an overlay key from the host (engine.h
+    // perfRemote); answered with 0x6B. 0x6B = read the performance state, answered with
+    // 0x6B [octVar, lfo, reorder, root+1, type+1, pcomb, shift+8, skip, grid, logic, tcomb, ratchet].
+    case 0x6A:
+      if (len >= 4) g_engine.perfRemote(body[1], body[2], body[3] != 0);
+      // fall through
+    case 0x6B: {
+      uint8_t b[13] = {0x6B};
+      g_engine.perfState(b + 1);
+      midi::SendSysex(b, sizeof(b));
+      break;
+    }
     // 0x69 NUDGE [pat, dir (0 left, 1 right), count 1..127]: rotate the
     // pattern's notes. On the playing pattern it lands at the next half-step
     // (never mid-note, timing untouched); the new pattern follows as 0x11.
