@@ -222,10 +222,19 @@ static void WaitVirtMs(uint16_t ms) {
   while ((int32_t)(until - millis()) > 0) RunLoops(1);
 }
 
-// One clock pulse: T1 high for a loop pass, then low (the firmware fires on H->L).
+// The stock retrigger gap (engine.h RETRIG_GAP_US): a sequencer note step
+// sounds this long after its clock edge, so let it pass before looking.
+static void Gap() {
+  uint32_t until = micros() + 2000;
+  while ((int32_t)(until - micros()) > 0) RunLoops(1);
+}
+
+// One clock pulse: T1 high for a loop pass, then low (the firmware fires on
+// H->L), then the retrigger gap.
 static void ClockTick() {
   sim::g_clock = true;  RunLoops(1);
   sim::g_clock = false; RunLoops(1);
+  Gap();
 }
 
 static bool GateOn()     { return !(sim_portf & 0x80); }
@@ -550,11 +559,14 @@ static int SelfTest() {
   sim::g_buttons = 1u << 4; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // tap UP
   WaitVirtMs(35);                                     // scan-bleed guard after the tap
   sim::g_keys = (1UL << 0) | (1UL << 4) | (1UL << 7);
-  RunLoops(1);          // arp start pass: fires the CLOCK-RESET pulse
+  RunLoops(1);          // arp start pass: the CLOCK-RESET pulse, and (stock: the press opens the gate) step 1
+  CHECK(sim::g_sh[0] == 17 && GateOn(), "arp step 1 = key 0, at the press");
   SettleClockReset();
-  ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "arp step 1 = key 0");
-  ClockTick(); CHECK(sim::g_sh[0] == 21, "arp step 2 = key 4");
-  ClockTick(); CHECK(sim::g_sh[0] == 24, "arp step 3 = key 7");
+  ClockTick(); CHECK(sim::g_sh[0] == 21 && GateOn(), "arp step 2 = key 4");
+  sim::g_clock = true; RunLoops(1);
+  CHECK(GateOn(), "arp: the gate stays open at the half-step (stock: no retrigger between steps)");
+  sim::g_clock = false; RunLoops(1);
+  CHECK(sim::g_sh[0] == 24 && GateOn(), "arp step 3 = key 7, gate still open");
   ClockTick(); CHECK(sim::g_sh[0] == 17, "arp wraps to key 0");
   sim::g_keys = 0; RunLoops(1);
   CHECK(!GateOn(), "arp gate off when keys released");
@@ -573,6 +585,7 @@ static int SelfTest() {
     CHECK(n == 8 && buf[0] == 3 && buf[5] == 0xFF && buf[6] == 0x0F && buf[7] == 0, "pattern 0 saved to the flash arena (len 3 + ratchet byte + scale off/all + accent byte)");
   }
   sim::g_buttons = 1u << 1; RunLoops(1); sim::g_buttons = 0; RunLoops(1); // PLAY
+  Gap();
   CHECK(sim::g_sh[0] == 17 && GateOn(), "PLAY -> step 1 sounds immediately (CV 17)");
   // The LFO-restart glitch right after the reset pulse must NOT advance the
   // sequencer off step 1 (it read as an edge once, and step 1 sounded
@@ -580,7 +593,16 @@ static int SelfTest() {
   sim::g_clock = true; RunLoops(1); sim::g_clock = false; RunLoops(1);
   CHECK(sim::g_sh[0] == 17, "reset-release glitch does not skip step 1");
   SettleClockReset();
-  ClockTick(); CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step 2 -> note 2 (CV 19)");
+  // Stock gate shape (SH-101 mask ROM, cycle-exact): open for the whole step,
+  // dropped on the next note's clock edge, that note one ROM pass later.
+  sim::g_clock = true; RunLoops(1);
+  CHECK(GateOn() && sim::g_sh[0] == 17, "seq: the gate stays open at the half-step (stock: the whole step)");
+  sim::g_clock = false; RunLoops(1);
+  CHECK(!GateOn() && sim::g_sh[0] == 17, "seq: the next note's edge drops the gate on the old pitch");
+  { uint32_t t = micros(); while (micros() - t < 1400) RunLoops(1); }
+  CHECK(!GateOn(), "seq: the retrigger gap lasts a ROM pass (still closed 1.4 ms on)");
+  Gap();
+  CHECK(sim::g_sh[0] == 19 && GateOn(), "seq step 2 -> note 2 (CV 19)");
   ClockTick(); CHECK(!GateOn(), "seq rest -> gate off");
   ClockTick(); CHECK(sim::g_sh[0] == 17 && GateOn(), "seq wraps -> note 0 (CV 17)");
 
@@ -1223,6 +1245,7 @@ static int SelfTest() {
     sim::g_keys = 1UL << 5; RunLoops(20); sim::g_keys = 0; RunLoops(5);
     sim::g_buttons = 1u << 0; RunLoops(2); sim::g_buttons = 0; RunLoops(3);  // LOAD: exit
     sim::g_buttons = 1u << 1; RunLoops(2); sim::g_buttons = 0; RunLoops(3);  // PLAY (sync off: step 1 now)
+    Gap();
     CHECK(GateOn() && sim::g_sh[0] == 19, "pattern starts at the FIRST REAL note (no phantom step 0)");
     SettleClockReset();
     ClockTick();
@@ -1576,8 +1599,12 @@ static int SelfTest() {
     {
       const uint32_t T = 19380;                   // 129 BPM tick
       auto startAt = [&]() { sxP(0); waitUs(450000); MidiByte(0xFA); waitUs(1000); };
+      // One grid per run: a continuation keeps the first call's tick times, so
+      // whatever the caller did between calls does not shift the host's clock.
+      uint32_t gridT0 = 0;
       auto ticksTo = [&](int from, int to, std::vector<uint32_t>& rises, std::vector<uint8_t>* cvs = nullptr) {
-        uint32_t t0 = micros() - (uint32_t)from * T; bool prev = GateOn();
+        if (from == 0) gridT0 = micros();
+        const uint32_t t0 = gridT0; bool prev = GateOn();
         for (int t = from; t < to; ++t) {
           while ((int32_t)(t0 + (uint32_t)t * T - micros()) > 0) {
             RunLoops(1); bool g = GateOn();
@@ -1902,9 +1929,9 @@ static int SelfTest() {
       auto arpRun = [&](int modeBtn, int n) {
         tap(modeBtn);
         sim::g_keys = (1UL << 0) | (1UL << 4); RunLoops(3);
+        std::string r = std::to_string(sim::g_sh[0]) + " ";   // step 1 sounds at the press
         SettleClockReset();
-        std::string r;
-        for (int i = 0; i < n; ++i) { ClockTick(); r += std::to_string(sim::g_sh[0]) + " "; }
+        for (int i = 1; i < n; ++i) { ClockTick(); r += std::to_string(sim::g_sh[0]) + " "; }
         sim::g_keys = 0; RunLoops(3); tap(modeBtn); WaitVirtMs(40);
         return r;
       };
@@ -1991,7 +2018,7 @@ static int SelfTest() {
       g_midiOut.clear();
       play();
       bool vcaStep0 = g_simCvOn[1];
-      ClockTick(); bool vcaStep1 = g_simCvOn[1];
+      ClockTick(); RunLoops(2); bool vcaStep1 = g_simCvOn[1];   // the envelope's first ticks after the gap
       ClockTick(); RunLoops(40);                 // step 3 (accented legato) held 40 ms: still accented
       bool vcaStep2 = g_simCvOn[1];
       std::vector<int> vel;
@@ -2344,7 +2371,7 @@ static int SelfTest() {
     key(3, false); run(3);                                   // step 4
     sim::g_clock = true; RunLoops(2);                        // step 5's half-step passed
     key(7, true);                                            // -> step 5
-    sim::g_clock = false; RunLoops(2);                       // step 5 plays it
+    sim::g_clock = false; RunLoops(2); Gap();                // step 5 plays it
     CHECK(GateOn() && sim::g_sh[0] == 24, "RT record: a late key lands on (and plays at) the next step");
     sim::g_clock = true; RunLoops(2);                        // still held at 5's half: tie into 6
     key(7, false);

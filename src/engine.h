@@ -133,7 +133,7 @@ class Arp {
   int8_t dir = 1;
   uint8_t oct = 0;     // octave offset of the current note, 0..range-1
  public:
-  bool gate = false;   // on at each step, off at the half-step
+  bool gate = false;   // on from the first step until the keys go (stock: no retrigger between steps)
   int8_t current() const { return cur; }
   uint8_t octave() const { return oct; }
   void reset() { cur = -1; dir = 1; oct = 0; gate = false; }
@@ -445,6 +445,7 @@ class Sequencer {
     return advance();                  // a shift moves the phase on purpose
   }
   bool halfSeen() const { return halfSeen_; }
+  bool nextIsNote() const { return effLen() && StepKind(playByte(peekNext())) == STEP_NOTE; }
   uint8_t nextIndex() const { return peekNext(); }
   // Real-time record: overwrite one step in place (pattern data, persisted).
   void writeStep(uint8_t idx, uint8_t stepByte) {
@@ -753,9 +754,9 @@ class Sequencer {
       default:          curCv_ = StepCv(s); curGate_ = true; return true;
     }
   }
-  // Half-step (clock's other edge): close the gate so the next note
-  // retriggers, unless the NEXT step is legato (then the gate carries over,
-  // 303-style look-ahead).
+  // Half-step (clock's other edge): the nudge lands here. The gate stays open
+  // (stock holds it the whole step, SH101.asm update_outputs); the retrigger
+  // gap is NoteEngine's, at the next note step.
   // --- nudge: rotate the pattern's notes one or more steps left / right ---
   // The playhead and the clock are untouched (timing stays locked); only the
   // notes move. On the playing pattern the rotation waits for the next
@@ -795,10 +796,6 @@ class Sequencer {
   void halfStep() {
     applyRotate();                          // nudge lands here: between notes, never mid-note
     halfSeen_ = true;
-    uint8_t len = effLen();
-    if (!len || !curGate_) return;
-    uint8_t next = playByte(peekNext());
-    if (StepKind(next) != STEP_LEGATO) curGate_ = false;
   }
   // A performance root or scale type overrides the pattern's own scale.
   uint8_t cv()   const {
@@ -1013,6 +1010,14 @@ class NoteEngine {
   uint32_t stepStartUs_ = 0;
   uint8_t  subTotal_ = 1, subLeft_ = 0;
   bool     subOnTicks_ = false;
+  // Stock retrigger: a note step drops the gate on its clock edge and sounds
+  // one ROM pass later (gate off at step 13 of the edge pass, CV and gate on in
+  // the next pass, SH101.asm update_outputs; 1.8 ms on the 6 MHz chip).
+  static const uint16_t RETRIG_GAP_US = 1800;
+  // Under the MIDI clock the onset stays on the host's tick: the gap is taken
+  // before the predicted next division instead (preGap_), the post-edge gap
+  // only when the tick came early.
+  bool     gapPend_ = false, preGap_ = false, seqGate_ = false; uint32_t gapUntilUs_ = 0; uint8_t gapCv_ = CV_BASE;
 
   uint8_t noteCv(int8_t key, const controls::Panel& p) const {
     int v = key + (int)p.octaveOffset + CV_BASE;
@@ -1301,6 +1306,7 @@ class NoteEngine {
     tune_ = false; rtRec_ = false; rtKey_ = -1; nudge_ = 0; songN_ = 0;
     playHeldUsed_ = false; playStart_ = false; playNow_ = false; prevExtCv_ = -1;
     lastEdgeUs_ = 0; periodUs_ = 0; stepStartUs_ = 0; subTotal_ = 1; subLeft_ = 0; subOnTicks_ = false;
+    gapPend_ = preGap_ = false;
     setPerfLfo(0); perfKeys_ = 0; pResetUsed_ = false; pSkip_ = pGrid_ = pLogic_ = pRoll_ = rRoll_ = 0;
     pClk_ = 0; pA_ = pC_ = false; rollOn_ = false;
   }
@@ -1471,7 +1477,11 @@ class NoteEngine {
         // CLOCK RESET only when the arp starts (first key after silence), so
         // the LFO clock is not restarted on every step: a per-step reset made
         // the step spacing depend on the LFO phase and sounded uneven.
-        if (mask && !prevMask_) o.clockReset = true;
+        // Stock opens the gate at the press; the LFO reset's own edge plays the
+        // first note at once and the next one lands a period later. That edge
+        // is swallowed (main.cpp CLK_SETTLE_MS), so the press steps instead. Synced, the
+        // first note waits for the host's division.
+        if (mask && !prevMask_) { o.clockReset = true; if (!midiclk::SyncOn()) clockEdge = true; }
         if (clockEdge) {
           int8_t k = arp_.step(mask, mode_, ArpRange());
           if (k >= 0) {
@@ -1480,7 +1490,6 @@ class NoteEngine {
             arp_.gate = true; o.portaOff = true;
           }
         }
-        if (halfEdge) arp_.gate = false;
         if (!mask) arp_.reset();
         o.cv = lastCv_;
         o.gate = (mask != 0) && arp_.gate;
@@ -1488,8 +1497,10 @@ class NoteEngine {
 
       case MODE_SEQ_PLAY: {
         bool began = false;                             // a step started this pass
+        bool attack = false;                            // ... and it is a note (not legato, not a rest)
         if (playStart_) {
           o.clockReset = true; playStart_ = false;   // LFO in phase with step 1
+          gapPend_ = false;
           subTotal_ = 1; subLeft_ = 0; lastEdgeUs_ = 0;   // no stale ratchet state into a new run
           pClk_ = 0; pA_ = pC_ = false; pAnchorUs_ = micros();
           // Panel/editor PLAY (playNow_), internal clock only: step 1 sounds
@@ -1504,7 +1515,7 @@ class NoteEngine {
           if (playNow_) {
             playNow_ = false;
             if (!midiclk::SyncOn()) {
-              if (seq_.advance()) o.portaOff = true;
+              if (seq_.advance()) o.portaOff = attack = true;
               began = true;
               lastCv_ = seq_.cv();
               clockEdge = false; halfEdge = false;
@@ -1512,9 +1523,9 @@ class NoteEngine {
           }
         }
         if (nudge_) {                                   // shift: a step now, off the clock
-          if (seq_.nudge(nudge_)) o.portaOff = true;
+          if (seq_.nudge(nudge_)) o.portaOff = attack = true;
           began = true;
-          lastCv_ = seq_.cv(); subTotal_ = 1; subLeft_ = 0;
+          lastCv_ = seq_.cv(); subTotal_ = 1; subLeft_ = 0; stepStartUs_ = micros();
           nudge_ = 0;
         }
         uint8_t tickIdx = 0;
@@ -1530,7 +1541,7 @@ class NoteEngine {
         if (clockEdge) {
           const uint32_t now = micros();
           bool fresh = seq_.advance();
-          if (fresh) o.portaOff = true;
+          if (fresh) o.portaOff = attack = true;
           began = true;
           lastCv_ = seq_.cv();
           // Ratchet: a NOTE step (fresh) with ratchet r plays r extra evenly
@@ -1606,6 +1617,19 @@ class NoteEngine {
           static const uint8_t N[5] = {1, 2, 4, 8, 16};
           if ((uint16_t)(seq_.stepsPlayed() - 1) % N[pLfo_ - 1] == 0) o.clockReset = true;
         }
+        // Retrigger gap: the note step's CV, gate, accent and filter wait
+        // RETRIG_GAP_US with the gate closed on the previous pitch.
+        if (attack && !preGap_ && (!clocked || seqGate_)) { gapPend_ = true; gapUntilUs_ = micros() + RETRIG_GAP_US; }
+        else if (began) gapPend_ = false;               // a legato step or rest acts at once
+        if (began) preGap_ = false;
+        if (clocked && periodUs_ && !began && seq_.gate() && seq_.nextIsNote() &&
+            (uint32_t)(micros() - stepStartUs_) + RETRIG_GAP_US >= periodUs_) { preGap_ = true; o.gate = false; }
+        if (roll) gapPend_ = false;                     // the performance ratchet owns the gate
+        if (gapPend_) {
+          if ((int32_t)(micros() - gapUntilUs_) < 0) { o.gate = false; o.cv = gapCv_; began = false; }
+          else { gapPend_ = false; began = true; }
+        }
+        seqGate_ = o.gate;
         // Accented step: fires at the step's start (legato ones too, 303
         // style) and on each ratchet sub-hit.
         o.accent = o.gate && (began || o.portaOff) && seq_.accentCur();
@@ -1646,6 +1670,8 @@ class NoteEngine {
       }
     }
 
+    if (mode_ != MODE_SEQ_PLAY) gapPend_ = false;
+    if (!gapPend_) gapCv_ = o.cv;                 // the pitch a retrigger gap holds
     if (transpose_ && mode_ != MODE_SEQ_LOAD) {   // stock: everything that plays
       int16_t v = (int16_t)o.cv + transpose_;
       o.cv = (uint8_t)(v < 0 ? 0 : (v > CV_MAX ? CV_MAX : v));
