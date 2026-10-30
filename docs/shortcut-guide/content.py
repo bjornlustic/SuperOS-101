@@ -17,17 +17,19 @@ def C(btn, side, label, hold=False, box=False):
     return dict(btn=btn, side=side, label=label, hold=hold, box=box)
 
 
-def F(title, mode, when, callouts, keys, caption, steps, note="", expect=(), also=(), g=""):
+def F(title, mode, when, callouts, keys, caption, steps, note="", expect=(), also=(), g="", keymap=()):
     return dict(title=title, mode=mode, when=when, callouts=callouts, keys=keys, caption=caption,
-                steps=steps, note=note, expect=list(expect), also=list(also), g=g)
+                steps=steps, note=note, expect=list(expect), also=list(also), g=g, keymap=list(keymap))
 
 
 REC = ["t:LOAD", "t:key8", "t:key12", "t:key15", "t:key20", "t:LOAD"]    # C E G C stored in pattern 1
 PLAYING = REC + ["t:PLAY", "c:2"]
 MENU = ["d:HOLD", "d:KT", "w:2100", "u:KT", "u:HOLD"]
 KB = "key1|key32"
-P18 = "key1|key8"
+P18 = "key1|key16"
 MENU_ON = ["on=HOLD", "on=PLAY"]
+PLAY_PERF = ["on=PLAY", "on=HOLD"]                       # playing in performance mode (the default): HOLD lit
+SUPEROS = ["d:HOLD", "t:LOAD", "u:HOLD", "w:700"]         # HOLD + LOAD: to SuperOS mode
 
 CHAPTERS = [
     ("Playing", [
@@ -140,7 +142,7 @@ CHAPTERS = [
           ["Stopped, press LOAD: the LED lights and the current pattern is cleared.",
            "Play the notes, one key per step. Timing does not matter: every key is one step.",
            "Press LOAD again: the pattern is stored and the LED goes out."],
-          note="Up to 128 steps, 8 patterns, kept in flash across power-off. PLAY + key 1-8 picks the "
+          note="Up to 128 steps, 16 patterns, kept across power-off. PLAY + key 1-16 picks the "
                "pattern to record into (Pattern Select).",
           expect=["on=LOAD"], also=[(REC, [])],
           g="Stopped: LOAD, keys, LOAD|record a new pattern"),
@@ -148,16 +150,18 @@ CHAPTERS = [
           [C("HOLD", "t", "HELD + KEY: LEGATO", hold=True),
            C("KT", "t", "REST"),
            C("UP", "t", "RATCHET 1X/2X/3X"),
-           C("DOWN", "t", "DELETE LAST")],
+           C("DOWN", "t", "DELETE LAST"),
+           C("UD", "t", "HELD + KEY: ACCENT", hold=True)],
           ["t:LOAD", "t:key8", "d:HOLD", "t:key10", "u:HOLD", "t:KT", "t:key12", "t:UP", "t:DOWN"],
           "LOAD lit. Recorded: key 8, key 10 tied, a rest, key 12 (then ratcheted and taken back).",
           ["Hold HOLD while pressing a key: that step is legato (no retrigger, glides on AUTO).",
            "KEY TRANSPOSE enters a rest.",
            "UP cycles the last step's ratchet: 1x, 2x, 3x hits inside the step.",
-           "DOWN takes the last step back; press it again to go further back."],
+           "DOWN takes the last step back; press it again to go further back.",
+           "Hold U&D while pressing a key: an accented step (needs the board's filter and accent wires)."],
           note="The stock panel prints LEGATO under HOLD and REST under KEY TRANSPOSE for this.",
           expect=["on=LOAD"],
-          g="In LOAD: HOLD + key / KEY TRANSPOSE / UP / DOWN|legato / rest / ratchet / undo"),
+          g="In LOAD: HOLD + key / KEY TRANSPOSE / UP / DOWN / U&D + key|legato / rest / ratchet / undo / accent"),
         F("Play and Stop", "Sequencer play", "Keyboard mode",
           [C("PLAY", "t", "PLAY / STOP")],
           PLAYING,
@@ -166,7 +170,7 @@ CHAPTERS = [
            "RATE (or the MIDI clock with sync on).",
            "Press PLAY again to stop."],
           note="With MIDI sync on, PLAY only arms: the first step waits for the clock (MIDI Sync).",
-          expect=["on=PLAY"], also=[(PLAYING + ["t:PLAY"], [])],
+          expect=PLAY_PERF, also=[(PLAYING + ["t:PLAY"], [])],
           g="PLAY|play / stop"),
         F("Correct and Add", "LOAD", "Playing",
           [C("LOAD", "t", "WHILE PLAYING: RE-RECORD FROM NEXT STEP"),
@@ -175,7 +179,7 @@ CHAPTERS = [
           "LOAD lit: recording again from the step after the one that was sounding.",
           ["While the pattern plays, press LOAD. Playback stops and the LOAD LED lights.",
            "The keys overwrite from the step after the one that was sounding. Steps after the ones "
-           "you correct stay as they were.",
+           "you correct stay as they were. If the last step was sounding, the new steps go after it.",
            "LOAD again stores."],
           note="The stock SH-101's Correcting and Adding. LOAD from stop starts a new pattern instead.",
           expect=["on=LOAD"],
@@ -193,43 +197,42 @@ CHAPTERS = [
            "Hold PLAY and press LOAD again to end. The edits are stored when playback stops."],
           note="An empty pattern gets 16 rest steps to record into.",
           expect=["blink=PLAY", "blink=LOAD"],
-          also=[(PLAYING + ["d:PLAY", "t:LOAD", "u:PLAY", "d:PLAY", "t:LOAD", "u:PLAY"], ["on=PLAY"])],
+          also=[(PLAYING + ["d:PLAY", "t:LOAD", "u:PLAY", "d:PLAY", "t:LOAD", "u:PLAY"], PLAY_PERF)],
           g="Playing: PLAY + LOAD|real-time record on / off"),
         F("Pattern Select", "Sequencer", "Stopped or playing",
           [C("PLAY", "t", "1. HOLD PLAY", hold=True),
-           C(P18, "b", "2. KEY 1-8 = PATTERN 1-8", box=True)],
+           C(P18, "b", "2. KEY 1-16 = PATTERN 1-16", box=True)],
           REC + ["d:PLAY", "t:key2", "u:PLAY"],
           "Pattern 2 picked from stop: it plays when PLAY is released.",
-          ["Hold PLAY and press one of the 8 lowest keys (key 1 = pattern 1).",
+          ["Hold PLAY and press one of the 16 lowest keys (key 1 = pattern 1).",
            "From stop, the pattern starts when you release PLAY.",
            "While playing, it follows at the end of the current pass."],
-          note="MIDI program change 0 to 7 does the same. Hold PLAY and press nothing to toggle play "
+          note="MIDI program change 0 to 15 does the same. Hold PLAY and press nothing to toggle play "
                "as usual. With PLAY held, UP / DOWN / U&D randomize and KEY TRANSPOSE sets the scale "
                "(Randomize and Scale).",
-          expect=["on=PLAY"], also=[(PLAYING + ["d:PLAY", "t:key2", "u:PLAY"], ["on=PLAY"])],
-          g="PLAY + key 1-8|pattern (stopped: starts; playing: at loop end)"),
+          expect=PLAY_PERF, also=[(PLAYING + ["d:PLAY", "t:key2", "u:PLAY"], PLAY_PERF)],
+          g="PLAY + key 1-16|pattern (stopped: starts; playing: at loop end)"),
         F("Song", "Sequencer", "Stopped or playing",
           [C("PLAY", "t", "1. HOLD PLAY", hold=True),
            C(P18, "b", "2. KEYS IN ORDER, UP TO 16", box=True)],
           REC + ["d:PLAY", "t:key1", "t:key2", "t:key1", "t:key3", "u:PLAY"],
           "Song 1, 2, 1, 3 started from stop.",
-          ["Hold PLAY and press several of keys 1-8 in the order to play them.",
+          ["Hold PLAY and press several of keys 1-16 in the order to play them.",
            "Release PLAY: from stop the song starts; while playing it starts at the end of the pass.",
            "Each pattern plays once, then the next; the song loops."],
           note="Picking a single pattern, or an instant switch, ends the song.",
+          expect=PLAY_PERF,
+          g="PLAY + several keys 1-16|song, up to 16, loops"),
+        F("Instant Switch", "Sequencer play, SuperOS mode", "Playing, HOLD LED off",
+          [C("key1|key16", "b", "KEYS 1-16: PATTERN 1-16 NOW", box=True)],
+          PLAYING + SUPEROS + ["t:key2"],
+          "PLAY lit, HOLD off (SuperOS mode). Pattern 2 took over at the same position.",
+          ["In SuperOS mode (HOLD + LOAD, HOLD LED off), press one of keys 1-16 while playing.",
+           "That pattern takes over at the next step, at the same position (modulo its length)."],
+          note="Patterns whose lengths are multiples of each other stay in step. In performance mode "
+               "row 1 keys 25-31 switch patterns 1-7 the same way.",
           expect=["on=PLAY"],
-          g="PLAY + several keys 1-8|song, up to 16, loops"),
-        F("Instant Switch", "Sequencer play", "Playing, TRANSPOSE on L",
-          [C("TRANSPOSE", "b", "L: ROW 1"),
-           C("key25|key32", "b", "KEYS 25-32: PATTERN 1-8 NOW", box=True)],
-          PLAYING + ["sw:oct:down", "t:key26"],
-          "Pattern 2 took over at the same position.",
-          ["While playing, set TRANSPOSE to L and press one of keys 25-32 with nothing else held.",
-           "That pattern (1-8) takes over at once, at the same step position (modulo its length)."],
-          note="Patterns whose lengths are multiples of each other stay in step. With performance "
-               "modes off (web editor) plain keys 1-16 do this for patterns 1-16 instead.",
-          expect=["on=PLAY"],
-          g="Playing, TRANSPOSE L: key 25-32|switch to pattern 1-8 now"),
+          g="SuperOS mode, playing: key 1-16|switch to pattern 1-16 now"),
         F("Play Direction", "Sequencer play", "Playing",
           [C("UP", "t", "FORWARD"),
            C("DOWN", "t", "BACKWARD"),
@@ -244,7 +247,7 @@ CHAPTERS = [
            "The direction is kept across power-off."],
           note="Config menu keys 15-18 set it too. With PLAY held these buttons randomize the pattern "
                "instead (Randomize and Scale).",
-          expect=["on=PLAY"], also=[(PLAYING + ["t:UD"], ["on=PLAY"])],
+          expect=PLAY_PERF, also=[(PLAYING + ["t:UD"], PLAY_PERF)],
           g="Playing: UP / DOWN / U&D / DOWN + U&D|forward / backward / ping-pong / random"),
         F("Shift", "Sequencer play", "Playing",
           [C("KT", "t", "1. HOLD KEY TRANSPOSE", hold=True),
@@ -254,7 +257,7 @@ CHAPTERS = [
           "PLAY lit; the pattern moved one step ahead of the clock.",
           ["While playing, hold KEY TRANSPOSE.",
            "UP plays the next step at once, DOWN the previous one: the pattern moves against the clock."],
-          expect=["on=PLAY"],
+          expect=PLAY_PERF,
           g="Playing: KEY TRANSPOSE + UP / DOWN|shift a step ahead / back"),
         F("Nudge", "Sequencer play", "Playing",
           [C("HOLD", "t", "1. HOLD THE BUTTON", hold=True),
@@ -263,15 +266,15 @@ CHAPTERS = [
           PLAYING + ["d:HOLD", "t:UP", "u:HOLD"],
           "PLAY lit (HOLD lights only while held). The notes moved, the timing did not.",
           ["While playing, hold the HOLD button.",
-           "UP moves every note one step right (later), DOWN one step left (earlier). Ratchets move "
-           "with their steps; the pattern wraps around.",
+           "UP moves every note one step right (later), DOWN one step left (earlier). Ratchets and "
+           "accents move with their steps; the pattern wraps around.",
            "The move lands at the next half-step: the sounding note has already started and the next "
            "one is not chosen yet, so nothing is cut or doubled and the beat never moves."],
           note="Unlike Shift, which moves the playhead against the clock, Nudge moves the notes inside "
                "the pattern. The web editor has the same as \u25c0 Nudge / Nudge \u25b6 (Shift + arrow "
                "keys), with Undo.",
-          expect=["on=PLAY"],
-          also=[(PLAYING + ["d:HOLD", "t:DOWN", "u:HOLD"], ["on=PLAY"]),
+          expect=PLAY_PERF,
+          also=[(PLAYING + ["d:HOLD", "t:DOWN", "u:HOLD"], PLAY_PERF),
                 (PLAYING + ["d:HOLD", "t:UP"], ["on=PLAY", "on=HOLD"])],
           g="Playing: HOLD button + UP / DOWN|nudge the notes a step right / left"),
         F("Loop Length, Live", "Sequencer play", "Playing",
@@ -297,13 +300,13 @@ CHAPTERS = [
           ["Hold PLAY and press U&D: a new pattern, rhythm and pitch.",
            "PLAY held + UP: new pitches, the rhythm stays. PLAY held + DOWN: mutate, 2 to 4 small edits.",
            "It works stopped or playing and never starts play. Written notes land in the pattern's "
-           "scale when one is on."],
+           "scale when one is on. UP and DOWN need a pattern with steps."],
           note="Under PLAY held these buttons no longer switch the arpeggio or the direction. The current "
                "pattern is changed in place and stored like any edit.",
-          expect=["on=PLAY"],
+          expect=PLAY_PERF,
           also=[(REC + ["d:PLAY", "t:UD", "u:PLAY"], []), (REC + ["d:PLAY", "t:UP", "u:PLAY"], []),
                 (REC + ["d:PLAY", "t:DOWN", "u:PLAY"], []),
-                (PLAYING + ["d:PLAY", "t:UP", "t:DOWN", "u:PLAY"], ["on=PLAY"])],
+                (PLAYING + ["d:PLAY", "t:UP", "t:DOWN", "u:PLAY"], PLAY_PERF)],
           g="PLAY + U&D / UP / DOWN|new pattern / new pitches / mutate"),
         F("Scale", "Sequencer", "Stopped or playing",
           [C("PLAY", "t", "1. HOLD PLAY", hold=True),
@@ -312,19 +315,34 @@ CHAPTERS = [
           PLAYING + ["d:PLAY", "d:KT", "t:key8", "t:key8", "u:KT", "u:PLAY"],
           "PLAY stays lit: C root, second scale. No LED shows the scale.",
           ["Hold PLAY and KEY TRANSPOSE and press a key: that note is the root, with Major. Key 8 = C.",
-           "Press the same key again to step through the 35 scales (the SuperOS-303's list, Major first).",
+           "Still holding KEY TRANSPOSE, press the same key again to step through the 35 scales, Major first.",
            "Hold PLAY and tap KEY TRANSPOSE alone: scale on / off."],
           note="The scale belongs to the pattern and is stored with it. It is non-destructive: the "
                "output snaps to the nearest scale note (the lower one on a tie) before any transpose, "
                "and the steps themselves are unchanged. Under PLAY held, KEY TRANSPOSE neither "
                "transposes nor counts toward the transpose-mode double tap.",
-          expect=["on=PLAY"],
-          also=[(PLAYING + ["d:PLAY", "t:KT", "u:PLAY"], ["on=PLAY"]),
-                (PLAYING + ["d:PLAY", "t:KT", "t:KT", "u:PLAY"], ["on=PLAY"]),
+          expect=PLAY_PERF,
+          also=[(PLAYING + ["d:PLAY", "t:KT", "u:PLAY"], PLAY_PERF),
+                (PLAYING + ["d:PLAY", "t:KT", "t:KT", "u:PLAY"], PLAY_PERF),
                 (REC + ["d:PLAY", "d:KT", "t:key8", "u:KT", "u:PLAY"], [])],
           g="PLAY + KEY TRANSPOSE + key / tap|scale root (again = next scale) / scale on-off"),
     ]),
     ("Performance Modes", [
+        F("Performance / SuperOS Mode", "Any mode but LOAD", "Any time",
+          [C("HOLD", "t", "1. HOLD", hold=True),
+           C("LOAD", "t", "2. LOAD: SWITCH MODE")],
+          PLAYING + ["w:700"],
+          "PLAY lit, HOLD lit: performance mode, the keys are the overlay.",
+          ["Hold HOLD and press LOAD: performance mode on or off. The choice is saved.",
+           "Performance mode: while a sequence plays the HOLD LED stays lit and the keys are the "
+           "performance rows. The HOLD LED flashes three times when you switch it on.",
+           "SuperOS mode: HOLD LED off (one flash when you switch), the keys switch patterns 1-16 "
+           "while playing."],
+          note="Ratchet recording, randomize and mutate (PLAY + UP / DOWN / U&D), nudge, shift, loop "
+               "length and the scale gestures work in both modes: they use a held function button. "
+               "Performance choices keep playing in SuperOS mode until reset.",
+          expect=PLAY_PERF, also=[(PLAYING + SUPEROS, ["on=PLAY"]), (PLAYING + SUPEROS + SUPEROS, PLAY_PERF)],
+          g="HOLD + LOAD|performance mode (HOLD LED lit while playing) / SuperOS mode"),
         F("Performance Rows", "Sequencer play", "Playing",
           [C("TRANSPOSE", "b", "L / M / H: ROW 1 GLOBAL / 2 PITCH / 3 TIME"),
            C(KB, "b", "THE KEYS: THE OVERLAY ROW", box=True)],
@@ -337,45 +355,63 @@ CHAPTERS = [
           note="Only while playing with no function button held: HOLD + key, PLAY + key and KEY "
                "TRANSPOSE + key keep their jobs. Stopped, the keys play notes and the switch sets "
                "the octave. The web editor can turn the overlay off.",
-          expect=["on=PLAY"],
+          expect=PLAY_PERF,
           g="Playing: TRANSPOSE L / M / H|performance row Global / Pitch / Time"),
         F("Row 1: Global", "Sequencer play", "Playing, TRANSPOSE on L",
           [C("key1|key12", "b", "1-12: TRANSPOSE", box=True),
            C("key13|key19", "b", "13-19: OCTAVE VARIATIONS", box=True),
            C("key20|key24", "t", "20-24: LFO/S&H SYNC", box=True),
-           C("key25|key32", "t", "25-32: PATTERN 1-8", box=True)],
-          PLAYING + ["sw:oct:down", "t:key10"],
-          "KEY TRANSPOSE lit: key 10 transposed the pattern up 2.",
-          ["Keys 1-12 transpose from the lowest C (key 8 = none).",
+           C("key25|key31", "t", "25-31: PATTERN 1-7", box=True),
+           C("key32", "b", "RESET")],
+          PLAYING + ["sw:oct:down", "t:key10", "c:1"],
+          "KEY TRANSPOSE lit: key 10 transposed the pattern up 2, from the next step.",
+          ["Keys 1-12 transpose from the lowest C (key 8 = none), from the next step on.",
            "Keys 13-19: octave variations 1-7 (7 = a random octave each step).",
-           "Keys 20-24: the LFO (and its random S&H) restarts on a 1/16, 1/8, 1/4, 1/2 or 1/1 grid.",
-           "Keys 25-32: patterns 1-8, switched now at the same position."],
-          note="The same key again turns an octave variation or LFO sync off.",
-          expect=["on=PLAY", "on=KT"],
-          g="Row 1 (L): keys 1-12 / 13-19 / 20-24 / 25-32|transpose / octaves / LFO sync / patterns"),
+           "Keys 20-24: the LFO (and its random S&H) restarts on a 1/16, 1/8, 1/4, 1/2 or 1/1 grid. "
+           "The same key again stops the restart.",
+           "Keys 25-31: patterns 1-7, switched at the next step, at the same position."],
+          note="Key 32 alone clears the row (transpose, octaves, LFO sync); held + a key turns that "
+               "function off. Every choice lands on the next step, never on the sounding note.",
+          expect=PLAY_PERF + ["on=KT"],
+          g="Row 1 (L): keys 1-12 / 13-19 / 20-24 / 25-31 / 32|transpose / octaves / LFO sync / patterns / reset",
+          keymap=[("key1|key12", ["-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "+1", "+2", "+3", "+4"]),
+                  ("key13|key19", ["OCT 1", "OCT 2", "OCT 3", "OCT 4", "OCT 5", "OCT 6", "RANDOM"]),
+                  ("key20|key24", ["LFO 1/16", "LFO 1/8", "LFO 1/4", "LFO 1/2", "LFO 1/1"]),
+                  ("key25|key31", ["PAT 1", "PAT 2", "PAT 3", "PAT 4", "PAT 5", "PAT 6", "PAT 7"]),
+                  ("key32", ["RESET"])]),
         F("Row 2: Pitch", "Sequencer play", "Playing, TRANSPOSE on M",
           [C("key1|key7", "b", "1-7: REORDER NOTES", box=True),
            C("key8|key19", "b", "8-19: ROOT C-B", box=True),
            C("key20|key26", "t", "20-26: SCALE TYPE", box=True),
-           C("key27|key31", "t", "27-31: COMBINE", box=True),
+           C("key27", "t", "CYCLE PARTNER"),
+           C("key28|key31", "t", "28-31: COMBINE", box=True),
            C("key32", "b", "RESET")],
           PLAYING + ["sw:oct:mid", "t:key2"],
           "PLAY lit. Key 2: the notes play in reverse order, the rhythm is kept.",
-          ["Keys 1-7 reorder the notes: as written, reverse, cycle even, cycle odd, prime, one "
-           "forward, one back.",
-           "Keys 8-19 set the quantizer root, keys 20-26 the type: major, minor, dorian, "
-           "mixolydian, lydian, phrygian, locrian.",
-           "Keys 27-31 combine the pitches with the next pattern's: add, subtract, multiply, "
-           "divide, difference."],
-          note="A root alone uses major, a type alone uses C. Key 32 alone clears the row; key 32 "
-               "held + a key turns that function off.",
-          expect=["on=PLAY"],
-          g="Row 2 (M): keys 1-7 / 8-19 / 20-26 / 27-31|reorder / root / scale / combine pitch"),
+          ["Keys 1-7 reorder the notes (rests stay): as written, reverse, 1st 3rd 5th first, 2nd 4th "
+           "6th first, a prime stride, and one forward / one back, which move one note further every loop pass.",
+           "Keys 8-19 set the quantizer root, keys 20-26 the type: major, minor, dorian, harmonic "
+           "minor, lydian, phrygian, locrian. The quantizer acts after reorder and combine, so it "
+           "scales the combined notes too. Its key again turns the scale off, and on again.",
+           "Key 27 cycles the partner pattern through the saved ones; keys 28-31 combine the "
+           "pitches with it: add, subtract, divide, difference."],
+          note="A root alone uses major, a type alone uses C. With no partner picked, it is the next "
+               "pattern. Key 32 alone clears the row; key 32 held + a key turns that function off.",
+          expect=PLAY_PERF,
+          g="Row 2 (M): keys 1-7 / 8-19 / 20-26 / 27 / 28-31|reorder / root / scale / partner / combine pitch",
+          keymap=[("key1|key7", ["NORMAL", "REVERSE", "1-3-5", "2-4-6", "PRIME", "FWD +1", "BACK -1"]),
+                  ("key8|key19", ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]),
+                  ("key20|key26", ["MAJOR", "MINOR", "DORIAN", "HARM MIN", "LYDIAN", "PHRYG", "LOCRIAN"]),
+                  ("key27", ["CYCLE"]),
+                  ("key28|key31", ["ADD", "SUB", "DIV", "DIFF"]),
+                  ("key32", ["RESET"])]),
         F("Row 3: Time", "Sequencer play", "Playing, TRANSPOSE on H",
           [C("key1|key7", "b", "1-7: SHIFT TIME", box=True),
            C("key8|key12", "b", "8-12: SKIP", box=True),
            C("key13|key21", "t", "13-17 GRID, 18-21 LOGIC", box=True),
-           C("key27|key31", "t", "27-31: COMBINE", box=True),
+           C("key22|key26", "b", "22-26: RATCHET", box=True, hold=True),
+           C("key27", "t", "CYCLE PARTNER"),
+           C("key28|key31", "t", "28-31: COMBINE", box=True),
            C("key32", "b", "RESET")],
           PLAYING + ["sw:oct:up", "t:key5"],
           "PLAY lit. Key 5: the pattern plays a sixteenth later.",
@@ -384,21 +420,46 @@ CHAPTERS = [
            "pattern waits.",
            "Keys 13-17 pick a grid (1/4 1/8 1/16 1/4T 1/16T), keys 18-21 how it meets the step "
            "clock (NOR OR AND XOR): OR adds steps, AND deletes them.",
-           "Keys 27-31 combine the rhythm with the next pattern's: AND OR NOR XOR NAND."],
+           "Key 27 cycles the rhythm partner through the saved patterns; keys 28-31 combine the "
+           "rhythm with it: AND OR NOR XOR."],
           note="The grid follows the MIDI clock when it drives the SH-101. Ratchet (keys 22-26) is "
-               "on the next page.",
-          expect=["on=PLAY"],
-          g="Row 3 (H): keys 1-7 / 8-12 / 13-21 / 27-31|shift / skip / add-delete / combine rhythm"),
+               "on the next page. Key 32 alone clears the row.",
+          expect=PLAY_PERF,
+          g="Row 3 (H): keys 1-7 / 8-12 / 13-21 / 27 / 28-31|shift / skip / add-delete / partner / combine rhythm",
+          keymap=[("key1|key7", ["1/4 R", "1/4 L", "1/8 R", "1/8 L", "1/16 R", "1/16 L", "3/16 R"]),
+                  ("key8|key12", ["SKIP 4TH", "SKIP 8TH", "SK EVEN", "SKIP ODD", "SKIP 5TH"]),
+                  ("key13|key17", ["GRID 1/4", "GRID 1/8", "GRID 1/16", "GRID 1/4T", "GR 1/16T"]),
+                  ("key18|key21", ["NOR", "OR", "AND", "XOR"]),
+                  ("key22|key26", ["R 1/32", "R 1/16", "R 1/16T", "R 3X", "R 7X"]),
+                  ("key27", ["CYCLE"]),
+                  ("key28|key31", ["AND", "OR", "NOR", "XOR"]),
+                  ("key32", ["RESET"])]),
         F("Ratchet", "Sequencer play", "Playing, TRANSPOSE on H",
           [C("key22|key26", "b", "HOLD 22-26: 1/32 1/16 1/16T 3x 7x", hold=True, box=True)],
           PLAYING + ["sw:oct:up", "d:key23"],
-          "PLAY lit. Key 23 held: the sounding note repeats every sixteenth.",
-          ["Hold one of keys 22-26: the note sounding at the press repeats at 1/32, 1/16, 1/16 "
+          "PLAY lit. Key 23 held: from the next step its note repeats every sixteenth.",
+          ["Hold one of keys 22-26: from the next step its note repeats at 1/32, 1/16, 1/16 "
            "triplets, 3 or 7 times a step.",
            "The pattern runs on underneath: let go and it carries on where it would be."],
           note="Ratchet is the one function that does not latch.",
-          expect=["on=PLAY"],
-          g="Row 3 (H): hold key 22-26|ratchet the sounding note"),
+          expect=PLAY_PERF,
+          g="Row 3 (H): hold key 22-26|ratchet from the next step",
+          keymap=[("key22|key26", ["R 1/32", "R 1/16", "R 1/16T", "R 3X", "R 7X"])]),
+        F("Write and Reset", "Sequencer play", "Playing",
+          [C("KT", "t", "1. HOLD KEY TRANSPOSE", hold=True),
+           C("LOAD", "t", "2. LOAD: WRITE WHAT PLAYS"),
+           C("key32", "b", "HOLD 1 S: RESET ALL ROWS", hold=True)],
+          PLAYING + ["d:KT", "t:LOAD", "u:KT"],
+          "PLAY lit: still playing, now from the written pattern.",
+          ["KEY TRANSPOSE + LOAD while playing writes one pass of what plays into the pattern: "
+           "reorder, quantizer, combine, octave variation, shift and transpose become its notes. An "
+           "active scale stays on as the pattern's own.",
+           "Those settings are then cleared, so the new pattern is the baseline and sounds the same. "
+           "The LFO/S&H sync and the timing ones (skip, add/delete, ratchet) stay on.",
+           "Key 32 tapped clears its row; held for 1 second it clears all three rows."],
+          note="Writing changes the stored pattern; everything else in the overlay never does.",
+          expect=PLAY_PERF,
+          g="Playing: KEY TRANSPOSE + LOAD / key 32 held 1 s|write what plays / reset every row"),
     ]),
     ("Transpose and Tune", [
         F("Key Transpose", "Any mode but LOAD", "Any time",
@@ -424,7 +485,7 @@ CHAPTERS = [
            "button to hold.",
            "Double-tap again to leave; the last transpose stays."],
           expect=["on=PLAY", "blink=KT"],
-          also=[(PLAYING + ["t:KT", "t:KT", "w:500", "t:KT", "t:KT"], ["on=PLAY"])],
+          also=[(PLAYING + ["t:KT", "t:KT", "w:500", "t:KT", "t:KT"], PLAY_PERF)],
           g="Double-tap KEY TRANSPOSE|transpose mode on / off"),
         F("Pedal as Key Transpose", "Config menu, then any mode", "Set once",
           [C("key19", "b", "MENU KEY 19: PEDAL ROUTE"),
@@ -458,24 +519,24 @@ CHAPTERS = [
           MENU,
           "Menu: HOLD lit; PLAY lit = SuperOS is running.",
           ["Hold HOLD and KEY TRANSPOSE together for 2 seconds (or while switching on).",
-           "The HOLD LED lights, the gate closes, and LOAD (80C49 emulator) or PLAY (SuperOS) shows the "
+           "The HOLD LED lights, the gate closes, and LOAD (original firmware) or PLAY (SuperOS) shows the "
            "firmware that is running. KEY TRANSPOSE lit = MIDI clock sync on.",
            "Press KEY TRANSPOSE to leave. Every setting is kept across power-off."],
           expect=MENU_ON, also=[(MENU + ["t:KT"], [])],
           g="HOLD + KEY TRANSPOSE 2 s|config menu; KEY TRANSPOSE exits"),
         F("Firmware: SuperOS or Original", "Config menu", "In the menu",
-          [C("LOAD", "t", "80C49 EMULATOR (ROLAND ROM)"),
+          [C("LOAD", "t", "ORIGINAL FIRMWARE"),
            C("PLAY", "t", "SUPEROS")],
           MENU,
           "PLAY lit: SuperOS is running.",
-          ["In the menu, LOAD restarts into the 80C49 emulator: the original Roland program.",
-           "PLAY restarts into SuperOS.",
+          ["In the menu, LOAD switches to the original firmware: the instrument's original program.",
+           "PLAY switches to SuperOS. The switch is immediate.",
            "The choice is kept; the menu works the same way in both."],
-          note="In emulator mode the stock SH-101 behaves as from the factory (100 steps, stock "
+          note="With the original firmware the SH-101 behaves as from the factory (100 steps, stock "
                "arpeggio), with MIDI and clock sync added. Its power-on test mode (LOAD + KEY TRANSPOSE) "
                "works there.",
           expect=MENU_ON,
-          g="Menu: LOAD / PLAY|80C49 emulator / SuperOS"),
+          g="Menu: LOAD / PLAY|original firmware / SuperOS"),
         F("MIDI Clock Sync", "Config menu", "In the menu",
           [C("UD", "t", "U&D: SYNC ON / OFF"),
            C("KT", "t", "LIT = SYNC ON")],
@@ -498,20 +559,20 @@ CHAPTERS = [
           expect=MENU_ON,
           g="Menu: keys 1-10, UP / DOWN|clock division"),
         F("Accent, Cutoff, LFO Sync", "Config menu", "In the menu",
-          [C("key11", "t", "11: MC-202"),
-           C("key12", "b", "12: TB-303"),
+          [C("key11", "t", "11: ENVELOPE ACCENT"),
+           C("key12", "b", "12: RESONANT ACCENT"),
            C("key13", "b", "13: MIDI CUTOFF"),
            C("key14", "t", "14: LFO HARD-SYNC")],
           MENU + ["t:key12"],
-          "Key 12: TB-303 accent model.",
-          ["Key 11 / 12: accent model, MC-202 or TB-303 style, for notes with a high MIDI velocity "
-           "(on the filter and the VCA).",
+          "Key 12: resonant accent.",
+          ["Key 11 / 12: accent model for notes at MIDI velocity 100 or more and accented steps: envelope "
+           "(follows the synth's envelope) or resonant (a short sweep that builds up over accents).",
            "Key 13: MIDI filter cutoff (CC 74) on / off.",
            "Key 14: LFO hard-sync on / off. On: with MIDI sync the LFO is reset to the clock. Off: "
            "the LFO runs free for modulation while the steps still follow the clock."],
-          note="Accent and cutoff need the CV DAC (board v1.1 and later). No LED shows these settings.",
+          note="Accent and cutoff need the board's filter and accent wires. No LED shows these settings.",
           expect=MENU_ON,
-          g="Menu: keys 11-14|accent MC-202 / TB-303, MIDI cutoff, LFO hard-sync"),
+          g="Menu: keys 11-14|accent envelope / resonant, MIDI cutoff, LFO hard-sync"),
         F("Direction and Pedal", "Config menu", "In the menu",
           [C("key15|key18", "b", "15-18: FWD BWD PING-PONG RANDOM", box=True),
            C("key19", "b", "19: PEDAL HOLD / TRANSP.")],
@@ -533,6 +594,20 @@ CHAPTERS = [
           note="Only with MIDI sync on. The editor can set 0 to 60 ms.",
           expect=MENU_ON,
           g="Menu: keys 20-31|sync delay 0-30 ms"),
+        F("Start Mode and MIDI Thru", "Config menu", "In the menu",
+          [C("HOLD", "t", "HOLD: START MODE HOST / ARMED"),
+           C("key32", "b", "32: MIDI OUT / THRU")],
+          MENU + ["t:HOLD"],
+          "Menu LEDs unchanged: no LED shows these settings.",
+          ["HOLD switches the start mode. Host (the default): the host's MIDI Start plays the SH-101. "
+           "Armed: Start plays only a pattern you queued with PLAY; Stop sends it back to step 1, still "
+           "queued.",
+           "Key 32 switches the MIDI OUT jack: OUT sends the notes the SH-101 plays, THRU passes on what "
+           "arrives at MIDI IN and sends none of its own notes."],
+          note="Both are kept across power-off. Start mode acts only with MIDI sync on. The web editor "
+               "shows and sets both.",
+          expect=MENU_ON,
+          g="Menu: HOLD / key 32|start mode Host / Armed, MIDI OUT / THRU"),
     ]),
     ("MIDI Sync", [
         F("Host Transport", "Sequencer, sync on", "MIDI clock sync on",
@@ -544,9 +619,11 @@ CHAPTERS = [
            "A synced SH-101 never runs on its own: no clock, no steps. The arpeggio follows the clock "
            "too."],
           note="Start does not interrupt a running arpeggio or LOAD. With sync off, Start only rewinds "
-               "a pattern that is already playing.",
-          expect=["on=PLAY"],
-          also=[(["sync:on", "m:start", "m:clock:30", "m:stop"], []), (["sync:on", "t:PLAY"], ["on=PLAY"])],
+               "a pattern that is already playing. While the clock drives the SH-101, the KEY TRANSPOSE "
+               "LED blinks on the beat. Start mode Armed (Config Menu HOLD) changes step 1: see Start "
+               "Mode and MIDI Thru.",
+          expect=PLAY_PERF,
+          also=[(["sync:on", "m:start", "m:clock:30", "m:stop"], []), (["sync:on", "t:PLAY"], PLAY_PERF)],
           g="Sync on: MIDI Start / Stop|run the sequencer; PLAY only arms"),
     ]),
 ]

@@ -30,8 +30,10 @@ OUT_HTML = os.path.join(HERE, "guide.html")
 OUT_PDF = os.path.join(HERE, "SuperOS-101-Shortcut-Guide.pdf")
 REV = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "buildrev.py"), "--print"],
                      capture_output=True, text=True).stdout.strip() or "unknown"
-VERSION = f"Build {datetime.date.today().isoformat()} ({REV})"
+VERSION = f"Edition {datetime.date.today().isoformat()}"
 RED, BLUE = "#e3001b", "#2f7fd0"
+# keymap groups, in turn: a ring round each key of a group and its job written on the key
+GROUP = ["#2f7fd0", "#d9541e", "#1f9a5a", "#8a3fc0", "#c28a00", "#d0306f"]
 CREDIT = "Panel photo: Wikipedia user 909 bd, Wikimedia Commons, CC BY-SA 3.0."
 
 # ---- one drawing with callouts (the S900 guide's diagram.py, sized for this panel) ----
@@ -54,6 +56,50 @@ def bbox(btn):
     x1 = max(KEYS[i][0] + KEYS[i][2] / 2 for i in ids)
     y1 = max(KEYS[i][1] + KEYS[i][3] / 2 for i in ids)
     return x0, y0, x1, y1
+
+
+def keymap_svg(keymap):
+    """keymap: [("key1|key7", [label per key]), ...]: a drawn 32-key keyboard, full column width,
+    each key of a group outlined and tinted in its colour with its job written up the key."""
+    W, H, BW, BH = 10.0, 44.0, 6.4, 25.0              # mm: white key, black key
+    lab, col = {}, {}
+    for g, (ids, labels) in enumerate(keymap):
+        a, b = (int(i[3:]) for i in ids.split("|")) if "|" in ids else (int(ids[3:]),) * 2
+        if b - a + 1 != len(labels):
+            raise SystemExit(f"keymap {ids}: {len(labels)} labels for {b - a + 1} keys")
+        for n, t in zip(range(a, b + 1), labels):
+            lab[n], col[n] = t, GROUP[g % len(GROUP)]
+    whites, blacks, x = [], [], 0.0
+    for n in range(1, 33):
+        if (n - 1) in panel.BLACK:
+            blacks.append((n, x - BW / 2))
+        else:
+            whites.append((n, x)); x += W
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" style="width:{x:.0f}mm" viewBox="-0.5 -4 {x + 1:.1f} {H + 9.5:.1f}" '
+           f'font-family="{panel.FONT}">']
+    def text(cx, y0, t, fs, fill):                   # rotated, reading bottom to top, starting at y0
+        return (f'<text transform="translate({cx + fs * 0.36:.2f},{y0:.2f}) rotate(-90)" font-size="{fs}" '
+                f'font-weight="700" fill="{fill}">{esc(t)}</text>')
+    for n, x0 in whites:
+        c = col.get(n)
+        out.append(f'<rect x="{x0:.2f}" y="0" width="{W}" height="{H}" rx="1.2" fill="#fff" stroke="#999" stroke-width="0.25"/>')
+        if c:
+            out.append(f'<rect x="{x0 + 0.6:.2f}" y="{BH + 0.8:.2f}" width="{W - 1.2:.2f}" height="{H - BH - 1.4:.2f}" '
+                       f'rx="2.2" fill="{c}" fill-opacity="0.13" stroke="{c}" stroke-width="0.6"/>')
+            fs = 2.6 if len(lab[n]) <= 6 else 2.1
+            out.append(text(x0 + W / 2, H - 1.6, lab[n], fs, "#000"))
+        out.append(f'<text x="{x0 + W / 2:.2f}" y="{H + 4.2:.2f}" font-size="2.6" text-anchor="middle" fill="#666">{n}</text>')
+    for n, x0 in blacks:
+        c = col.get(n)
+        out.append(f'<rect x="{x0:.2f}" y="0" width="{BW}" height="{BH}" rx="0.8" fill="#1a1a1a"/>')
+        if c:
+            out.append(f'<rect x="{x0 + 0.5:.2f}" y="0.5" width="{BW - 1:.2f}" height="{BH - 1:.2f}" rx="1.6" '
+                       f'fill="none" stroke="{c}" stroke-width="0.7"/>')
+            fs = 2.4 if len(lab[n]) <= 6 else 2.0
+            out.append(text(x0 + BW / 2, BH - 1.6, lab[n], fs, "#fff"))
+        out.append(f'<text x="{x0 + BW / 2:.2f}" y="-1.2" font-size="2.3" text-anchor="middle" fill="#666">{n}</text>')
+    out.append("</svg>")
+    return "".join(out)
 
 
 def draw(callouts, state, crop=None):
@@ -204,10 +250,12 @@ def block(n, f):
     return (f'<section class="fn"><div class="head"><span class="num">{n}</span>'
             f'<h2>{esc(f["title"])}</h2></div><div class="ctx">{chip(f["mode"], True)}{chip(f["when"])}</div>'
             f'<div class="row"><div class="dia">{dia}</div>{shot}</div>'
-            f'<ol class="steps">{steps}</ol>{note}</section>')
+            + (f'<div class="kmap">{keymap_svg(f["keymap"])}</div>' if f["keymap"] else "")
+            + f'<ol class="steps">{steps}</ol>{note}</section>')
 
 
 CSS = """
+.kmap { margin: 2mm 0 1mm; } .kmap svg { display: block; max-width: 100%; height: auto; }
 @page { size: A4; margin: 10mm 10mm 12mm; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; background: #fff; }
@@ -306,28 +354,27 @@ def ref():
         rows.append("</table>")
     return ('<div class="part">Reference</div><div class="ref">'
             '<h3>LEDs</h3><table><tr><th>LED</th><th>Meaning</th></tr>'
-            '<tr><td>LOAD lit</td><td>Recording (LOAD); in the menu: 80C49 emulator running</td></tr>'
+            '<tr><td>LOAD lit</td><td>Recording (LOAD); in the menu: original firmware running</td></tr>'
             '<tr><td>LOAD blinks</td><td>Tune</td></tr>'
             '<tr><td>PLAY lit</td><td>Sequencer playing (or armed); in the menu: SuperOS running</td></tr>'
             '<tr><td>PLAY + LOAD alternate</td><td>Real-time record</td></tr>'
             '<tr><td>DOWN / U&amp;D / UP lit</td><td>Arpeggio direction</td></tr>'
             '<tr><td>U&amp;D blinks</td><td>Random arpeggio</td></tr>'
-            '<tr><td>HOLD lit</td><td>HOLD button or pedal down; in the menu: the menu is open</td></tr>'
+            '<tr><td>HOLD lit</td><td>HOLD button or pedal down; playing in performance mode; in the menu: the menu is open</td></tr>'
             '<tr><td>KEY TRANSPOSE lit</td><td>A transpose is active; in the menu: MIDI clock sync on</td></tr>'
-            '<tr><td>KEY TRANSPOSE blinks</td><td>Transpose mode</td></tr></table>'
+            '<tr><td>KEY TRANSPOSE blinks</td><td>Fast: transpose mode. On the beat: MIDI clock is driving the SH-101</td></tr></table>'
             + "".join(rows) +
             '<h3>MIDI</h3><p>Notes 53 to 84 on the receive channel act as keys 1 to 32 (they arpeggiate and '
-            'record); other notes 36 to 99 play the voice. Program change 0 to 7 selects pattern 1 to 8. '
-            'Everything played goes out on MIDI OUT. The web editor (tools/web-editor) edits patterns and '
-            'settings over USB-C or DIN.</p>'
-            '<h3>Resync</h3><p>The editor\'s Resync button (SysEx 0x65 id 9) puts the sequence back on the '
+            'record); other notes 36 to 99 play the voice. Program change 0 to 15 selects pattern 1 to 16. '
+            'CC 74 moves the filter cutoff and velocity 100 or more accents a note (with the board\'s filter '
+            'and accent wires). Everything played goes out on MIDI OUT at velocity 100, accented steps at 127. '
+            'The web editor edits patterns and settings over USB-C or DIN.</p>'
+            '<h3>Resync</h3><p>The editor\'s Resync button puts the sequence back on the '
             'one. It has no panel gesture. Direction, loop length, pattern switches and clock-division '
             'changes never move the sequence off the grid.</p>'
-            '<h3>About these pages</h3><p>The LEDs in every drawing are what the SuperOS-101 firmware '
-            f'(rev {esc(REV)}) shows in the host simulator (sim/superos101-sim, the real firmware source) '
-            'after the keys of that function, on a fresh machine, drawn on a photo of a production SH-101 '
-            '(lit LEDs glow red; a blinking LED is half lit inside a dashed ring). Most drawings show the '
-            'button strip, controllers and keyboard. Details: README.md.</p>'
+            '<h3>About these pages</h3><p>The LEDs in every drawing are the ones the firmware shows after '
+            'the keys of that function, on a fresh machine, drawn on a photo of the panel (lit LEDs glow '
+            'red; a blinking LED is half lit inside a dashed ring).</p>'
             f'<p>{CREDIT} The panel images in this guide are adaptations of that photo, under the same '
             'license (creativecommons.org/licenses/by-sa/3.0).</p></div>')
 
@@ -338,11 +385,11 @@ def cover():
 <div class="brand"><span class="brand-note">Firmware Documentation</span>
 <span class="brand-note">Panel Reference</span></div>
 <h1>SuperOS-101<small>Shortcut Guide</small></h1>
-<div class="meta"><p>{VERSION} &middot; Custom firmware for the Roland SH-101<br>
-AT90USB1286 CPU board &middot; SuperOS + 80C49 emulator &middot; MIDI on DIN and USB-C</p></div>
+<div class="meta"><p>{VERSION} &middot; Custom firmware for the SH-101<br>
+SuperOS + the original firmware &middot; MIDI on DIN and USB-C</p></div>
 <p class="intro">Every SuperOS function on one drawing each: the panel, the controls involved, the order to
-press them, and the LEDs the SH-101 shows while you do it. The LED states are real: the firmware ran each
-sequence in the host simulator. Find the function, look at the picture, follow the numbered steps.</p>
+press them, and the LEDs the SH-101 shows while you do it. Find the function, look at the picture,
+follow the numbered steps.</p>
 <div class="coverart">{art}<p class="credit">{CREDIT}</p></div>
 <div class="legend">
 <div><strong>Reading the drawings</strong><i></i>Black ring: press this.<br>

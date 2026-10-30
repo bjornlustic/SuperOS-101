@@ -1,3 +1,5 @@
+Corrected 2026-10-13: firmware switch is in process (bb0307f), not a reboot; 16 patterns not 8; KEY TRANSPOSE no longer a stub.
+
 # SuperOS-101
 
 Open firmware + a replacement CPU for the **Roland SH-101**, running on an
@@ -25,8 +27,8 @@ DIN and USB-C** (notes, program change, SysEx editor protocol) and **MIDI clock 
 (`src/midiclock.h`): the arp/sequencer clock, LFO hard-sync via CLOCK RESET, and a
 beat-stepped random S&H, at ten divisions (1/4 ... 1/32 incl. dotted/triplet), in
 both firmwares (the emulator gets the divided clock on its T1 pin). A **web editor**
-(`tools/web-editor`) edits patterns and config over MIDI. Remaining stubs: the
-KEY-TRANSPOSE shift value and exact portamento timing. The CPU board lives in
+(`tools/web-editor`) edits patterns and config over MIDI. KEY TRANSPOSE is
+implemented (see Performance features); exact portamento timing is unverified. The CPU board lives in
 [`../SuperOS-101CPU`](../SuperOS-101CPU).
 
 ## Panel (SuperOS mode)
@@ -246,7 +248,7 @@ two firmwares; internal-EEPROM byte 0x000 selects which runs at boot (map in
 **Config menu**: hold **HOLD + KEY-TRANSPOSE for 2 s** (while running, either mode)
 or at power-on. In the menu the HOLD LED lights, the gate is forced off, and the
 function LED shows the running firmware (LOAD lit = emulator, PLAY lit = SuperOS).
-Then: **LOAD** = reboot into the emulator, **PLAY** = reboot into SuperOS,
+Then: **LOAD** = switch to the emulator, **PLAY** = switch to SuperOS,
 **UP&DOWN** = toggle MIDI clock sync (KEY-TRANSP LED lit = on), **UP**/**DOWN** =
 cycle the clock division, the 10 lowest keys = pick the division directly
 (1/4, 1/4d, 1/4t, 1/8, 1/8d, 1/8t, 1/16, 1/16d, 1/16t, 1/32),
@@ -255,12 +257,13 @@ keys 11/12 = accent model, key 13 = MIDI cutoff on/off, key 14 = LFO hard-sync,
 **key 19** = pedal route (HOLD / KEY TRANSPOSE),
 **KEY-TRANSPOSE** = exit. All of it persists in EEPROM.
 
-A firmware switch (menu, or SysEx 0x2F / 0x4D from the editor) waits until every
-key and button has read released for 250 ms (4 s cap), quiets the panel and gate,
-detaches USB, and reboots through the watchdog; the bootloader clears the reset
-cause and falls straight into the selected firmware, which starts from a full
-hardware reset. There is no shared state between the two apart from the EEPROM
-select byte.
+A firmware switch (menu, or SysEx 0x2F / 0x4D from the editor) runs in process
+since bb0307f (2026-08-27): no MCU reset and no USB detach. The request is latched,
+the next loop pass persists the EEPROM select byte, tears the leaving side down
+(SuperOS flushes dirty patterns; the emulator saves its battery RAM), applies the
+input lockout (all keys and buttons released for 250 ms, 4 s cap), and runs the
+other side's setup with its state reset (`src/boot.cpp` SwitchTo). Only the
+bootloader entry (0x4A) still detaches and reboots.
 
 **Mask-ROM policy** (same as the 303): the ROM dump is Roland's copyrighted code and
 is **never distributed**. `tools/mkrom.py` embeds it at build time from
@@ -283,7 +286,7 @@ refuses emulator mode and the unit always boots SuperOS.
 - `src/hw.h` — low-level driver enforcing the two invariants (active-low DB0–5;
   route = disconnected during every scan).
 - `src/controls.h` — panel switch + function-button decode (ported from `SH101.asm`).
-- `src/engine.h` — keyboard / hold / arpeggiator / 8 x 128-step sequencer.
+- `src/engine.h` — keyboard / hold / arpeggiator / 16 x 128-step sequencer.
 - `src/midi.h` — MIDI driver: DIN (UART1 rings + ISRs) + USB-MIDI endpoints, one
   parser per port, SysEx protocol spec; `src/usbmidi_codec.h` — USB-MIDI event codec;
   `src/usb_gate.h` — USB VBUS/SOF gating (from the 303/606).

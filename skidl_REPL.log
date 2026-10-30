@@ -1,9 +1,0 @@
-WARNING: KICAD8_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap_external>:850=>/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap>:228]
-WARNING: KICAD6_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap_external>:850=>/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap>:228]
-WARNING: KICAD7_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap_external>:850=>/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap>:228]
-WARNING: KICAD9_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap_external>:850=>/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap>:228]
-WARNING: KICAD_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap_external>:850=>/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/<frozen importlib._bootstrap>:228]
-WARNING: fp-lib-table file was not found. Component footprints are not available.
-WARNING: fp-lib-table file was not found. Component footprints are not available.
-WARNING: fp-lib-table file was not found. Component footprints are not available.
-WARNING: fp-lib-table file was not found. Component footprints are not available.

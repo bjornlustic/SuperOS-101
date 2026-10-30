@@ -318,12 +318,13 @@ static void OnSysex(const uint8_t* body, uint8_t len) {
     case 0x67: SendFeatures(); break;
     // 0x6A PERFORM [row 1..3, key 0..31, down 0/1]: an overlay key from the host (engine.h
     // perfRemote); answered with 0x6B. 0x6B = read the performance state, answered with
-    // 0x6B [octVar, lfo, reorder, root+1, type+1, pcomb, shift+8, skip, grid, logic, tcomb, ratchet].
+    // 0x6B [octVar, lfo, reorder, root+1, type+1, pcomb, shift+8, skip, grid, logic, tcomb, ratchet,
+    // scale off, pitch partner+1, rhythm partner+1].
     case 0x6A:
       if (len >= 4) g_engine.perfRemote(body[1], body[2], body[3] != 0);
       // fall through
     case 0x6B: {
-      uint8_t b[13] = {0x6B};
+      uint8_t b[16] = {0x6B};
       g_engine.perfState(b + 1);
       midi::SendSysex(b, sizeof(b));
       break;
@@ -670,7 +671,7 @@ void superos_loop() {
   // LOAD/PLAY/DOWN/U&D/UP. CLOCK RESET is ACTIVE-LOW (the ROM idles P24 high
   // and pulses it low; holding it low freezes the LFO).
   uint8_t p2 = (uint8_t)(P2_IDLE | g_engine.ledSelect());
-  if (g_buttons.hold)  p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit
+  if (g_engine.holdLed(g_buttons.hold)) p2 &= (uint8_t)~(1u << P2_LED_HOLD);  // 0 -> HOLD lit (and performance mode)
   // G10: while the host's clock drives the 101, KEY-TRANSPOSE blinks on the
   // beat (the LFO LED is analog and cannot follow a tempo faster than its
   // RATE slider). Transpose mode's own fast blink keeps priority.

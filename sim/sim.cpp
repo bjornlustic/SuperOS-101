@@ -2253,23 +2253,42 @@ static int SelfTest() {
       tapK(20);                                          // C minor: A# stays, B -> C, C# -> C
       q = run(4);
       CHECK(q == "10 12 12 10 ", "row 2 key 21: C minor (ties snap down)");
+      tapK(20);                                          // the same scale key again: off, kept
+      CHECK(run(4) == "11 12 13 10 ", "row 2 key 21 again: the scale off");
+      tapK(20);                                          // and on again
+      CHECK(run(4) == "10 12 12 10 ", "row 2 key 21 a third time: the same scale back on");
+      tapK(22);                                          // C harmonic minor (C D Eb F G Ab B), not mixolydian
+      q = run(4); printf("  (C harmonic minor: %s)\n", q.c_str());
+      CHECK(q == "11 12 12 11 ", "row 2 key 23: C harmonic minor, where mixolydian was");
       tapK(31);                                          // reset alone: row 2 off
       CHECK(run(4) == "11 12 13 10 ", "row 2 reset alone clears the row");
-      tapK(26);                                          // combine pitch, add (pattern 9 intervals 0 - 2 -)
+      tapK(27);                                          // combine pitch, add (pattern 9 intervals 0 - 2 -)
       q = run(4);
-      CHECK(q == "11 14 13 10 ", "row 2 key 27: add the other sequence's intervals");
-      key(31, true); tapK(26); key(31, false);           // reset + key: that function off
+      CHECK(q == "11 14 13 10 ", "row 2 key 28: add the next pattern's intervals");
+      key(31, true); tapK(27); key(31, false);           // reset + key: that function off
       CHECK(run(4) == "11 12 13 10 " && engine::PerfOn(), "row 2 reset + key turns that function off");
+      // One forward: one more each loop pass (4 notes: +1, +2, +3, as written).
+      tapK(5);
+      q = run(16); printf("  (one forward, continuous: %s)\n", q.c_str());
+      CHECK(q == "12 13 10 12 13 10 11 13 10 11 12 10 11 12 13 11 ", "row 2 key 6: one forward, one note further each pass");
+      tapK(5);
+      // A choice lands at the next step: the sounding note keeps its pitch.
+      {
+        const uint8_t before = sim::g_sh[0];
+        tapK(1);                                         // reverse, mid-step
+        CHECK(sim::g_sh[0] == before, "row 2: a choice waits for the next step (sounding note untouched)");
+        tapK(1); run(4);
+      }
 
       sim::g_octave = 1; RunLoops(2);                    // row 3: time
       tapK(4);                                           // shift 1/16 right
       CHECK(run(4) == "10 11 12 13 ", "row 3 key 5: shift time one 16th later");
       tapK(4);
-      restart(); tapK(26);                               // combine rhythm: AND
-      CHECK(run(4) == "- 12 - 10 ", "row 3 key 27: AND with the other sequence's rhythm");
-      tapK(26); restart(); tapK(29);                     // XOR
-      CHECK(run(4) == "11 - 13 - ", "row 3 key 30: XOR with the other sequence's rhythm");
-      tapK(29); restart(); tapK(9);                      // skip even clocks
+      restart(); tapK(27);                               // combine rhythm: AND
+      CHECK(run(4) == "- 12 - 10 ", "row 3 key 28: AND with the next pattern's rhythm");
+      tapK(27); restart(); tapK(30);                     // XOR
+      CHECK(run(4) == "11 - 13 - ", "row 3 key 31: XOR with the next pattern's rhythm");
+      tapK(30); restart(); tapK(9);                      // skip even clocks
       std::string sk = run(6);
       printf("  (skip even: %s)\n", sk.c_str());
       CHECK(sk == "11 - 12 - 13 - ", "row 3 key 10: every even clock is skipped, the pattern waits");
@@ -2292,6 +2311,20 @@ static int SelfTest() {
       CHECK(reorder() == 1, "0x6A row 2 key 2: reverse latched from the host, 0x6B says so");
       sx({0x6A, 2, 31, 1});                                      // row 2 reset
       CHECK(reorder() == 0, "0x6A row 2 key 32: the row reset");
+      auto field = [&](int f) {                                  // field f (0-based) of the last 0x6B
+        int r = -1;
+        for (size_t i = 0; i + 3 + f < g_midiOut.size(); ++i)
+          if (g_midiOut[i] == 0xF0 && g_midiOut[i + 1] == 0x7D && g_midiOut[i + 2] == 0x6B) r = g_midiOut[i + 3 + f];
+        g_midiOut.clear();
+        return r;
+      };
+      sx({0x6A, 2, 26, 1}); sx({0x6A, 2, 26, 0});                // pitch cycle key: a saved pattern, not 9 (the default)
+      const int pp = field(13);
+      CHECK(pp > 0 && pp != 9 && pp != 8, "row 2 key 27: the cycle key picks another saved pattern to combine with");
+      sx({0x6A, 3, 26, 1}); sx({0x6A, 3, 26, 0});
+      CHECK(field(14) > 0, "row 3 key 27: the rhythm partner cycles too");
+      sx({0x6A, 2, 31, 1}); sx({0x6A, 3, 31, 1});
+      CHECK(field(13) == 0, "row reset: the partner back to the next pattern");
       restart(); plain = cvs(3);
       sx({0x6A, 3, 22, 1}); roll = cvs(3); sx({0x6A, 3, 22, 0});
       printf("  (host ratchet: %s)\n", roll.c_str());
@@ -2305,19 +2338,59 @@ static int SelfTest() {
       tapK(28);                                          // pattern 5 (30 31) now
       std::string ps = run(2);
       CHECK(ps == "32 33 " || ps == "33 32 ", "row 1 key 29: pattern 5 now, transposed");
-      tapK(7); tapK(31);                                 // C: no transpose; key 32: pattern 8
+      tapK(31);                                          // key 32: the row 1 reset (transpose off)
       std::string back = run(2);
-      CHECK(back == "10 11 " || back == "12 13 " || back == "11 12 " || back == "13 10 ", "row 1: transpose off, pattern 8 back");
+      CHECK(back == "30 31 " || back == "31 30 ", "row 1 key 32: the row reset, transpose off");
+      sx({0x1D, 7}); run(4);                             // pattern 8 back at the loop end
       tapK(13);                                          // octave variation 2: +1 octave every 4th step
       std::string ov = run(4);
       printf("  (octave variation 2: %s)\n", ov.c_str());
       CHECK(ov.find("25 ") != std::string::npos, "row 1 key 14: octave variation lifts every 4th step");
       tapK(13);
+      // Transpose lands at the next step, never on the sounding note.
+      {
+        const uint8_t before = sim::g_sh[0];
+        tapK(9);
+        CHECK(sim::g_sh[0] == before, "row 1: transpose waits for the next step");
+        CHECK(run(1) != std::to_string(before) + " ", "row 1: the next step plays transposed");
+        tapK(7); run(4);
+      }
+      // Reset held 1 s: every row (transpose, reorder, shift) at once.
+      tapK(9); sim::g_octave = 0; RunLoops(2); tapK(1); sim::g_octave = 1; RunLoops(2); tapK(4);
+      run(4);
+      key(31, true); WaitVirtMs(1100); key(31, false);
+      std::string all = run(4); printf("  (after reset held 1 s: %s)\n", all.c_str());
+      CHECK(all == "10 11 12 13 " || all == "11 12 13 10 " || all == "12 13 10 11 " || all == "13 10 11 12 ", "key 32 held 1 s: all three rows reset");
+      // KEY TRANSPOSE + LOAD while playing: what plays becomes the pattern.
+      sim::g_octave = -1; RunLoops(2); tapK(9);          // +2
+      sim::g_octave = 0; RunLoops(2); tapK(1);           // reverse
+      run(4); std::string was = run(4);
+      btn(B_KT, true); tap(B_LOAD); btn(B_KT, false);
+      std::string now = run(4); printf("  (playing %s, written %s)\n", was.c_str(), now.c_str());
+      g_midiOut.clear(); sx({0x6B});
+      CHECK(now == was && reorder() == 0, "KT + LOAD: the pattern now holds what played, those settings cleared");
+      WaitVirtMs(500);                                   // past the KEY TRANSPOSE double-tap window
+      push(7, {10, 11, 12, 13});
+      sim::g_octave = -1; RunLoops(2);
       tap(B_PLAY); WaitVirtMs(40);
       key(0, true);
       CHECK(GateOn() && sim::g_sh[0] == 17 - 12, "stopped: the keys play notes again");
       key(0, false);
       sim::g_octave = 0; RunLoops(2);
+      // HOLD + LOAD: performance mode on / off; the HOLD LED shows it while playing.
+      auto holdLit = [] { return !(sim_portf & 0x20); };
+      play(); run(2); WaitVirtMs(700);
+      CHECK(holdLit() && engine::PerfOn(), "performance mode, playing: HOLD LED lit");
+      btn(B_HOLD, true); tap(B_LOAD); btn(B_HOLD, false); WaitVirtMs(700);
+      CHECK(!engine::PerfOn() && !holdLit() && (sim_portf & 7) == 2, "HOLD + LOAD: SuperOS mode, HOLD LED off, still playing");
+      key(4, true); key(4, false);
+      std::string p5 = run(2);
+      CHECK(p5 == "30 31 " || p5 == "31 30 ", "SuperOS mode: plain keys switch patterns again (key 5: pattern 5)");
+      sx({0x1D, 7}); run(4);
+      btn(B_HOLD, true); tap(B_LOAD); btn(B_HOLD, false); WaitVirtMs(700);
+      CHECK(engine::PerfOn() && holdLit(), "HOLD + LOAD again: performance mode, HOLD LED lit");
+      tap(B_PLAY); WaitVirtMs(700);
+      CHECK(!holdLit(), "stopped: HOLD LED off");
       sx({0x65, 16, 0});
     }
 

@@ -1,3 +1,5 @@
+Corrected 2026-10-13: efuse is 0xF9 (was 0xF8 in the Fuses section); pin 26 and pin 4 are NC on the CPU board (was "tie +5 V"); board layout done.
+
 # SH-101 hardware notes (for SuperOS-101)
 
 Source of truth:
@@ -242,8 +244,9 @@ low scan column commons are all writes (`OUTL BUS,A`); the keyboard/switch *read
 P1. So PORTC = pure output, no bus-turnaround handling needed.
 
 ### Fuses
-`lfuse 0xDF, hfuse 0xDA, efuse 0xF8`. Only lfuse differs from the 303/606 (CKOUT off,
-because CLKO is PC7 = DB7 here); see `[env:fuses]` in platformio.ini.
+`lfuse 0xDF, hfuse 0xDA, efuse 0xF9`. lfuse differs from the 303/606 (CKOUT off,
+because CLKO is PC7 = DB7 here) and so does efuse (BOD 3.5 V, not 4.3 V: the SH-101
+rail dips below 4.3 V on flash writes and USB start); see `[env:fuses]` in platformio.ini.
 
 ### Board-level deltas vs the SuperOS-303 board
 - **New DIP-40 footprint** (303 is DIP-42). Reuse the FFC breakout + Tag-Connect ISP.
@@ -251,7 +254,9 @@ because CLKO is PC7 = DB7 here); see `[env:fuses]` in platformio.ini.
 - Socket **pins 2/3 (XTAL1/2) unused** — AVR has its own crystal; leave the 6 MHz
   resonator pins unconnected.
 - **Pin 26 (Vdd RAM-standby):** sequence persistence moves to the AVR's flash/EEPROM
-  (survives battery removal). Just tie/accept +5 V here; don't depend on RAM standby.
+  (survives battery removal). The CPU board leaves pin 26 **NC** (`../SuperOS-101CPU/design.py`
+  EDGE_MAP): it is the battery-backed standby node, so tying it to +5 V would back-feed
+  or drain the backup battery. Socket pin 4 (RESET) is NC too.
 
 ## Bring-up plan (diagnostic-first, like SuperOS-606)
 
@@ -305,7 +310,7 @@ map on a real unit; (2) drive the DAC at each route and measure CV-OUT/VCO/RANDO
       UVCC; the SuperOS-303 has no such issue only because the TB-303's 5 V
       regulator has the headroom.
 - [ ] Measure the real **DAC settle time** the analog ladder/4052 S/H needs.
-- [ ] Lay out the **new DIP-40 mainboard** (reuse FFC breakout + Tag-Connect ISP).
+- [x] Lay out the **new DIP-40 mainboard**: done, `../SuperOS-101CPU` (board v1.2, 2026-09-30).
 - [x] Read `SH101.asm` in full → behaviour captured in [`docs/FIRMWARE.md`](FIRMWARE.md)
       (DAC/mux protocol, numeric model, loop steps, seq/arp). Arp + seq-packing inner-loops
       still to be copied verbatim from the asm at implementation time.

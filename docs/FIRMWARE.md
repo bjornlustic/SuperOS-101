@@ -1,3 +1,5 @@
+Corrected 2026-10-13: sequencer is 16 x 128 steps in the flash arena (was "100-step, AVR-EEPROM"); KEY TRANSPOSE is implemented.
+
 # SH-101 firmware behaviour (reverse-engineered, for SuperOS-101)
 
 Derived from the original mask ROM: `SH101-reference/SH101.asm` (Joe Britt's commented
@@ -181,11 +183,11 @@ selected key as the note CV.
 Implemented (clean-room, behavioural — see `src/`):
 - DAC/mux protocol + scan invariants (`hw.h`), panel RANGE/OCT/ADSR decode (`controls.h`,
   ported from asm step 3), keyboard mono (lowest/last-note), arpeggiator (up/down/u&d),
-  and a 100-step sequencer with **AVR-EEPROM** persistence (`engine.h`).
+  and a sequencer of 16 patterns x up to 128 steps persisted in the internal-flash
+  arena (`engine.h`, `flash_persist.h`); KEY TRANSPOSE incl. latch and transpose mode.
 
 Still stubbed / to refine:
-- KEY-TRANSPOSE shift value (`keyShift_`), exact clock-reset + portamento timing, and
-  the mode-button latch semantics (verify on HW).
+- exact clock-reset + portamento timing, and the mode-button latch semantics (verify on HW).
 - ~~function-LED 4552 one-hot multiplex~~ **Retired 2026-08-25: it is implemented and
   now measured, not stubbed.** `engine.h ledSelect()` maps the mode to the one-hot
   select and `main.cpp` drives it into the P2 image every pass. Asserted headless in
@@ -341,9 +343,11 @@ the ROM shows idle, on again (about 120 ms) to rewind and re-arm. Self-test:
 
 ## Performance modes (keyboard overlay)
 
-While the sequencer plays (not recording, no function button held, not in
-transpose mode), the 32 keys are the overlay strip printed above them and the
-TRANSPOSE switch picks the row: L = 1 Global, M = 2 Pitch, H = 3 Time. In
+HOLD + LOAD (any mode but LOAD) switches performance mode on / off (saved, the
+same setting as `0x65 id 16`). In performance mode, while the sequencer plays
+(not recording, no function button held, not in transpose mode), the HOLD LED
+is lit and the 32 keys are the overlay strip printed above them; the toggle
+flashes HOLD three times (on) or once (off). The TRANSPOSE switch picks the row: L = 1 Global, M = 2 Pitch, H = 3 Time. In
 keyboard, arp and LOAD the switch and keys work as before (a playing sequence
 never used the octave switch: its notes are stored with their octave). Keys
 below are 1-based from the lowest F.
@@ -353,23 +357,32 @@ below are 1-based from the lowest F.
 | 1 | 1-12 | transpose, C (key 8) = none (stock reference) |
 | 1 | 13-19 | octave variation 1-7 (6 fixed per-step patterns, 7 random) |
 | 1 | 20-24 | LFO/S&H sync: 1/16 1/8 1/4 1/2 1/1 |
-| 1 | 25-32 | patterns 1-8, switched now at the same position |
-| 2 | 1-7 | reorder notes: as written, reverse, cycle even, cycle odd, prime (stride 3, 5, 7 ... coprime to the note count), one forward, one back |
-| 2 | 8-19 | quantizer root C..B (major until a type is chosen) |
-| 2 | 20-26 | quantizer type: major minor dorian mixolydian lydian phrygian locrian |
-| 2 | 27-31 | combine pitch with the other sequence: add subtract multiply divide difference |
+| 1 | 25-31 | patterns 1-7, switched at the next step at the same position |
+| 2 | 1-7 | reorder notes: as written, reverse, cycle even, cycle odd, prime (stride 3, 5, 7 ... coprime to the note count), one forward, one back (one note further every loop pass) |
+| 2 | 8-19 | quantizer root C..B (major until a type is chosen); the same key again = scale off / on, kept |
+| 2 | 20-26 | quantizer type: major minor dorian harmonic-minor lydian phrygian locrian |
+| 2 | 27 | cycle the pitch partner through the saved patterns |
+| 2 | 28-31 | combine pitch with the partner: add subtract divide difference |
 | 3 | 1-7 | shift time: 1/4 R, 1/4 L, 1/8 R, 1/8 L, 1/16 R, 1/16 L, 3/16 R |
 | 3 | 8-12 | skip every 4th, every 8th, even, odd, every 5th clock (the pattern waits) |
 | 3 | 13-17 | add/delete time grid: 1/4 1/8 1/16 1/4T 1/16T |
 | 3 | 18-21 | add/delete logic: NOR OR AND XOR (grid alone = OR, logic alone = 1/4) |
 | 3 | 22-26 | ratchet while held (not latched): 1/32 1/16 1/16T 3x 7x per step |
-| 3 | 27-31 | combine rhythm with the other sequence: AND OR NOR XOR NAND |
-| 2, 3 | 32 | reset: alone clears the row, held + a key turns that function off |
+| 3 | 27 | cycle the rhythm partner through the saved patterns |
+| 3 | 28-31 | combine rhythm with the partner: AND OR NOR XOR |
+| 1-3 | 32 | reset: tapped clears the row, held + a key turns that function off, held 1 s clears every row |
 
-A latched choice pressed again turns off. Everything acts at playback; the
-pattern is never written. Details:
+A latched choice pressed again turns off. Every choice lands at the next step
+(the sounding note is never changed); the held ratchet starts on one too.
+Everything acts at playback and the pattern is not written, except: KEY
+TRANSPOSE + LOAD while playing writes one pass of what plays (reorder,
+quantizer, combine, octave variation, shift, transpose) into the pattern and
+clears those settings; an active scale is rotated by the transpose and kept as
+the pattern's own. LFO/S&H sync, skip and add/delete stay on. Details:
 
-- The other sequence is the next pattern number (pattern 16 pairs with 1).
+- The partner is the one picked with key 27 (each row its own), else the next
+  pattern number (pattern 16 pairs with 1). Row reset puts it back.
+- The quantizer snaps after reorder, combine and octave variation.
 - Combine pitch works on intervals above each pattern's first note, then folds
   by octaves into the DAC range. Combine rhythm: a step the logic fills takes
   the other pattern's pitch (NOR: the last pitch).
@@ -385,6 +398,8 @@ pattern is never written. Details:
 - Ratchet repeats the note sounding at the press; the pattern runs on and
   release returns to where it would be.
 
-`0x65 id 16` turns the overlay off (0) or on (1, default), saved at EEPROM
-0x024 (erased = on), 0x66's 17th field. Self-test: `sim/sim.cpp`, "Performance
+`0x65 id 16` turns the overlay off (0) or on (1, default), as HOLD + LOAD does,
+saved at EEPROM 0x024 (erased = on), 0x66's 17th field. 0x6B reports the
+choices (as of the next step) with three fields appended: scale off, pitch
+partner + 1, rhythm partner + 1 (0 = the next pattern). Self-test: `sim/sim.cpp`, "Performance
 modes" and "add/delete time".

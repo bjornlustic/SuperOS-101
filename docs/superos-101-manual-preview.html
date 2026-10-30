@@ -949,7 +949,7 @@ body{margin:0;background:#fff;}
       <tbody>
         <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press a key 1&#8230;16</td><td><strong>Stopped:</strong> selects that pattern and starts it when you release PLAY. <strong>Playing:</strong> the new pattern follows at the end of the current pass, so the change lands on the bar.</td></tr>
         <tr><td>Hold <kbd class="docs-key">PLAY</kbd>, press several keys in order</td><td>A <strong>song</strong>: the patterns play one after another in that order (up to 16 entries, repeats allowed), looping.</td></tr>
-        <tr><td>Key 25&#8230;32 alone while playing, TRANSPOSE on L</td><td>Switches to pattern 1&#8230;8 <strong>now</strong>, keeping the position (in sync when the pattern lengths are multiples of each other). With Performance modes off, keys 1&#8230;16 do this for patterns 1&#8230;16 at any TRANSPOSE setting.</td></tr>
+        <tr><td>Key 1&#8230;16 alone while playing, SuperOS mode</td><td>Switches to pattern 1&#8230;16 at the next step, keeping the position (in sync when the pattern lengths are multiples of each other). In performance mode, row 1 keys 25&#8230;31 switch patterns 1&#8230;7 the same way.</td></tr>
         <tr><td>MIDI Program Change 0&#8230;15</td><td>Selects pattern 1&#8230;16 (at the end of the pass while playing).</td></tr>
         <tr><td>Save</td><td>Nothing to press: about half a second after an edit (or when playback stops), the pattern is written to permanent memory.</td></tr>
         <tr><td>Back up / edit on a computer</td><td>The web editor (USB-C or DIN MIDI) reads and writes all sixteen slots, ratchets included, and saves them as a file.</td></tr>
@@ -983,26 +983,31 @@ body{margin:0;background:#fff;}
       While a sequence plays, the 32 keys become a performance surface, laid out as the overlay strip above them. The <strong>TRANSPOSE</strong> switch picks the row: <strong>L</strong> = 1 Global, <strong>M</strong> = 2 Pitch, <strong>H</strong> = 3 Time. Keys are counted from the lowest F (key 1) to the top C (key 32).
     </p>
     <p class="docs-body">
-      Nothing here is written into the pattern: every change acts on what you hear, and the stored notes stay as recorded. A choice stays on (latched) until you press the same key again, or reset it. The overlay is active only while the sequencer plays and no function button is held, so <kbd class="docs-key">HOLD</kbd> + key (loop length), <kbd class="docs-key">PLAY</kbd> + key (patterns and songs), <kbd class="docs-key">KEY TRANSPOSE</kbd> + key and transpose mode work as before. Stopped, in LOAD, in real-time record and with the arpeggiator, the keys play notes and the TRANSPOSE switch shifts the octave.
+      <strong>Performance mode or SuperOS mode:</strong> hold <kbd class="docs-key">HOLD</kbd> and press <kbd class="docs-key">LOAD</kbd> to switch (not while recording; the choice is saved). In performance mode the <strong>HOLD LED stays lit</strong> while a sequence plays and the keys are the overlay; the LED flashes three times when you switch it on. In SuperOS mode the HOLD LED is off (one flash when you switch) and the keys switch patterns 1&#8230;16 while playing. Gestures with a held function button (randomize and mutate, nudge, shift, loop length, ratchet recording, scales) work in both modes. Performance choices keep playing in SuperOS mode until you reset them.
+    </p>
+    <p class="docs-body">
+      Nothing here is written into the pattern unless you ask (Write, below): every change acts on what you hear, and the stored notes stay as recorded. Every choice takes effect on the <strong>next step</strong>, never on the note already sounding. A choice stays on (latched) until you press the same key again, or reset it. The overlay is active only while the sequencer plays and no function button is held, so <kbd class="docs-key">HOLD</kbd> + key (loop length), <kbd class="docs-key">PLAY</kbd> + key (patterns and songs), <kbd class="docs-key">KEY TRANSPOSE</kbd> + key and transpose mode work as before. Stopped, in LOAD, in real-time record and with the arpeggiator, the keys play notes and the TRANSPOSE switch shifts the octave.
     </p>
     <h3 class="man-sub">Row 1: Global (TRANSPOSE on L)</h3>
     <table class="docs-table man-t-combo">
       <thead><tr><th>Keys</th><th>Function</th></tr></thead>
       <tbody>
-        <tr><td>1&#8230;12</td><td><strong>Transpose</strong> by the distance from the lowest C (key 8 = none), as Key Transpose.</td></tr>
+        <tr><td>1&#8230;12</td><td><strong>Transpose</strong> by the distance from the lowest C (key 8 = none), from the next step on.</td></tr>
         <tr><td>13&#8230;19</td><td><strong>Octave variations</strong> 1&#8230;7: each step lifts or drops an octave by a stored pattern (2nd steps up, 4th steps up, 2nd steps down, up and down, pairs up, second half up); 7 picks a random octave on every step.</td></tr>
-        <tr><td>20&#8230;24</td><td><strong>LFO/S&amp;H clock sync</strong> 1/16, 1/8, 1/4, 1/2, 1/1: the LFO (and the random S&amp;H it clocks) restarts on that grid.</td></tr>
-        <tr><td>25&#8230;32</td><td><strong>Stored patterns</strong> 1&#8230;8, switched now at the same position.</td></tr>
+        <tr><td>20&#8230;24</td><td><strong>LFO/S&amp;H clock sync</strong> 1/16, 1/8, 1/4, 1/2, 1/1: the LFO (and the random S&amp;H it clocks) restarts on that grid. The same key again stops the restart.</td></tr>
+        <tr><td>25&#8230;31</td><td><strong>Stored patterns</strong> 1&#8230;7, switched at the next step at the same position.</td></tr>
+        <tr><td>32</td><td><strong>Reset</strong> (see below).</td></tr>
       </tbody>
     </table>
     <h3 class="man-sub">Row 2: Pitch (TRANSPOSE on M)</h3>
     <table class="docs-table man-t-combo">
       <thead><tr><th>Keys</th><th>Function</th></tr></thead>
       <tbody>
-        <tr><td>1&#8230;7</td><td><strong>Reorder notes</strong>, rests stay where they are: as written, reverse, cycle even (2nd, 4th &#8230; notes first), cycle odd, prime order (a prime stride through the notes), start one forward, start one back.</td></tr>
-        <tr><td>8&#8230;19</td><td><strong>Root key</strong> C&#8230;B of the quantizer.</td></tr>
-        <tr><td>20&#8230;26</td><td><strong>Quantization key type</strong>: major, minor, dorian, mixolydian, lydian, phrygian, locrian. A root alone uses major, a type alone uses C. Overrides the pattern's own scale while on.</td></tr>
-        <tr><td>27&#8230;31</td><td><strong>Combine other sequence</strong>: add, subtract, multiply, divide, difference. The intervals of the next pattern (above its first note) are combined with this pattern's (above its first note), step by step, then folded back by octaves into range. A rest in the other pattern leaves the note alone.</td></tr>
+        <tr><td>1&#8230;7</td><td><strong>Reorder notes</strong>, rests stay where they are: as written, reverse, cycle even (2nd, 4th &#8230; notes first), cycle odd, prime order (a prime stride through the notes), one forward and one back, which move one note further on every loop pass.</td></tr>
+        <tr><td>8&#8230;19</td><td><strong>Root key</strong> C&#8230;B of the quantizer. The same key again turns the scale off, and on again, keeping the root and type.</td></tr>
+        <tr><td>20&#8230;26</td><td><strong>Quantization key type</strong>: major, minor, dorian, harmonic minor, lydian, phrygian, locrian. A root alone uses major, a type alone uses C. Overrides the pattern's own scale while on. The quantizer acts after reorder, combine and octave variation, so the combined notes are scaled too.</td></tr>
+        <tr><td>27</td><td><strong>Cycle the partner</strong>: each press picks the next saved pattern to combine the pitches with (never the playing one).</td></tr>
+        <tr><td>28&#8230;31</td><td><strong>Combine with the partner</strong>: add, subtract, divide, difference. The intervals of the partner pattern (above its first note) are combined with this pattern's (above its first note), step by step, then folded back by octaves into range. A rest in the other pattern leaves the note alone.</td></tr>
         <tr><td>32</td><td><strong>Reset</strong> (see below).</td></tr>
       </tbody>
     </table>
@@ -1014,21 +1019,26 @@ body{margin:0;background:#fff;}
         <tr><td>8&#8230;12</td><td><strong>Skip time</strong>: skip every 4th, every 8th, even, odd, every 5th clock. A skipped clock is silent and the pattern waits for the next one.</td></tr>
         <tr><td>13&#8230;17</td><td><strong>Add / delete time</strong>, the grid clock: 1/4, 1/8, 1/16, 1/4 triplets, 1/16 triplets.</td></tr>
         <tr><td>18&#8230;21</td><td><strong>Add / delete time</strong>, the logic: NOR, OR, AND, XOR. The step clock and the grid clock go through the gate; each rising edge of the result plays a step. OR adds steps on the grid, AND keeps only the steps on it. A grid alone uses OR, a logic alone uses 1/4.</td></tr>
-        <tr><td>22&#8230;26</td><td><strong>Ratchet</strong>, only while held: 1/32, 1/16, 1/16 triplets, 3 and 7 times a step. The note sounding at the press repeats; the pattern runs on underneath and continues in place when you let go.</td></tr>
-        <tr><td>27&#8230;31</td><td><strong>Combine other sequence</strong>: AND, OR, NOR, XOR, NAND of this pattern's rhythm with the next pattern's. A step the logic fills plays the next pattern's note (NOR: the last note).</td></tr>
+        <tr><td>22&#8230;26</td><td><strong>Ratchet</strong>, only while held: 1/32, 1/16, 1/16 triplets, 3 and 7 times a step. From the next step its note repeats; the pattern runs on underneath and continues in place when you let go.</td></tr>
+        <tr><td>27</td><td><strong>Cycle the partner</strong> for the rhythm, as in row 2 (each row has its own).</td></tr>
+        <tr><td>28&#8230;31</td><td><strong>Combine with the partner</strong>: AND, OR, NOR, XOR of this pattern's rhythm with the partner's. A step the logic fills plays the partner's note (NOR: the last note).</td></tr>
         <tr><td>32</td><td><strong>Reset</strong> (see below).</td></tr>
       </tbody>
     </table>
     <h3 class="man-sub">Reset</h3>
     <p class="docs-body">
-      In rows 2 and 3 the top key (32) is Reset. Tap it alone to clear the whole row. Hold it and press a key to turn that one function off. Row 1 has no Reset: press the same key again, or key 8 for no transpose.
+      In every row the top key (32) is Reset. Tap it alone to clear the whole row. Hold it and press a key to turn that one function off. Hold it for one second to clear all three rows.
+    </p>
+    <h3 class="man-sub">Write</h3>
+    <p class="docs-body">
+      Hold <kbd class="docs-key">KEY TRANSPOSE</kbd> and press <kbd class="docs-key">LOAD</kbd> while playing: one pass of what plays (reorder, quantizer, combine pitch and rhythm, octave variation, shift and transpose) is written into the pattern, and those settings are cleared, so it sounds the same and becomes the new baseline. An active scale moves with the transpose and is kept as the pattern's own. The LFO/S&amp;H sync, skip and add / delete time stay on; they are timing, not notes.
     </p>
     <div class="man-note">
       <strong>Note</strong>
-      The other sequence is always the next pattern (pattern 16 pairs with pattern 1). Times count one step as a sixteenth. The add / delete grid follows the MIDI clock when it drives the SH-101; otherwise it is worked out from the step clock's own speed, so with a rhythmic EXT CLK it follows that rhythm. LFO/S&amp;H sync with the MIDI clock sets the LFO hard-sync division until you turn it off; without it, the LFO restarts every 1, 2, 4, 8 or 16 steps.
+      Until you cycle it, the partner is the next pattern (pattern 16 pairs with pattern 1). Times count one step as a sixteenth. The add / delete grid follows the MIDI clock when it drives the SH-101; otherwise it is worked out from the step clock's own speed, so with a rhythmic EXT CLK it follows that rhythm. LFO/S&amp;H sync with the MIDI clock sets the LFO hard-sync division until you turn it off; without it, the LFO restarts every 1, 2, 4, 8 or 16 steps.
     </div>
     <p class="docs-body">
-      To give the keys back their pre-overlay roles while playing (keys 1&#8230;16 switch patterns now, the TRANSPOSE switch does nothing to a playing sequence), turn <strong>Performance modes</strong> off in the web editor's Performance panel. The setting is kept across power-off.
+      <kbd class="docs-key">HOLD</kbd> + <kbd class="docs-key">LOAD</kbd> (or <strong>Performance modes</strong> in the web editor's Performance panel) gives the keys back their SuperOS roles while playing. The setting is kept across power-off.
     </p>
   </section>
 
@@ -1237,13 +1247,15 @@ body{margin:0;background:#fff;}
     <p class="docs-label">Performance Modes (while playing)</p>
     <table class="docs-table man-t-combo">
       <tbody>
+        <tr><td>HOLD + LOAD</td><td>Performance mode (HOLD LED lit while playing) / SuperOS mode</td></tr>
         <tr><td>TRANSPOSE L / M / H</td><td>Row 1 Global / 2 Pitch / 3 Time</td></tr>
-        <tr><td>Row 1: keys 1&#8230;12 / 13&#8230;19 / 20&#8230;24 / 25&#8230;32</td><td>Transpose / octave variations / LFO sync / patterns 1&#8230;8</td></tr>
-        <tr><td>Row 2: keys 1&#8230;7 / 8&#8230;19 / 20&#8230;26 / 27&#8230;31</td><td>Reorder / root / scale type / combine pitch</td></tr>
+        <tr><td>Row 1: keys 1&#8230;12 / 13&#8230;19 / 20&#8230;24 / 25&#8230;31</td><td>Transpose / octave variations / LFO sync / patterns 1&#8230;7</td></tr>
+        <tr><td>Row 2: keys 1&#8230;7 / 8&#8230;19 / 20&#8230;26 / 27 / 28&#8230;31</td><td>Reorder / root / scale type / partner / combine pitch</td></tr>
         <tr><td>Row 3: keys 1&#8230;7 / 8&#8230;12</td><td>Shift time / skip time</td></tr>
         <tr><td>Row 3: keys 13&#8230;17 + 18&#8230;21</td><td>Add / delete time: grid + NOR OR AND XOR</td></tr>
-        <tr><td>Row 3: keys 22&#8230;26 held / 27&#8230;31</td><td>Ratchet / combine rhythm</td></tr>
-        <tr><td>Rows 2, 3: key 32 / key 32 + key</td><td>Reset the row / that function</td></tr>
+        <tr><td>Row 3: keys 22&#8230;26 held / 27 / 28&#8230;31</td><td>Ratchet / partner / combine rhythm</td></tr>
+        <tr><td>Key 32 / key 32 + key / key 32 held 1 s</td><td>Reset the row / that function / every row</td></tr>
+        <tr><td>KEY TRANSPOSE + LOAD</td><td>Write what plays into the pattern</td></tr>
         <tr><td>Same key again</td><td>That choice off</td></tr>
       </tbody>
     </table>
