@@ -18,10 +18,10 @@ claim needs). The claim needs ~1 cent across the keyboard.
 import sys, glob, statistics as st
 import numpy as np
 
-sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/tools/diag")
+sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag")
 import importlib.util
 spec = importlib.util.spec_from_file_location(
-    "g13", "/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/tools/diag/g13_sign.py")
+    "g13", "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag/g13_sign.py")
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
 
 

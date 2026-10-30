@@ -16,7 +16,7 @@
 #
 # Run ids must have NO existing captures: a reused id overwrites evidence.
 set -u
-REPO=/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE
+REPO=/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware
 OUT=${OUT:-/tmp/g13cut}
 NOTES=${NOTES:-"67 68 51 52 56 57"}
 export SUPEROS_AGENT=A101

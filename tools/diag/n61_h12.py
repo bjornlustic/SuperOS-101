@@ -5,9 +5,9 @@ If the estimator fails the SAME way on every capture, a screen referenced to
 the note's OWN median disagreement moves with it and drops nothing. A uniform
 failure would be invisible to it. Testing that directly."""
 import sys, os, json
-sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/tools/diag")
+sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag")
 import numpy as np, g13_sign as G
-SIDE = "/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/artifacts/g13/sidecars"
+SIDE = "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/artifacts/g13/sidecars"
 for h in (8, 12, 16):
     print(f"\n=== note 61, harmonic asked {h} ===")
     per_mode = {}

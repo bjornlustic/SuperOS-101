@@ -4,12 +4,12 @@ Consolidated 2026-10-13 from the code, git history (148 commits, 2026-08-14 to 2
 
 ## What this is
 
-Open firmware for the Roland SH-101, running on the AT90USB1286 replacement CPU board in `../SuperOS-101CPU` (the board plugs into the 40-pin socket of the original Toshiba TMP80C49P, an MCS-48/8049; not the uPD650 of the 303/606/808). One combined image (PlatformIO, Teensy++ 2.0 core) carries two firmwares selected by internal-EEPROM byte 0x000:
+Open firmware for the Roland SH-101, running on the AT90USB1286 replacement CPU board in `../SH101-CPU` (the board plugs into the 40-pin socket of the original Toshiba TMP80C49P, an MCS-48/8049; not the uPD650 of the 303/606/808). One combined image (PlatformIO, Teensy++ 2.0 core) carries two firmwares selected by internal-EEPROM byte 0x000:
 
 - **SuperOS**: clean-sheet SH-101 behaviour plus 16 patterns x up to 128 steps, arp, MIDI (DIN + USB-C), MIDI clock sync, performance features, CV DAC (filter cutoff + accent), SysEx editor protocol.
 - **80C49 emulator**: an MCS-48 interpreter running the original 2 KB Roland mask ROM against the real analog board.
 
-Part of the SuperOS fleet (SuperOS-303/606/808/909); fleet-wide docs live in `~/Desktop/Projects/SuperOS-USBC/docs/` (`FINDINGS.md`, `EDIT_OPCODES.md`, `G9_INVENTORY.md`). The fleet `coord/` folder was archived to `~/Desktop/Projects/old/coord/`.
+Part of the SuperOS fleet (SuperOS-303/606/808/909); fleet-wide docs live in `~/Desktop/Projects/SuperOS-Shared/USB-Bootloader/docs/` (`FINDINGS.md`, `EDIT_OPCODES.md`, `G9_INVENTORY.md`). The fleet `coord/` folder was archived to `~/Desktop/Projects/old/coord/`.
 
 ## Current status (2026-10-13)
 

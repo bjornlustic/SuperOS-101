@@ -10,11 +10,11 @@ Samples captures per cell rather than measuring all of them: the fault being
 looked for is ~30 dB, not 1 dB, and the in-flight bracketed run has the CPU.
 """
 import sys, os, glob, json
-sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/tools/diag")
+sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag")
 import numpy as np
 import g13_sign as G
 
-SIDE = "/Users/bjornlustic/Desktop/Projects/SH101/SuperOS-101FIRMWARE/artifacts/g13/sidecars"
+SIDE = "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/artifacts/g13/sidecars"
 CAPS = "/tmp/g13cut"
 STRIDE = int(os.environ.get("STRIDE", "5"))
 

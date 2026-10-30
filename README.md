@@ -29,7 +29,7 @@ beat-stepped random S&H, at ten divisions (1/4 ... 1/32 incl. dotted/triplet), i
 both firmwares (the emulator gets the divided clock on its T1 pin). A **web editor**
 (`tools/web-editor`) edits patterns and config over MIDI. KEY TRANSPOSE is
 implemented (see Performance features); exact portamento timing is unverified. The CPU board lives in
-[`../SuperOS-101CPU`](../SuperOS-101CPU).
+[`../SH101-CPU`](../SH101-CPU).
 
 ## Panel (SuperOS mode)
 
