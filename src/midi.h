@@ -141,8 +141,8 @@
 //   0x41 <1> <version ascii...>
 //   0x4D                  switch to SuperOS (reboots)
 //   0x4A                  enter the SysEx bootloader
-// A SuperOS unit ignores 0x40 and an emulator unit ignores 0x20, so an editor
-// sends both and whichever firmware runs answers.
+// A SuperOS unit ignores 0x40; an emulator unit answers 0x20 too (src/emu101.cpp),
+// so an editor sends both and whichever firmware runs answers.
 #pragma once
 #include <Arduino.h>
 

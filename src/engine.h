@@ -28,7 +28,7 @@
 namespace engine {
 
 static const uint8_t MAX_STEPS    = 128;
-static const uint8_t NUM_PATTERNS = persist::NUM_PATTERNS;   // 8
+static const uint8_t NUM_PATTERNS = persist::NUM_PATTERNS;   // 16
 static const uint8_t CV_BASE      = 5;   // cv_dac_val returns value+5 (SH101.asm:992)
 static const uint8_t CV_MAX       = 63;  // 6-bit DAC
 // MIDI note <-> CV: key 0 (F3) at the middle octave (0x0C) is MIDI 53, so

@@ -4,8 +4,7 @@
 // The DAC/mux protocol and scan invariants are faithful (src/hw.h). Panel decode
 // (src/controls.h), the keyboard/arp/sequencer engine (src/engine.h), DIN MIDI
 // (src/midi.h: notes in/out, clock sync, SysEx editor protocol) and the flash
-// pattern store (src/flash_persist.h) are wired in. Remaining stubs:
-// KEY-TRANSPOSE shift value and exact portamento timing (marked at their sites).
+// pattern store (src/flash_persist.h) are wired in, with KEY-TRANSPOSE.
 #include <Arduino.h>
 #include "pins.h"
 #include "hw.h"
