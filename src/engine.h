@@ -476,6 +476,7 @@ class Sequencer {
     if (p >= NUM_PATTERNS) return;
     queued_ = 0xFF; chainN_ = 0;
     if (p == cur_) return;
+    applyRotate();                      // a pending nudge belongs to the pattern it was asked of
     cur_ = p; loopLen_ = 0; selChanged_ = true; laneFollow();
     uint8_t l = effLen();
     if (l) pos_ = (uint8_t)(pos_ % l);
@@ -524,7 +525,7 @@ class Sequencer {
   bool consumeStepChanged() { bool c = stepChanged_; stepChanged_ = false; return c; }
 
   void select(uint8_t p) {
-    if (p < NUM_PATTERNS && p != cur_) { cur_ = p; loopLen_ = 0; laneFollow(); rewind(); selChanged_ = true; }
+    if (p < NUM_PATTERNS && p != cur_) { applyRotate(); cur_ = p; loopLen_ = 0; laneFollow(); rewind(); selChanged_ = true; }
     queued_ = 0xFF; chainN_ = 0;
   }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
@@ -727,7 +728,13 @@ class Sequencer {
   }
   bool setLength(uint8_t p, uint8_t len) {
     if (p >= NUM_PATTERNS || len < 1 || len > MAX_STEPS) return false;
-    for (uint8_t i = len_[p]; i < len; ++i) { step_[p][i] = StepByte(0, STEP_REST); accentRaw(p, i, false); }
+    if (len > len_[p]) {   // regrown steps start clean: no ratchet or filter value left from before a cut
+      Lane& l = laneFor(p);
+      for (uint8_t i = len_[p]; i < len; ++i) {
+        step_[p][i] = StepByte(0, STEP_REST); accentRaw(p, i, false); ratchetRaw(p, i, 0);
+        if (l.v[i]) { l.v[i] = 0; l.dirty = true; laneChanged_ |= (uint16_t)(1u << p); }
+      }
+    }
     len_[p] = len; dirty_ |= (uint16_t)(1u << p);
     if (p == cur_ && pos_ >= len) rewind();
     return true;
@@ -783,6 +790,7 @@ class Sequencer {
     // Loop pass complete with a pattern switch waiting: switch now, and the
     // new pattern starts at its first step.
     if (started_ && queued_ != 0xFF && cycle_ == 0) {
+      applyRotate();                    // a nudge asked of the old pattern lands there, not on the one that follows
       if (queued_ != cur_) { cur_ = queued_; loopLen_ = 0; selChanged_ = true; laneFollow(); }
       if (chainN_ > 1) { chainPos_ = (uint8_t)((chainPos_ + 1) % chainN_); queued_ = chain_[chainPos_]; }
       else queued_ = 0xFF;

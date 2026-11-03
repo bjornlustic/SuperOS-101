@@ -15,13 +15,13 @@ is checked against synthetic tones of KNOWN frequency before it is believed
 (COMMON rule 1: state the instrument's resolution next to the tolerance the
 claim needs). The claim needs ~1 cent across the keyboard.
 """
-import sys, glob, statistics as st
+import sys, os, glob, statistics as st
 import numpy as np
 
-sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import importlib.util
 spec = importlib.util.spec_from_file_location(
-    "g13", "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag/g13_sign.py")
+    "g13", os.path.join(os.path.dirname(os.path.abspath(__file__)), "g13_sign.py"))
 g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
 
 
