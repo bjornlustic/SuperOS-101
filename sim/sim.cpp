@@ -2716,6 +2716,20 @@ static int SelfTest() {
     CHECK(sq.steps(0)[0] == a[3] && sq.steps(0)[1] == a[0],
           "the pending nudge lands on pattern 0, the pattern it was asked for");
     sq.resetRuntime();
+    sq.set(0, a, 4); sq.set(1, b, 4);
+    for (int i = 0; i < 4; ++i) sq.advance();
+    sq.rotate(0, 1, true);
+    sq.switchNow(1);
+    CHECK(sq.steps(1)[0] == b[0] && sq.steps(1)[3] == b[3] && sq.steps(0)[0] == a[3],
+          "a nudge pending on pattern 0 does not rotate pattern 1 on an instant switch");
+    sq.resetRuntime();
+    sq.set(0, a, 4); sq.set(1, b, 4);
+    for (int i = 0; i < 4; ++i) sq.advance();
+    sq.rotate(0, 1, true);
+    sq.select(1);
+    CHECK(sq.steps(1)[0] == b[0] && sq.steps(1)[3] == b[3] && sq.steps(0)[0] == a[3],
+          "a nudge pending on pattern 0 does not rotate pattern 1 on select");
+    sq.resetRuntime();
     sq.set(0, a, 4);
     sq.setLength(0, 4);
     sq.set(0, a, 4);

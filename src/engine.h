@@ -476,6 +476,7 @@ class Sequencer {
     if (p >= NUM_PATTERNS) return;
     queued_ = 0xFF; chainN_ = 0;
     if (p == cur_) return;
+    applyRotate();                      // a pending nudge belongs to the pattern it was asked of
     cur_ = p; loopLen_ = 0; selChanged_ = true; laneFollow();
     uint8_t l = effLen();
     if (l) pos_ = (uint8_t)(pos_ % l);
@@ -524,7 +525,7 @@ class Sequencer {
   bool consumeStepChanged() { bool c = stepChanged_; stepChanged_ = false; return c; }
 
   void select(uint8_t p) {
-    if (p < NUM_PATTERNS && p != cur_) { cur_ = p; loopLen_ = 0; laneFollow(); rewind(); selChanged_ = true; }
+    if (p < NUM_PATTERNS && p != cur_) { applyRotate(); cur_ = p; loopLen_ = 0; laneFollow(); rewind(); selChanged_ = true; }
     queued_ = 0xFF; chainN_ = 0;
   }
   bool consumeSelChanged() { bool c = selChanged_; selChanged_ = false; return c; }
