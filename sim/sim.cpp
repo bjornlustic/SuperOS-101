@@ -2739,6 +2739,18 @@ static int SelfTest() {
     sq.setLength(0, 8);
     sq.setStep(0, 0, 6, 60);                              // a fresh note on a step that was cut and regrown
     CHECK(sq.ratchet(0, 6) == 0, "growing a pattern back does not revive the old ratchet on the regrown steps");
+    sq.resetRuntime();
+    sq.set(0, a, 4);
+    { uint8_t fl[4] = {5, 6, 7, 8}; sq.setFilterLane(0, fl, 4); }
+    sq.set(0, b, 4);                                      // replaced wholesale (0x12)
+    CHECK(sq.filter(0, 0) == 0 && sq.filter(0, 3) == 0, "replacing a pattern (0x12) drops the old filter-lane values under the new steps");
+    sq.resetRuntime();
+    sq.select(0); sq.clear();
+    sq.record(5, engine::STEP_NOTE, true);
+    sq.cycleLastRatchet(1);
+    CHECK(sq.ratchet(0, 0) == 1 && sq.accent(0, 0), "setup: recorded step has a ratchet and an accent");
+    sq.deleteLast();
+    CHECK(sq.length(0) == 0 && sq.ratchet(0, 0) == 0 && !sq.accent(0, 0), "deleteLast of the last step leaves no ratchet or accent bits behind");
   }
   remove("sim-selftest-eeprom.bin");
   printf("\n%s (%d failure%s)\n", g_fails ? "SELF-TEST FAILED" : "self-test passed",

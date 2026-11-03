@@ -545,7 +545,7 @@ class Sequencer {
   // LOAD mode DOWN (SH-1oh1 3.2): take back the last entered step.
   void deleteLast() {
     if (!wcur_) return;
-    if (wcur_ == len_[cur_]) --len_[cur_];
+    if (wcur_ == len_[cur_]) { --len_[cur_]; ratchetRaw(cur_, (uint8_t)(wcur_ - 1), 0); accentRaw(cur_, (uint8_t)(wcur_ - 1), false); }
     --wcur_;
     dirty_ |= (uint16_t)(1u << cur_);
   }
@@ -692,6 +692,11 @@ class Sequencer {
     if (tail && ab) memcpy(acc_[p], tail + rb, ab);
     len_[p] = len;
     dirty_ |= (uint16_t)(1u << p);
+    {   // the filter lane belongs to the old steps: the host sends its own with 0x2D
+      Lane& l = laneFor(p);
+      bool any = false; for (uint8_t i = 0; i < MAX_STEPS; ++i) any |= l.v[i] != 0;
+      if (any) { memset(l.v, 0, MAX_STEPS); l.dirty = true; laneChanged_ |= (uint16_t)(1u << p); }
+    }
     if (p == cur_ && pos_ >= len) rewind();
     return true;
   }
