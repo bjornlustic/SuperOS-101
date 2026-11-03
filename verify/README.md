@@ -19,7 +19,7 @@ A SKIP means the check did not run. It is never a pass, and a run where nothing 
 
 Last measured (T0068 recipe, 2026-11-01): app ends at 0xF7BE, 26690 bytes free, RAM 5510 of 8192.
 
-Not covered by `check.sh`: the parity line (`../SH101-Firmware-Parity`), the plug-in (`../plugin`, `sh101_check`, `auval`) and the web editor tests (need playwright). Their commands are in HQ `verify/recipes/sh101.md`.
+Not covered by `check.sh`: the parity line (`../parity`), the plug-in (`../../software/plugin`, `sh101_check`, `auval`) and the web editor tests (need playwright). Their commands are in HQ `verify/recipes/sh101.md`.
 
 ## Bjorn only
 

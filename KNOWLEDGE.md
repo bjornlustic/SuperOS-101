@@ -1,15 +1,15 @@
 # SuperOS-101 firmware: knowledge base
 
-Consolidated 2026-10-13 from the code, git history (148 commits, 2026-08-14 to 2026-10-09), the docs in this repo, and the archived CLAUDE.md (`~/Desktop/Projects/old/claude-md/SH101/SuperOS-101FIRMWARE/CLAUDE.md`). Where they disagree, the code wins. Superseded notes were moved to `~/Desktop/Projects/old/notes/SH101/SuperOS-101FIRMWARE/` (list in `old/notes/MANIFEST-roland-drums.txt`).
+Consolidated 2026-10-13 from the code, git history (148 commits, 2026-08-14 to 2026-10-09), the docs in this repo, and the archived CLAUDE.md (`~/SuperOS303/Backlog/Archive/claude-md/SH101/SuperOS-101FIRMWARE/CLAUDE.md`). Where they disagree, the code wins. Superseded notes were moved to `~/SuperOS303/Backlog/Archive/notes/SH101/SuperOS-101FIRMWARE/` (list in `old/notes/MANIFEST-roland-drums.txt`).
 
 ## What this is
 
-Open firmware for the Roland SH-101, running on the AT90USB1286 replacement CPU board in `../SH101-CPU` (the board plugs into the 40-pin socket of the original Toshiba TMP80C49P, an MCS-48/8049; not the uPD650 of the 303/606/808). One combined image (PlatformIO, Teensy++ 2.0 core) carries two firmwares selected by internal-EEPROM byte 0x000:
+Open firmware for the Roland SH-101, running on the AT90USB1286 replacement CPU board in `../../hardware/cpu-board` (the board plugs into the 40-pin socket of the original Toshiba TMP80C49P, an MCS-48/8049; not the uPD650 of the 303/606/808). One combined image (PlatformIO, Teensy++ 2.0 core) carries two firmwares selected by internal-EEPROM byte 0x000:
 
 - **SuperOS**: clean-sheet SH-101 behaviour plus 16 patterns x up to 128 steps, arp, MIDI (DIN + USB-C), MIDI clock sync, performance features, CV DAC (filter cutoff + accent), SysEx editor protocol.
 - **80C49 emulator**: an MCS-48 interpreter running the original 2 KB Roland mask ROM against the real analog board.
 
-Part of the SuperOS fleet (SuperOS-303/606/808/909); fleet-wide docs live in `~/Desktop/Projects/SuperOS-Shared/USB-Bootloader/docs/` (`FINDINGS.md`, `EDIT_OPCODES.md`, `G9_INVENTORY.md`). The fleet `coord/` folder was archived to `~/Desktop/Projects/old/coord/`.
+Part of the SuperOS fleet (SuperOS-303/606/808/909); fleet-wide docs live in `~/SuperOS303/SuperOS-Tools/USB-Bootloader/docs/` (`FINDINGS.md`, `EDIT_OPCODES.md`, `G9_INVENTORY.md`). The fleet `coord/` folder was archived to `~/SuperOS303/Backlog/Archive/coord/`.
 
 ## Current status (2026-10-13)
 
@@ -47,7 +47,7 @@ python3 -m http.server 3101 --directory tools/web-editor   # editor (Chrome/Edge
 python3 docs/shortcut-guide/build_guide.py   # regenerates the shortcut PDF (needs Chrome)
 ```
 
-Field updates: send `F0 7D 4A F7`, then `tools/sendsyx "SuperOS-101 Bootloader" app-update.syx` (or the editor's Update OS). Panel fallback: hold LOAD + PLAY at power-on. The bootloader itself is ISP-only. On the bench, flash the 101 over its USB-C through the MPC Live II (Ethernet link host 169.254.55.1): `~/Desktop/Projects/Akai-MPC-Live-II/tools/device/sh101_update.py --host 169.254.55.1 app-update.syx`. The script resends every page until a pass has no USB endpoint halts, then starts the app; it fails unless the build identity 0x35 changed. If the 101 drops off USB (no app, no bootloader in the MPC's `dmesg`): hold LOAD + PLAY at power-on and run the script again. `--din` (MPC MIDI Port A cabled to the 101's MIDI IN) is a fallback only; that cable is not normally connected. Check `git status` before building an image to flash: a flash carries the whole tree.
+Field updates: send `F0 7D 4A F7`, then `tools/sendsyx "SuperOS-101 Bootloader" app-update.syx` (or the editor's Update OS). Panel fallback: hold LOAD + PLAY at power-on. The bootloader itself is ISP-only. On the bench, flash the 101 over its USB-C through the MPC Live II (Ethernet link host 169.254.55.1): `~/SuperOS303/Products/Samplers/Akai-MPC-Live-II/tools/device/sh101_update.py --host 169.254.55.1 app-update.syx`. The script resends every page until a pass has no USB endpoint halts, then starts the app; it fails unless the build identity 0x35 changed. If the 101 drops off USB (no app, no bootloader in the MPC's `dmesg`): hold LOAD + PLAY at power-on and run the script again. `--din` (MPC MIDI Port A cabled to the 101's MIDI IN) is a fallback only; that cable is not normally connected. Check `git status` before building an image to flash: a flash carries the whole tree.
 
 ## Key technical facts and findings
 
