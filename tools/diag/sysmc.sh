@@ -5,7 +5,7 @@
 set -u
 SD="$1"; shift
 RUNS="${@:-mc-r1 mc-r2 mc-r5 mc-r6}"   # r3/r4 EXCLUDED BY NAME: bad data, see handoff s4
-REPO=/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 export SUPEROS_AGENT=A101
 cd "$REPO" || exit 1
 variant() {   # label harmonic head win

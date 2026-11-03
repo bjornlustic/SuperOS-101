@@ -3,9 +3,9 @@ note 72, both arms. Question: is h16 low because the whole capture is weak
 (harmless, cancels in a difference) or because h16 SPECIFICALLY is a null
 (dangerous, the estimator reads noise on one arm only)?"""
 import sys, os, json, glob
-sys.path.insert(0, "/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/tools/diag")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np, g13_sign as G
-SIDE="/Users/bjornlustic/Desktop/Projects/Roland-SH101/SH101-Firmware/artifacts/g13/sidecars"
+SIDE=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "artifacts", "g13", "sidecars")
 for tag, runs in (("n61", ["g13-run-n61-r1","g13-run-n61-r3"]),
                   ("n72", ["n72-r1-h16-raw"])):
     for rn in runs:
