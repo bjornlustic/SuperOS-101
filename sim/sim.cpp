@@ -2698,6 +2698,34 @@ static int SelfTest() {
     puts("  SKIP  no mask ROM embedded (SH101-reference dump absent)");
   }
 
+  {   // T0227: sequencer edge cases, driven on a Sequencer directly (no flush, nothing persisted)
+    printf("\nSequencer edits (T0227)\n");
+    static engine::Sequencer sq;
+    const uint8_t a[4] = {engine::StepByte(1, engine::STEP_NOTE), engine::StepByte(2, engine::STEP_NOTE),
+                          engine::StepByte(3, engine::STEP_NOTE), engine::StepByte(4, engine::STEP_NOTE)};
+    const uint8_t b[4] = {engine::StepByte(10, engine::STEP_NOTE), engine::StepByte(11, engine::STEP_NOTE),
+                          engine::StepByte(12, engine::STEP_NOTE), engine::StepByte(13, engine::STEP_NOTE)};
+    sq.resetRuntime();
+    sq.set(0, a, 4); sq.set(1, b, 4);
+    for (int i = 0; i < 4; ++i) sq.advance();             // pattern 0 played once through
+    sq.rotate(0, 1, true);                                // nudge waits for the next half-step
+    sq.queue(1);
+    sq.advance();                                         // loop end: switches to pattern 1
+    CHECK(sq.current() == 1 && sq.steps(1)[0] == b[0] && sq.steps(1)[3] == b[3],
+          "a nudge pending on pattern 0 does not rotate pattern 1 when the queued switch lands");
+    CHECK(sq.steps(0)[0] == a[3] && sq.steps(0)[1] == a[0],
+          "the pending nudge lands on pattern 0, the pattern it was asked for");
+    sq.resetRuntime();
+    sq.set(0, a, 4);
+    sq.setLength(0, 4);
+    sq.set(0, a, 4);
+    sq.setLength(0, 8);
+    sq.setRatchet(0, 6, 2);
+    sq.setLength(0, 4);
+    sq.setLength(0, 8);
+    sq.setStep(0, 0, 6, 60);                              // a fresh note on a step that was cut and regrown
+    CHECK(sq.ratchet(0, 6) == 0, "growing a pattern back does not revive the old ratchet on the regrown steps");
+  }
   remove("sim-selftest-eeprom.bin");
   printf("\n%s (%d failure%s)\n", g_fails ? "SELF-TEST FAILED" : "self-test passed",
          g_fails, g_fails == 1 ? "" : "s");
