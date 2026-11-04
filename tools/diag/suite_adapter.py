@@ -541,6 +541,12 @@ def _midiport():
         roots.append(os.path.join(os.path.dirname(os.path.abspath(main)), os.pardir, "tools"))
     if os.environ.get("SUPEROS_USBC"):
         roots.append(os.path.join(os.environ["SUPEROS_USBC"], "tools"))
+    d = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        roots.append(os.path.join(d, "SuperOS-Tools", "USB-Bootloader", "tools"))
+        if os.path.dirname(d) == d:
+            break
+        d = os.path.dirname(d)
     for r in roots:
         p = os.path.join(r, "midiport.py")
         if os.path.isfile(p):

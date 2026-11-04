@@ -41,9 +41,22 @@ import time
 
 import numpy as np
 
-_USBC = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "..", "SuperOS-USBC"))
+def _find_usbc():
+    """SuperOS-Tools/USB-Bootloader, found by walking up; $SUPEROS_USBC overrides."""
+    env = os.environ.get("SUPEROS_USBC")
+    if env:
+        return env
+    d = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        r = os.path.join(d, "SuperOS-Tools", "USB-Bootloader")
+        if os.path.isfile(os.path.join(r, "tools", "midiport.py")):
+            return r
+        if os.path.dirname(d) == d:
+            return r
+        d = os.path.dirname(d)
+
+
+_USBC = _find_usbc()
 if not os.path.isdir(_USBC):
     sys.exit(f"cannot find the shared repo, looked in {_USBC}")
 sys.path.insert(0, os.path.join(_USBC, "tools"))
