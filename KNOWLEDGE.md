@@ -100,7 +100,6 @@ Field updates: send `F0 7D 4A F7`, then `tools/sendsyx "SuperOS-101 Bootloader" 
 
 - G14 divergences vs the original ROM (2026-08-26, `sim --g14`): D1 SuperOS writes CV and gate in the same pass, the ROM writes CV a pass before the gate; D3 the ROM does not retrigger the gate between arp steps, SuperOS does; D4 the ROM's first arp step gates the previous pitch. D2 (priority) is fixed. D3/D4 want a hardware capture before changing `engine.h`. No later commit addresses D1/D3/D4.
 - G5 for the 101 is not closed: the step-5-to-step-13 fraction `f` of a pass has a probe word but no hardware measurement.
-- Stale code comments: `src/engine.h:31` says NUM_PATTERNS is 8 (it is 16); `src/main.cpp:7-8` lists KEY-TRANSPOSE as a stub (implemented); `src/midi.h` says an emulator unit ignores 0x20 (it answers since `54e52ee`, `emu101.cpp:575`).
 - Portamento timing is not verified against the original.
 - The G13 rail study (August, 8 MHz vs 4 MHz pitch shift per note: +4.02 c at note 36, +2.91 c at 60, +1.71 c at 72, +0.60 c at 99; no simple law fits; DAC carry boundaries step) predates the R63 ground strap and is moot at 4 MHz. Full write-ups are in old/notes.
 - Low notes have intrinsic per-trigger pitch spread (about 11.7 c at note 36, about 0.44 Hz absolute); the VCA envelope decays to the floor about 2.2 s after onset even with the gate held. Both are analog, not firmware.

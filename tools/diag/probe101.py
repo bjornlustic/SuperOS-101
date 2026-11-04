@@ -23,15 +23,27 @@ import time
 
 import mido
 
-# SuperOS-USBC is a SIBLING OF Projects/, not of this repo: this repo sits at
-# Projects/SH101/SuperOS-101FIRMWARE and the shared one at
-# Projects/SuperOS-USBC, so it is four levels up from tools/diag, not three.
-# Resolve it and assert, rather than letting an off-by-one surface as
-# ModuleNotFoundError with no hint of which path was tried.
-_USBC = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "..", "..", "..", "..", "SuperOS-USBC", "tools"))
-if not os.path.isdir(_USBC):
+# The shared tools (midiport.py) live in SuperOS-Tools/USB-Bootloader/tools.
+# Walk up from this file to the first folder that has SuperOS-Tools, so the
+# result does not depend on how deep this checkout or a worktree sits.
+# $SUPEROS_USBC overrides (a folder holding tools/). Assert, so a miss names
+# the paths tried.
+def _find_usbc_tools():
+    env = os.environ.get("SUPEROS_USBC")
+    if env:
+        return os.path.join(env, "tools")
+    d = os.path.dirname(os.path.abspath(__file__))
+    while True:
+        t = os.path.join(d, "SuperOS-Tools", "USB-Bootloader", "tools")
+        if os.path.isfile(os.path.join(t, "midiport.py")):
+            return t
+        if os.path.dirname(d) == d:
+            return t
+        d = os.path.dirname(d)
+
+
+_USBC = _find_usbc_tools()
+if not os.path.isfile(os.path.join(_USBC, "midiport.py")):
     sys.exit(f"cannot find the shared tools dir, looked in {_USBC}")
 sys.path.insert(0, _USBC)
 import midiport
